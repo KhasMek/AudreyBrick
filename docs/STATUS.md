@@ -9,7 +9,7 @@ Maintained by the orchestrator. Last updated: 2026-11-17.
 | Milestone | State |
 |---|---|
 | M0 source study | Done, pending human review |
-| M1 host DSP | **M1-A done and reviewed.** M1-B, M1-C, M1-D not started |
+| M1 host DSP | **M1-A and M1-B done and reviewed.** M1-C, M1-D not started |
 | M2 host app | Not started. Blocked on the control scheme (D2) |
 | M2b input path | Not started |
 | M3 device build | Not started. Blocked on device checklist items 1 to 9 |
@@ -50,8 +50,8 @@ The human commits. The orchestrator stops at each point and proposes a message.
 | # | Point | State |
 |---|---|---|
 | 1 | M0 docs and decisions | Committed |
-| 2 | M1-A vendoring and build skeleton, reviewed | Ready to commit |
-| 3 | M1-B control abstraction and voice, reviewed | |
+| 2 | M1-A vendoring and build skeleton, reviewed | Committed |
+| 3 | M1-B control abstraction and voice, reviewed | Ready to commit |
 | 4 | M1-C render tool, parity test, reference set, reviewed | |
 | 5 | M1-D aarch64 build check, reviewed | |
 
@@ -91,6 +91,20 @@ Open after M1-A:
 - Root `LICENSE` added: MIT, `Copyright (c) 2026 KhasMek`, covering our own code only.
 - Not researched: the origin and terms of the small musicdsp.org, openaudio blog and CMSIS-derived snippets inside DaisySP's `dsp.h` and `whitenoise.h`. They ship under DaisySP's MIT licence upstream.
 - gcc and Linux are untested until M1-D.
+
+## M1-B result (2026-11-17)
+
+- Added `src/core` (`ControlSource`, `ParamTable`, `AudreyVoice`) and `src/control/ScriptControlSource`, built as `audrey_core`, with four test programs. Six tests pass in Release and under ASan/UBSan, with no compiler warnings.
+- The implementer found no numeric difference between the upstream parameter table and `docs/PARAMETERS.md`.
+- The reviewer wrote its own reference from the upstream `main` and `Controls` files and compared it with `AudreyVoice` over 15 s with every knob moving, the switch toggling and an input signal: **1,440,000 samples, zero differing bits.** Changing one limiter constant by one unit in the last place made the comparison fail, so it is sensitive.
+- No allocation in `process()`: 0 `operator new` calls over 12,000 control blocks. Locks and `malloc` were checked by reading only.
+- Any frame count gives bit-identical output to a single call; controls are read exactly once per 4 samples.
+- Review follow-ups applied and re-verified by the orchestrator: script event times past 42 s now land on the right control block; script numbers parse the same in any system locale.
+- Measured: all knobs at default for 10 s peaks at 3.5e-5. Feedback at maximum for 30 s stays finite in every run; peaks 0.20 (others at minimum, default volume), 0.21 (others at half), 0.81 (others at maximum).
+
+Open after M1-B:
+- Nothing inside the repo yet pins `AudreyVoice` to the upstream logic; the reviewer's reference was out of tree. M1-C's parity test closes this.
+- Denormal flush-to-zero is not set anywhere yet. It belongs to the platform layer (M2).
 
 ## Log
 

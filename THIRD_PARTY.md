@@ -22,6 +22,8 @@ Files: `Source/BiquadFilters.cpp`, `Source/BiquadFilters.h`, `Source/DSPUtils.h`
 
 `Source/KarplusString.{h,cpp}` is itself a modified copy of DaisySP's `KarplusString`; its header notes "Original code licensed as MIT Copyright (c) 2020 Electrosmith, Corp." (covered by `licenses/daisysp.LICENSE`).
 
+**Derived code in our own tree.** Two upstream files are not vendored because they are bound to libDaisy: `FeedbackSynth_main.cpp` and `Source/FeedbackSynthControls.{h,cpp}`. Their logic (the parameter table, the knob update and the audio callback) is transcribed into `src/core/ParamTable.cpp` and `src/core/AudreyVoice.cpp`. Both files carry the upstream MIT notice with both copyright lines.
+
 ## 2. DaisySP, MIT modules
 
 | Item | Value |

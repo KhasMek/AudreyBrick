@@ -92,8 +92,11 @@ target_compile_options(audrey_dsp PRIVATE ${AB_DSP_OPT_OPTIONS})
 # Warnings for our own code.
 set(AB_WARNING_OPTIONS -Wall -Wextra -Wpedantic)
 
+add_subdirectory(src/core)
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
 add_subdirectory(tests/smoke)
+add_subdirectory(tests/core)
