@@ -2,13 +2,65 @@
 
 **Status: proposal, awaiting the human's approval. Nothing here is decided.** Based on `PARAMETERS.md`. The Brick's button names follow the SDL GameController API. Whether Menu and the Fn switch are free for apps is unknown (platform notes, open question 6), so neither is used.
 
-## 0. Revision after the human's feedback (2026-11-17)
+## 0. Button-by-button proposal, version 2 (2026-11-17)
 
-Accepted as a first test, with these changes. Where the sections below disagree, this section wins. The details are settled in M2.
+**Status: awaiting the human's approval.** This replaces the page layout in sections 2 onward; the principle in section 1 and the trade-off reasoning still apply. It follows the human's feedback: tabs on L1/R1 as GrainBrick does, feedback on L2/R2, one tab per section.
+
+The target is the TrimUI Brick. The same mapping is also bound to the Mac keyboard and a gamepad, only so the app can be developed and tested before it goes on the device.
+
+### Always live, on every tab
+
+| Button | Action |
+|---|---|
+| **L1 / R1** | Previous / next tab |
+| **R2** (hold) | Feedback up, ramping (24 dB per second; a tap is 0.5 dB) |
+| **L2** (hold) | Feedback down, ramping |
+| **A** (hold) | Feedback to maximum while held; returns on release |
+| **B** (hold) | Delay switch `!!` on while held (the doppler warp) |
+| **Select** (hold) | Fine: d-pad and L2/R2 move at one eighth speed |
+| **Select + B** | Latch the delay switch on or off |
+| **Y + a d-pad direction** | Reset the parameter on that direction to its default |
+| **Start** | Save the current state to the "freeze" slot |
+
+Menu and the Fn switch are left alone until the device checklist shows whether KNULLI reserves them.
+
+### Tabs
+
+Each tab puts its first parameter on d-pad left/right and its second on up/down. Holding **X** shifts the d-pad to a third and fourth parameter. There is no select-then-adjust step.
+
+| # | Tab | Left / right | Up / down | X + left / right | X + up / down |
+|---|---|---|---|---|---|
+| 1 | **LOOP** | frequency (one semitone per tap) | body | | |
+| 2 | **FILTER** | lowpass | highpass | | |
+| 3 | **REVERB** | dry/wet | decay | | |
+| 4 | **DELAY** | time | mix | | repeats |
+| 5 | **OUT** | safety limiter on/off (M4) | volume | | |
+| 6 | **INPUT** | source: off, mic, USB, file | input gain | file select (when source is file) | |
+| 7 | **MOD** | reserved, see below | | | |
+| 8 | **PRESETS** | | select slot | X = load the slot, Select + X = save to it, Y (hold) = clear it | |
+
+Every tab shows all eleven values, the feedback level, the switch state, the output meter and the limiter state in a strip that never changes; the tab's own parameters are drawn large with the button that moves each one next to it.
+
+Stepping: a tap moves 1/128 of the knob's travel and holding ramps with acceleration (full travel in about 2.5 s). Ramps are computed on the audio side at the control rate, so they do not zipper.
+
+### Input sources (decided by the human, 2026-11-17)
+
+Off (default), the Brick's internal microphone, a USB audio interface, or an audio file from `audreybrick/data/input/`. All of them are mixed to mono as L + R, scaled by the input gain, and fed to the original's unity-gain entry point. File playback loops; the file is loaded off the audio thread.
+
+### Modulation tab (requested by the human, 2026-11-17; not designed yet)
+
+The human would like LFOs and possibly an envelope that can modulate parameters, in the spirit of the Beetlecrab Tempera's modulation section. Notes so far:
+
+- **Cost is not a concern.** Modulators would run at the 12 kHz control rate and add an offset to a knob's normalised value before the original mapping, so a handful of them is a few dozen arithmetic operations per control block.
+- **It fits the architecture without touching the engine:** a modulation stage between the button control source and `AudreyVoice`, behind the same `ControlSource` interface. With all depths at zero the output is identical to the unmodulated port, which the parity test can enforce.
+- **It is a new feature.** `CLAUDE.md` says new features come only after the faithful port is signed off. Recommendation: reserve the tab now, build the port through M3 so it runs on the Brick, sign off fidelity, then design and build modulation as its own milestone. The human can choose to pull it earlier.
+- The orchestrator has not studied the Tempera's modulation section and must look it up before proposing a design. Open design questions: how many LFOs, shapes and rate range, what the envelope follows or is triggered by (the input level is the natural candidate), one destination per modulator or a matrix, and whether modulation settings are stored in presets.
+
+## 0a. Earlier revision note (2026-11-17, superseded by section 0)
 
 - **L1 / R1 switch tabs**, as GrainBrick does.
 - **Feedback moves to L2 (down) / R2 (up)**, live on every tab. A (hold) stays as momentary maximum.
-- **One tab per section of the instrument** rather than two large pages: LOOP (frequency, body), FILTER (lowpass, highpass), REVERB (dry/wet, decay), DELAY (mix, time, repeats, switch), OUT (volume, limiter), INPUT (source, gain, meter), PRESETS. With only two to four parameters per tab, M2 should try mapping them straight onto buttons (for example d-pad left/right for the first parameter, up/down for the second) instead of select-then-adjust.
+- **One tab per section of the instrument** rather than two large pages.
 - The input tab gains an **input gain** control, and the input is the sum of the left and right channels.
 
 ## 1. Principle
