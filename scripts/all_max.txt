@@ -1,0 +1,28 @@
+# Every knob at maximum, switch on.
+#
+# Shows: the top corner of the control space, the most extreme state the panel
+# allows. Feedback +12 dB, highest pitch, 100 ms body, lowpass 18 kHz, highpass
+# 4 kHz, reverb fully wet with an infinite tail, echo send 1, time 1.29 s (switch
+# on), repeats 1.5, volume 1. It must saturate, not blow up (no NaN or inf).
+# Duration 30 s. No input.
+# wavcheck jump threshold 0.7 (not the default 0.25): this render is designed to
+# saturate, and with the highpass at 4 kHz inside the loop the drone is broadband
+# high-frequency content near 0.8 peak. Sample-to-sample steps of 0.45 to 0.61
+# occur evenly in every second of the render (about 3200 per second above 0.25),
+# so they are the signal itself, not clicks at a parameter change.
+#
+# @duration 30
+# @jump 0.7
+
+0 Frequency 1
+0 FeedbackGain 1
+0 FeedbackBody 1
+0 FeedbackLPFCutoff 1
+0 FeedbackHPFCutoff 1
+0 ReverbMix 1
+0 ReverbDecay 1
+0 EchoDelaySend 1
+0 EchoDelayTime 1
+0 EchoDelayFeedback 1
+0 OutputVolume 1
+0 switch 1

@@ -1,0 +1,23 @@
+# Every knob at minimum except the volume, switch off.
+#
+# Shows: the same bottom corner as all_min.txt, but with OutputVolume left at its
+# reset-to-default position (knob 0.707, output level 0.5) instead of 0, so the
+# render holds the engine's real sample values rather than only signed zeros.
+# Feedback -60 dB, lowest pitch, shortest body, lowpass at 100 Hz, highpass at
+# 10 Hz, no reverb, no echo. Expected: the -90 dBFS noise floor, far below 0.001.
+# OutputVolume is deliberately not set: it stays at its default position.
+# Duration 20 s. No input. Default wavcheck thresholds.
+#
+# @duration 20
+
+0 Frequency 0
+0 FeedbackGain 0
+0 FeedbackBody 0
+0 FeedbackLPFCutoff 0
+0 FeedbackHPFCutoff 0
+0 ReverbMix 0
+0 ReverbDecay 0
+0 EchoDelaySend 0
+0 EchoDelayTime 0
+0 EchoDelayFeedback 0
+0 switch 0

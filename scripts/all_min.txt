@@ -1,0 +1,21 @@
+# Every knob at minimum, switch off.
+#
+# Shows: the bottom corner of the control space. Feedback -60 dB, lowest pitch,
+# shortest body, lowpass at 100 Hz, highpass at 10 Hz, no reverb, no echo, volume 0.
+# Volume 0 means the engine's output level is exactly 0, so this is silent.
+# Duration 20 s. No input. Default wavcheck jump threshold.
+#
+# @duration 20
+
+0 Frequency 0
+0 FeedbackGain 0
+0 FeedbackBody 0
+0 FeedbackLPFCutoff 0
+0 FeedbackHPFCutoff 0
+0 ReverbMix 0
+0 ReverbDecay 0
+0 EchoDelaySend 0
+0 EchoDelayTime 0
+0 EchoDelayFeedback 0
+0 OutputVolume 0
+0 switch 0

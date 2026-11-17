@@ -1,0 +1,27 @@
+# Echo time and repeats at both ends of their ranges, with the send fully up.
+#
+# Shows the four corners that no other script reaches together: sweep_echo_time
+# covers both ends of the time at repeats 0.75; sweep_echo_feedback and
+# echo_feedback_max cover both ends of the repeats at a 0.5 s time; all_max uses
+# 1.29 s (switch on) at repeats 1.5.
+#   0 s   time 0.05 s, repeats 1.5   (shortest time, runaway repeats)
+#   8 s   time jumps to 5 s          (the 0.5 s time smoother turns it into a long
+#                                     tape-like pitch dive), repeats still 1.5
+#   20 s  repeats jump to 0          (the 5 s echo plays out once and stops)
+#   26 s  time jumps back to 0.05 s  (repeats 0)
+# Drone: FeedbackGain 0.7, FeedbackBody 0.3, ReverbMix 0.25, ReverbDecay 0.5.
+# Echo send 1 (1.0) throughout.
+# Duration 30 s. No input. Default wavcheck thresholds.
+#
+# @duration 30
+
+0 FeedbackGain 0.7
+0 FeedbackBody 0.3
+0 ReverbMix 0.25
+0 ReverbDecay 0.5
+0 EchoDelaySend 1
+0 EchoDelayTime 0
+0 EchoDelayFeedback 1
+8 EchoDelayTime 1
+20 EchoDelayFeedback 0
+26 EchoDelayTime 0

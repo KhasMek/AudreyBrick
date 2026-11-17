@@ -1,0 +1,18 @@
+# Input above full scale: 220 Hz bursts peaking at 1.8, feedback at minimum, then raised.
+#
+# Shows: the input path is unity gain with no clamp (docs/SIGNAL_FLOW.md section 4),
+# so samples beyond +-1.0 reach the string as they are; a stereo L + R input sum can
+# produce them. The parity test pins this: a port that clamped the input to +-1.0
+# would differ here (no other script drives the input past full scale).
+# First burst (2 to 4 s) with feedback at minimum; feedback raised to 0.45 (-27.6 dB,
+# just below self-oscillation with these knobs) at 8 s; second burst (12 to 14 s)
+# rings in the loop.
+# Input: hot_burst.wav (from audrey-gen-input). Other knobs at their reset-to-default
+# positions.
+# Duration 20 s. Default wavcheck thresholds.
+#
+# @duration 20
+# @input hot_burst.wav
+
+0 FeedbackGain 0
+8 FeedbackGain 0.45

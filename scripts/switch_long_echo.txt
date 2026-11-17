@@ -1,0 +1,24 @@
+# The delay switch toggled four times during a long echo.
+#
+# Shows: the switch halving the delay-time knob value before the square law, so
+# the echo time jumps between 3.22 s (off) and 0.84 s (on). The jump goes through
+# the 14.5 ms and 0.5 s time smoothers, which is the "doppler warp" pitch sweep.
+# The switch affects nothing else.
+# Drone: FeedbackGain 0.7, FeedbackBody 0.3, ReverbMix 0.25, ReverbDecay 0.5.
+# Echo: send 0.8 (0.64), time 0.8, repeats 0.6 (0.9).
+# Switch on at 8 s, off at 14 s, on at 20 s, off at 26 s.
+# Duration 34 s. No input. Default wavcheck jump threshold.
+#
+# @duration 34
+
+0 FeedbackGain 0.7
+0 FeedbackBody 0.3
+0 ReverbMix 0.25
+0 ReverbDecay 0.5
+0 EchoDelaySend 0.8
+0 EchoDelayTime 0.8
+0 EchoDelayFeedback 0.6
+8 switch 1
+14 switch 0
+20 switch 1
+26 switch 0

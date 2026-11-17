@@ -26,6 +26,9 @@ STMLIB_URL="https://github.com/pichenettes/stmlib"
 STMLIB_SHA="d18def816c51d1da0c108236928b2bbd25c17481"
 SOUNDPIPE_URL="https://github.com/PaulBatchelor/Soundpipe"
 SOUNDPIPE_SHA="3efb43bdabd0ed23b17c694292b5a79f1692a3ea"
+# dr_wav (tools and tests only), v0.14.6
+DRLIBS_URL="https://github.com/mackron/dr_libs"
+DRLIBS_SHA="35b5c392cc15456736c440a68dbe073178bbffe0"
 
 # Manifest: "<repo-key> <path in upstream> <path in this repo>".
 # "<path>#L<a>-<b>" compares only lines a to b of the upstream file (used for a
@@ -69,6 +72,8 @@ lgpl    LICENSE                        licenses/daisysp-lgpl.LICENSE
 stmlib  LICENSE                        licenses/stmlib.LICENSE
 eurorack plaits/dsp/fx/overdrive.h#L1-23 licenses/plaits.NOTICE
 soundpipe LICENSE                      licenses/soundpipe.LICENSE
+drlibs  dr_wav.h                       third_party/dr_libs/dr_wav.h
+drlibs  dr_wav.h#L8658-8704            licenses/dr_wav.LICENSE
 "
 
 # Our own notes, allowed under third_party/ and licenses/ without an upstream.
@@ -76,6 +81,7 @@ OWN_NOTES="
 third_party/audrey-ii/UPSTREAM.md
 third_party/daisysp/UPSTREAM.md
 third_party/daisysp-lgpl/PROVENANCE.md
+third_party/dr_libs/UPSTREAM.md
 "
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/audreybrick-verify.XXXXXX")"
@@ -107,6 +113,7 @@ fetch lgpl    "$LGPL_URL"    "$LGPL_SHA"
 fetch eurorack  "$EURORACK_URL"  "$EURORACK_SHA"
 fetch stmlib    "$STMLIB_URL"    "$STMLIB_SHA"
 fetch soundpipe "$SOUNDPIPE_URL" "$SOUNDPIPE_SHA"
+fetch drlibs    "$DRLIBS_URL"    "$DRLIBS_SHA"
 
 status=0
 checked=0

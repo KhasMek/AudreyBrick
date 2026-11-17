@@ -47,7 +47,11 @@ Points that differ from the README or are easy to miss:
 
 ### Where the stereo image comes from
 
-Both channels get the same noise, the same input and the same parameters. Width comes from two things only: the right body delay reads **4 samples** earlier than the left, and `ReverbSc` is a true-stereo network with different delay lines per side. With reverb mix at 0 the two channels differ only by that 4-sample offset [inferred from the code structure].
+Both channels get the same noise, the same input and the same parameters. Two things in the code separate them: the right body delay reads **4 samples** earlier than the left, and `ReverbSc` is a true-stereo network with different delay lines per side.
+
+The 4-sample offset matters far more than it looks. With reverb mix at 0 nothing couples the two channels, so they are two independent nonlinear feedback loops with slightly different delays, and each settles on its own mode. Measured on the M1 renders with default knobs and feedback raised: the channels are identical (correlation 1.000) while only the noise floor sounds, and fully decorrelated (correlation 0.000) once the loop oscillates, with the left at about 1070 Hz and the right at about 1152 Hz. Those are roughly the 13th and 14th harmonics of the 82.4 Hz string, picked out by the 1 ms body delay and the 250 Hz highpass [ran, measured independently by the M1-C implementer and reviewer]. So the instrument's wide stereo image comes from the two loops diverging, and the reverb then mixes them.
+
+A consequence for playing it: with the body knob at minimum the drone is a fairly static pair of tones, and the frequency knob moves them by selecting string harmonics rather than setting the pitch directly. Movement comes once body or reverb is brought into the loop. Near the top of the frequency range the output does lock to the string's own pitch (measured 522 Hz against 523.3 Hz nominal).
 
 ## 2. DaisySP modules used
 

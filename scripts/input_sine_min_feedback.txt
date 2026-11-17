@@ -1,0 +1,17 @@
+# Input: 220 Hz sine bursts with feedback at minimum.
+#
+# Shows: the audio input enters at the string input (docs/SIGNAL_FLOW.md section 4)
+# and is audible even with feedback at minimum, passing through string, overdrive,
+# filters and output. The string is tuned to the input pitch (Frequency 0.7321 =
+# MIDI note 57, 220 Hz), so it resonates with it. The second burst (-3 dBFS) is
+# 17 dB louder than the first (-20 dBFS); the overdrive's +14 dB pre-gain
+# saturates it, so the output rises much less than 17 dB.
+# Input: sine_burst.wav (from audrey-gen-input): 2 to 6 s at 0.1, 10 to 14 s at 0.7.
+# Other knobs at their reset-to-default positions.
+# Duration 20 s. Default wavcheck jump threshold.
+#
+# @duration 20
+# @input sine_burst.wav
+
+0 FeedbackGain 0
+0 Frequency 0.7321

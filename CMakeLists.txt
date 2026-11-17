@@ -93,6 +93,7 @@ target_compile_options(audrey_dsp PRIVATE ${AB_DSP_OPT_OPTIONS})
 set(AB_WARNING_OPTIONS -Wall -Wextra -Wpedantic)
 
 add_subdirectory(src/core)
+add_subdirectory(src/tools)
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -100,3 +101,5 @@ add_subdirectory(src/core)
 enable_testing()
 add_subdirectory(tests/smoke)
 add_subdirectory(tests/core)
+add_subdirectory(tests/ref)
+add_subdirectory(tests/parity)

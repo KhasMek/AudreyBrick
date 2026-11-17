@@ -1,0 +1,19 @@
+# Input: a 1 s noise burst with feedback raised just past self-oscillation.
+#
+# Shows: the input as the loop's excitation. At FeedbackGain 0.5 (-24 dB) with
+# this drone setting, the loop is only just unstable: from the internal -90 dBFS
+# noise alone it takes about 18 s to build up. The noise burst at 2 s kicks it
+# into a sustained, fluctuating drone at once, which keeps going after the burst
+# ends at 3 s.
+# Drone: FeedbackGain 0.5, FeedbackBody 0.3, ReverbMix 0.25, ReverbDecay 0.5; other
+# knobs at their reset-to-default positions.
+# Input: noise_burst.wav (from audrey-gen-input): white noise +-0.25, 2 to 3 s.
+# Duration 20 s. Default wavcheck jump threshold.
+#
+# @duration 20
+# @input noise_burst.wav
+
+0 FeedbackGain 0.5
+0 FeedbackBody 0.3
+0 ReverbMix 0.25
+0 ReverbDecay 0.5

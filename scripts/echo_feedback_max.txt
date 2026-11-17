@@ -1,0 +1,17 @@
+# Echo feedback held at maximum (1.5) for 30 s.
+#
+# Shows: the runaway tape echo. With repeats above 1.0 the echo grows every pass
+# until its soft clipper holds it; it must saturate, not blow up (no NaN or inf).
+# Drone: FeedbackGain 0.7, FeedbackBody 0.3, ReverbMix 0.25, ReverbDecay 0.5.
+# Echo: send 0.7 (0.49), time at default (0.5 s), repeats jump to 1 (1.5) at 1 s.
+# Duration 32 s (1 s of drone alone, then 30 s at maximum, then 1 s more). No input.
+# Default wavcheck jump threshold.
+#
+# @duration 32
+
+0 FeedbackGain 0.7
+0 FeedbackBody 0.3
+0 ReverbMix 0.25
+0 ReverbDecay 0.5
+0 EchoDelaySend 0.7
+1 EchoDelayFeedback 1

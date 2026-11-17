@@ -1,0 +1,21 @@
+# Sweep of ReverbDecay from 0 to 1 over 20 s, over a sustained drone.
+#
+# Shows: reverb feedback from 0.2 to 1.0 (infinite tail) after the ftension(-3) shaping, inside the loop.
+#
+# Base drone (shared by every sweep_*.txt): FeedbackGain 0.7 (-9.6 dB, well above
+# the self-oscillation threshold of about 0.5 with these settings), FeedbackBody 0.3
+# (9.9 ms), ReverbMix 0.25, ReverbDecay 0.5 (reverb feedback 0.85); the other knobs
+# at their reset-to-default positions. Alone it settles within about 1 s at peak
+# 0.27 to 0.30, RMS about 0.11.
+# Timeline: ReverbDecay held at 0 for 4 s while the drone builds, ramped to 1
+# from 4 s to 24 s, held for 2 s.
+# Duration 26 s. No input. Default wavcheck jump threshold.
+#
+# @duration 26
+
+0 FeedbackGain 0.7
+0 FeedbackBody 0.3
+0 ReverbMix 0.25
+0 ReverbDecay 0.5
+0 ReverbDecay 0
+4 ReverbDecay 1 20

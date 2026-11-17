@@ -1,0 +1,19 @@
+# The bottom of the lowpass range with the drone still alive.
+#
+# Shows: sweep_lowpass.txt loses the drone near knob 0.15 (about 220 Hz) at
+# FeedbackGain 0.7, so the lowest cutoffs are never heard with sound in the loop.
+# Here feedback is at maximum (+12 dB), which keeps the loop oscillating down to
+# knob 0 (100 Hz): measured RMS about 0.05 at knob 0.1 and 0.013 to 0.03 at knob 0.
+# Drone: FeedbackGain 1, FeedbackBody 0.3, ReverbMix 0.25, ReverbDecay 0.5; other
+# knobs at their reset-to-default positions.
+# Timeline: lowpass at 0.3 for 2 s, ramped to 0 from 2 s to 22 s, held at 0 for 6 s.
+# Duration 28 s. No input. Default wavcheck thresholds.
+#
+# @duration 28
+
+0 FeedbackGain 1
+0 FeedbackBody 0.3
+0 ReverbMix 0.25
+0 ReverbDecay 0.5
+0 FeedbackLPFCutoff 0.3
+2 FeedbackLPFCutoff 0 20

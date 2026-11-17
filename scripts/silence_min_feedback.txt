@@ -1,0 +1,11 @@
+# Silence at minimum feedback.
+#
+# Shows: with the feedback knob at minimum (-60 dB) and every other knob at its
+# reset-to-default position (docs/PARAMETERS.md section 4), the instrument is
+# silent: the -90 dBFS noise that feeds the strings never builds up.
+# Acceptance criterion 4: peak below 0.001.
+# Duration 20 s. No input. Default wavcheck jump threshold.
+#
+# @duration 20
+
+0 FeedbackGain 0

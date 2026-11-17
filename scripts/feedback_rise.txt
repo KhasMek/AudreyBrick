@@ -1,0 +1,12 @@
+# Slow feedback rise from minimum to maximum over 30 s.
+#
+# Shows: silence, then the drone appearing once the loop gain passes unity (around
+# knob 0.47, about -26 dB, with the default knobs), then saturating towards +12 dB.
+# Every other knob stays at its reset-to-default position.
+# Acceptance criterion 4: peak above 0.05 before the end.
+# Duration 32 s (30 s ramp, then 2 s at maximum). No input. Default wavcheck jump threshold.
+#
+# @duration 32
+
+0 FeedbackGain 0
+0 FeedbackGain 1 30

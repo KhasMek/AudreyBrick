@@ -22,7 +22,7 @@ Files: `Source/BiquadFilters.cpp`, `Source/BiquadFilters.h`, `Source/DSPUtils.h`
 
 `Source/KarplusString.{h,cpp}` is itself a modified copy of DaisySP's `KarplusString`; its header notes "Original code licensed as MIT Copyright (c) 2020 Electrosmith, Corp." (covered by `licenses/daisysp.LICENSE`).
 
-**Derived code in our own tree.** Two upstream files are not vendored because they are bound to libDaisy: `FeedbackSynth_main.cpp` and `Source/FeedbackSynthControls.{h,cpp}`. Their logic (the parameter table, the knob update and the audio callback) is transcribed into `src/core/ParamTable.cpp` and `src/core/AudreyVoice.cpp`. Both files carry the upstream MIT notice with both copyright lines.
+**Derived code in our own tree.** Two upstream files are not vendored because they are bound to libDaisy: `FeedbackSynth_main.cpp` and `Source/FeedbackSynthControls.{h,cpp}`. Their logic (the parameter table, the knob update and the audio callback) is transcribed into `src/core/ParamTable.cpp` and `src/core/AudreyVoice.cpp`, and a second time, independently and for tests only, into `tests/ref/ReferenceHarness.{h,cpp}` (the reference harness the parity test compares `AudreyVoice` against). All of these files carry the upstream MIT notice with both copyright lines.
 
 ## 2. DaisySP, MIT modules
 
@@ -68,6 +68,20 @@ Limits of what was confirmed:
 | Built into | `audrey_lgpl` (**shared** library, so it can be replaced or relinked) |
 
 Files: `Source/Effects/reverbsc.h`, `Source/Effects/reverbsc.cpp`, `Source/Filters/tone.h`, `Source/Filters/tone.cpp`, `LICENSE`, `LICENSE.daisysp-mit-7f67768`, `PROVENANCE.md`.
+
+## 4. dr_wav (tools and tests only)
+
+| Item | Value |
+|---|---|
+| Location | `third_party/dr_libs/` |
+| Licence | Choice of Public Domain (Unlicense) or MIT No Attribution (MIT-0), as stated at the end of `dr_wav.h`. **We use MIT-0** |
+| Copyright line | `Copyright 2023 David Reid` (MIT-0 alternative in `dr_wav.h`) |
+| Source URL | https://github.com/mackron/dr_libs |
+| Commit | `35b5c392cc15456736c440a68dbe073178bbffe0` (dr_wav v0.14.6, 2026-10-31), fetched 2026-11-17. See `third_party/dr_libs/UPSTREAM.md` |
+| Licence file | `licenses/dr_wav.LICENSE` (lines 8658 to 8704 of `dr_wav.h`, unchanged) |
+| Built into | `audrey_tools` (static, `src/tools`), used by `audrey-render`, `wavcheck`, `audrey-gen-input`, `parity_test` and `tools_test`. **Not** part of `audrey_core` or the audio path, and not shipped in the device app |
+
+Files: `dr_wav.h`, plus our note `UPSTREAM.md`.
 
 ## Our own stand-ins (not third-party code)
 

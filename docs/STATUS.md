@@ -9,7 +9,7 @@ Maintained by the orchestrator. Last updated: 2026-11-17.
 | Milestone | State |
 |---|---|
 | M0 source study | Done, pending human review |
-| M1 host DSP | **M1-A and M1-B done and reviewed.** M1-C, M1-D not started |
+| M1 host DSP | **M1-A, M1-B and M1-C done and reviewed.** M1-D (aarch64 Linux build check) not started; it needs the Docker daemon running |
 | M2 host app | Not started. Blocked on the control scheme (D2) |
 | M2b input path | Not started |
 | M3 device build | Not started. Blocked on device checklist items 1 to 9 |
@@ -51,8 +51,8 @@ The human commits. The orchestrator stops at each point and proposes a message.
 |---|---|---|
 | 1 | M0 docs and decisions | Committed |
 | 2 | M1-A vendoring and build skeleton, reviewed | Committed |
-| 3 | M1-B control abstraction and voice, reviewed | Ready to commit |
-| 4 | M1-C render tool, parity test, reference set, reviewed | |
+| 3 | M1-B control abstraction and voice, reviewed | Committed |
+| 4 | M1-C render tool, parity test, reference set, reviewed | Ready to commit |
 | 5 | M1-D aarch64 build check, reviewed | |
 
 ## What was verified and how
@@ -105,6 +105,29 @@ Open after M1-A:
 Open after M1-B:
 - Nothing inside the repo yet pins `AudreyVoice` to the upstream logic; the reviewer's reference was out of tree. M1-C's parity test closes this.
 - Denormal flush-to-zero is not set anywhere yet. It belongs to the platform layer (M2).
+
+## M1-C result (2026-11-17)
+
+- Added the tools `audrey-render`, `wavcheck` and `audrey-gen-input`, an in-repo reference harness (`tests/ref`, transcribed from the upstream firmware, linking nothing from `src/core`), a parity test, 22 parameter scripts and `scripts/make_reference.sh`. dr_wav v0.14.6 is vendored (MIT-0) for WAV I/O in tools and tests only.
+- **Parity:** all 22 scripts render bit-identically through `AudreyVoice` (fed in irregular chunks) and through the reference harness. This closes the gap left by M1-B.
+- **The parity test was shown to bite.** The implementer injected 6 bugs and the reviewer 21 different ones into scratch copies of the wrapper. Every bug that changes the sound was caught, down to a one-unit-in-the-last-place change in a limiter constant. The one real blind spot found (an input clamp at plus or minus 1.0) was closed with a hot-input script and re-tested.
+- **Reference set:** 25 WAVs (22 renders, 3 generated inputs), 229 MB, so only `reference/SHA256SUMS` is committed and the WAVs are regenerated. Hashes are stable across runs on this Mac and are specific to this compiler and C library.
+- **Render health:** no non-finite samples; DC at most 1.6e-5; highest peak 0.80 (all knobs at maximum); no clicks at any knob move or switch toggle (level-relative click ratio at most 9.2 near events, against a limit of 30).
+- Nine tests pass in Release and under ASan/UBSan with no warnings. Re-verified by the orchestrator from a clean build after the review follow-ups, along with the hash check and the vendor check.
+- Render speed: about 135 to 155 times real time on one core of this Mac.
+
+What the renders show about the instrument (all from the original DSP, confirmed by parity):
+- With default knobs and feedback raised, the drone is a fairly static pair of tones near 1070 Hz (left) and 1152 Hz (right), string harmonics selected by the 1 ms body delay and the highpass. Movement appears once body or reverb is in the loop.
+- Left and right decorrelate completely once the loop oscillates, even with reverb at zero. `docs/SIGNAL_FLOW.md` is corrected.
+- The loop starts to self-oscillate around feedback knob 0.5 (about -24 dB) at default settings. A good drone setting for tests: feedback 0.7, body 0.3, reverb mix 0.25, decay 0.5.
+- The echo is outside the loop (bit-identical output with send at zero) and stays bounded at maximum repeats.
+- The lowpass kills the drone below about 220 Hz at moderate feedback; at +12 dB it survives to 100 Hz.
+
+Open after M1-C:
+- The follow-up changes (the level-relative click detector, script-header handling in the tools) were verified by tests and by the orchestrator, but not by a second full review.
+- The click detector cannot see a 0.1 step inside dense high-frequency drones such as `all_max`.
+- Nobody has listened to any render yet. That is for the human.
+- The switch's 8 ms debounce is not modelled, by design.
 
 ## Log
 
