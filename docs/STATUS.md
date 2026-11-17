@@ -9,7 +9,7 @@ Maintained by the orchestrator. Last updated: 2026-11-17.
 | Milestone | State |
 |---|---|
 | M0 source study | Done, pending human review |
-| M1 host DSP | **M1-A, M1-B and M1-C done and reviewed.** M1-D (aarch64 Linux build check) not started; it needs the Docker daemon running |
+| M1 host DSP | **Done and reviewed (M1-A to M1-D).** Awaiting the human's sign-off of the milestone |
 | M2 host app | Not started. Blocked on the control scheme (D2) |
 | M2b input path | Not started |
 | M3 device build | Not started. Blocked on device checklist items 1 to 9 |
@@ -52,8 +52,8 @@ The human commits. The orchestrator stops at each point and proposes a message.
 | 1 | M0 docs and decisions | Committed |
 | 2 | M1-A vendoring and build skeleton, reviewed | Committed |
 | 3 | M1-B control abstraction and voice, reviewed | Committed |
-| 4 | M1-C render tool, parity test, reference set, reviewed | Ready to commit |
-| 5 | M1-D aarch64 build check, reviewed | |
+| 4 | M1-C render tool, parity test, reference set, reviewed | Committed |
+| 5 | M1-D aarch64 build check, reviewed | Ready to commit |
 
 ## What was verified and how
 
@@ -128,6 +128,28 @@ Open after M1-C:
 - The click detector cannot see a 0.1 step inside dense high-frequency drones such as `all_max`.
 - Nobody has listened to any render yet. That is for the human.
 - The switch's 8 ms debounce is not modelled, by design.
+
+## M1-D result (2026-11-17)
+
+- Added `scripts/build_linux_arm64.sh` and `docker/` (a Debian 13 arm64 image pinned by digest, the in-container steps, a WAV comparison program and an optional maths-library probe). No source, CMake or existing script needed changing.
+- **gcc 14.2 / glibc 2.41 on Linux aarch64:** everything builds with no warnings; all nine tests pass in Release and under ASan/UBSan/LeakSanitizer; the parity test is bit-identical there for all 22 scripts; `process()` makes zero allocations under libstdc++.
+- **Linux against macOS:** 14 of 22 renders bit-identical; the 8 that differ are explained by last-bit differences in a few maths-library results and by Apple clang rewriting `powf`. Details and consequences are in `docs/PLAN.md` section 6, item 5.
+- Render speed in the container equals native (about 140 times real time on an Apple core). This says nothing about the Cortex-A53.
+- Reviewed by a separate agent, which re-ran the script, reproduced the table with its own comparison, confirmed the explanation from the binaries' imports and the code, and found no uninitialised reads with valgrind on four renders and the smoke test.
+- Review follow-up: the script could delete unrelated folders if `--out` pointed at a directory containing the repo. Fixed; it now refuses any output path inside or around the repo and any non-empty directory it did not create. The orchestrator re-tested three refusal cases and a full run on the real repo; `reference/SHA256SUMS` unchanged.
+
+What M1-D does not tell us: the device's glibc (probably older than 2.41, so these binaries are not device binaries), anything about SDL2 on the device, or device CPU cost.
+
+## M1 summary
+
+The original DSP runs on the Mac and on Linux aarch64 without libDaisy, unmodified, at the firmware's 48 kHz and 4-sample control block. `AudreyVoice` reproduces the firmware's audio callback bit for bit against two independent transcriptions. 22 scripted renders are checked for NaN, DC, peak and clicks, and hashed. The human has listened to the renders and reports they sound right (2026-11-17).
+
+Carried forward:
+- M2 needs the control scheme details settled (tabs on L1/R1, feedback on L2/R2).
+- Set flush-to-zero in the platform layer (M2) and regenerate the reference hashes when it lands.
+- The switch's 8 ms debounce is not modelled.
+- Device checklist items 1 to 9 are needed before M3. A probe app does not exist yet.
+- Two questions to the human are still open: where the audio-input information came from, and whether a real unit or recordings are available for comparison.
 
 ## Log
 

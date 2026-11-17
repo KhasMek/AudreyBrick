@@ -1,0 +1,33 @@
+# AudreyBrick: Linux aarch64 build check of the DSP core (task M1-D).
+#
+# Proves that the DSP libraries, the offline tools and the tests build and pass with
+# gcc on Linux aarch64. It does NOT produce a device binary: the device's glibc
+# version is still unknown (docs/PLATFORM_NOTES.md section 3, question 1), and this
+# image's glibc is probably newer than the device's.
+#
+# Used by scripts/build_linux_arm64.sh; build context is docker/.
+#
+# Base: official Debian stable, slim variant, pinned by the digest of its
+# linux/arm64/v8 manifest (not the multi-arch index), so the image cannot change
+# underneath us. Looked up on 2026-11-17 with
+#   docker buildx imagetools inspect debian:stable-slim
+# index   sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0
+# arm64   sha256:04bba436c86dbce81eac09593099a9b468c49c3ed4835820ba71bb27b135fedb
+# which is Debian 13.7 (trixie), image created 2026-11-04.
+#
+# Packages, nothing else (no SDL, no git):
+#   g++          gcc and libstdc++, plus libasan/libubsan/liblsan for the sanitizer build
+#   cmake        build system (the project needs 3.20 or newer)
+#   ninja-build  build tool
+#   locales      only to generate de_DE.UTF-8, so that the comma-decimal locale test in
+#                tests/core/script_source_test.cpp runs instead of printing [SKIP]
+# The package versions come from the Debian archive at build time and are not pinned;
+# the build script prints the gcc, glibc and cmake versions it actually used.
+FROM debian:stable-slim@sha256:04bba436c86dbce81eac09593099a9b468c49c3ed4835820ba71bb27b135fedb
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        g++ cmake ninja-build locales \
+ && sed -i 's/^# *\(de_DE.UTF-8 UTF-8\)/\1/' /etc/locale.gen \
+ && locale-gen \
+ && rm -rf /var/lib/apt/lists/*
