@@ -124,7 +124,7 @@ Decided 2026-11-17: the input stage computes `inMono = gain * (L + R)` with a sm
 
 ## 5. Build setup
 
-**Common:** CMake 3.20 or newer, C++17, no compiler extensions. DSP targets build with `-O2 -fwrapv` and never with `-ffast-math`. Warnings are enabled for our code and disabled for `third_party/`. Tests are plain executables registered with CTest, with no test framework dependency.
+**Common:** CMake 3.20 or newer, C++17, no compiler extensions. DSP targets build with `-O2 -fwrapv -ffp-contract=off -fno-fast-math` (the CMake variable `AB_DSP_OPT_OPTIONS`) and never with `-ffast-math`. Contraction is off so that clang on macOS and gcc on Linux do the same arithmetic. The firmware's own compiler probably fused multiply-adds, so rounding-level differences from the hardware exist either way [inferred]; in a saturating feedback loop these change the exact waveform but not its character. Any target that compiles DSP code, including upstream header-only code, must apply `AB_DSP_OPT_OPTIONS`. Warnings are enabled for our code and disabled for `third_party/`. Tests are plain executables registered with CTest, with no test framework dependency.
 
 **Targets:**
 - `audrey_dsp` (static): vendored upstream sources plus the MIT DaisySP modules. No SDL.

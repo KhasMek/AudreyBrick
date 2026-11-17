@@ -59,8 +59,10 @@ Other notices inside the firmware source:
 
 DaisySP at the pinned commit ships everything under one MIT `LICENSE` (`Copyright (c) 2020 Electrosmith, Corp.`). In December 2023 Electrosmith moved the Csound-derived modules into a separate repo, **DaisySP-LGPL, under LGPL-2.1**. Two modules the firmware uses are among them:
 
-- `Effects/reverbsc.{h,cpp}` (`ReverbSc`, "Ported from csound/soundpipe", Sean Costello and Istvan Varga). The `.cpp` in DaisySP-LGPL `c89d380` is identical to the pinned one apart from blank lines [ran diff].
-- `Filters/tone.{h,cpp}` (`Tone`, used inside the string). `tone.cpp` is byte-identical [ran diff].
+- `Effects/reverbsc.{h,cpp}` (`ReverbSc`, "Ported from csound/soundpipe", Sean Costello and Istvan Varga).
+- `Filters/tone.{h,cpp}` (`Tone`, used inside the string).
+
+Both `.cpp` files in DaisySP-LGPL `c89d380` are byte-identical to the pinned ones. The two `.h` files differ only in that DaisySP-LGPL adds a copyright and LGPL header and shortens a doc comment [ran diff; confirmed again during M1-A].
 
 The other modules we need (`dsp.h`, `delayline.h`, `dcblock`, `overdrive`, `crossfade`, `limiter`, `whitenoise`) are not in the LGPL repo and remain MIT [read].
 

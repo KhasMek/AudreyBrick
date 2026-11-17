@@ -9,7 +9,7 @@ Maintained by the orchestrator. Last updated: 2026-11-17.
 | Milestone | State |
 |---|---|
 | M0 source study | Done, pending human review |
-| M1 host DSP | Briefs written (`docs/briefs/M1.md`). **Not started.** Blocked on approval and decision D1 |
+| M1 host DSP | **M1-A done and reviewed.** M1-B, M1-C, M1-D not started |
 | M2 host app | Not started. Blocked on the control scheme (D2) |
 | M2b input path | Not started |
 | M3 device build | Not started. Blocked on device checklist items 1 to 9 |
@@ -49,8 +49,8 @@ The human commits. The orchestrator stops at each point and proposes a message.
 
 | # | Point | State |
 |---|---|---|
-| 1 | M0 docs and decisions | Ready to commit |
-| 2 | M1-A vendoring and build skeleton, reviewed | |
+| 1 | M0 docs and decisions | Committed |
+| 2 | M1-A vendoring and build skeleton, reviewed | Ready to commit |
 | 3 | M1-B control abstraction and voice, reviewed | |
 | 4 | M1-C render tool, parity test, reference set, reviewed | |
 | 5 | M1-D aarch64 build check, reviewed | |
@@ -77,7 +77,20 @@ The human commits. The orchestrator stops at each point and proposes a message.
 
 - Tests: none exist yet (no code).
 - Separate review: **not done.** The M0 documents were written by the orchestrator and have not been checked by a reviewer agent. Recommended before M1 starts: have a reviewer check `PARAMETERS.md` and `SIGNAL_FLOW.md` against the upstream source.
-- `THIRD_PARTY.md`: not created yet; nothing is vendored. It is part of M1-A.
+- `THIRD_PARTY.md`: created in M1-A.
+
+## M1-A result (2026-11-17)
+
+- Vendored unmodified: 10 Audrey II source files (`e5ab799`), 11 MIT DaisySP files and 4 LGPL-treated files (`7f67768`), with licence texts. `scripts/verify_vendor.sh` re-fetches the pins and compares 38 files.
+- Builds on macOS arm64: `audrey_lgpl` (shared: reverb and tone only) and `audrey_dsp` (static). Two smoke tests pass in Release and under ASan/UBSan.
+- Implemented by one agent, reviewed by another, which independently diffed the vendored files against upstream and inspected the libraries' symbols. Review verdict: accept, with follow-ups. The follow-ups were applied by the implementer and re-verified by the orchestrator (clean rebuild, both test runs, vendor check).
+- Added on review: `-ffp-contract=off -fno-fast-math` on all DSP code; licence notices for the code DaisySP ported from Mutable Instruments (stmlib, Plaits) and Soundpipe.
+- Smoke-test numbers: feedback +6 dB for 5 s peaks at 0.70; feedback -60 dB peaks at 5.1e-5; no non-finite samples.
+
+Open after M1-A:
+- Root `LICENSE` added: MIT, `Copyright (c) 2026 KhasMek`, covering our own code only.
+- Not researched: the origin and terms of the small musicdsp.org, openaudio blog and CMSIS-derived snippets inside DaisySP's `dsp.h` and `whitenoise.h`. They ship under DaisySP's MIT licence upstream.
+- gcc and Linux are untested until M1-D.
 
 ## Log
 
