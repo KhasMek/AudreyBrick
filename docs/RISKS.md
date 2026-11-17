@@ -35,6 +35,8 @@ Written at the end of M0 (2026-11-17). The on-device checklist is in `DEVICE_CHE
 | New | **Input:** mix the left and right input channels to mono before the engine's unity-gain entry point, and add an input gain control. Implemented in the M2b input stage as `in = gain * (L + R)`, gain default 1.0. A plain sum keeps a left-only source identical to the original; the gain control covers stereo sources that sum hotter |
 | New | **Input sources (2026-11-17):** off, the Brick's internal microphone, USB audio in, or an audio file |
 | New | **Modulation (2026-11-17):** the human wants a tab with LFOs and possibly an envelope to modulate parameters, in the spirit of the Beetlecrab Tempera. Not designed or scheduled yet; see `CONTROL_SCHEME_PROPOSAL.md` section 0. Timing relative to the fidelity sign-off is the human's call |
+| New | **Button mapping (2026-11-17):** `CONTROL_SCHEME_PROPOSAL.md` section 0 approved as the first version, to be tweaked in use |
+| New | **Modulation timing (2026-11-17):** after the plain port works for the human on the Brick |
 | New | **Commits:** the human commits. The orchestrator stops at each good commit point and proposes a short, plainly worded message (no `feat(...)` prefixes) |
 
 ## 2. Decisions needed from the human (as asked at the end of M0)

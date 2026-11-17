@@ -10,7 +10,7 @@ Maintained by the orchestrator. Last updated: 2026-11-17.
 |---|---|
 | M0 source study | Done, pending human review |
 | M1 host DSP | **Done and reviewed (M1-A to M1-D).** Awaiting the human's sign-off of the milestone |
-| M2 host app | Not started. Blocked on the control scheme (D2) |
+| M2 host app | Briefs written (`docs/briefs/M2.md`): M2-A button control logic, M2-B audio host and app shell, M2-C the screen. **Not started; waiting for the human's go-ahead** |
 | M2b input path | Not started |
 | M3 device build | Not started. Blocked on device checklist items 1 to 9 |
 | M4 tuning | Not started |
@@ -53,7 +53,11 @@ The human commits. The orchestrator stops at each point and proposes a message.
 | 2 | M1-A vendoring and build skeleton, reviewed | Committed |
 | 3 | M1-B control abstraction and voice, reviewed | Committed |
 | 4 | M1-C render tool, parity test, reference set, reviewed | Committed |
-| 5 | M1-D aarch64 build check, reviewed | Ready to commit |
+| 5 | M1-D aarch64 build check, reviewed | Committed |
+| 6 | M2 plan and briefs | Ready to commit |
+| 7 | M2-A button control logic, reviewed | |
+| 8 | M2-B audio host and app shell, reviewed (first point where the human can play it on the Mac; blank window) | |
+| 9 | M2-C the screen, reviewed | |
 
 ## What was verified and how
 
@@ -155,3 +159,5 @@ Carried forward:
 
 - 2026-11-17: M0 source study completed. Docs written. `CLAUDE.md` given an "M0 corrections" block. Stopped for human approval.
 - 2026-11-17: Human answered D1 to D7, asked for stereo-summed input with a gain control, and for tabs on L1/R1. M1 approved. Stopped at commit point 1.
+- 2026-11-17: M1-A to M1-D implemented, reviewed and committed. The human listened to the renders and reports they sound great.
+- 2026-11-17: Human approved the button mapping as a first version, named the input sources (mic, USB, file) and asked for a modulation tab after the plain port works on the Brick. M2 briefs written. Stopped at commit point 6.

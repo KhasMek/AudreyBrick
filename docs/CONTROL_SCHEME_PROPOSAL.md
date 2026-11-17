@@ -4,7 +4,7 @@
 
 ## 0. Button-by-button proposal, version 2 (2026-11-17)
 
-**Status: awaiting the human's approval.** This replaces the page layout in sections 2 onward; the principle in section 1 and the trade-off reasoning still apply. It follows the human's feedback: tabs on L1/R1 as GrainBrick does, feedback on L2/R2, one tab per section.
+**Status: approved by the human on 2026-11-17 as the first version, to be tweaked in use. The MOD tab comes after the plain port works on the Brick.** This replaces the page layout in sections 2 onward; the principle in section 1 and the trade-off reasoning still apply. It follows the human's feedback: tabs on L1/R1 as GrainBrick does, feedback on L2/R2, one tab per section.
 
 The target is the TrimUI Brick. The same mapping is also bound to the Mac keyboard and a gamepad, only so the app can be developed and tested before it goes on the device.
 
