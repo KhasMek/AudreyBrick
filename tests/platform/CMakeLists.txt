@@ -23,14 +23,16 @@ set(AB_PLATFORM_TESTS
 )
 # With SDL: the input map, option parsing and snapshot filling, the event log (M3-A).
 if(AB_HAVE_SDL)
-    list(APPEND AB_PLATFORM_TESTS platform_input_test platform_app_test platform_diag_events_test)
+    list(APPEND AB_PLATFORM_TESTS platform_input_test platform_app_test platform_diag_events_test
+         platform_router_test)
 endif()
 
 foreach(_t ${AB_PLATFORM_TESTS})
     add_executable(${_t} ${_t}.cpp)
     if(_t STREQUAL "platform_input_test")
         target_link_libraries(${_t} PRIVATE audrey_platform_sdl Threads::Threads)
-    elseif(_t STREQUAL "platform_app_test" OR _t STREQUAL "platform_diag_events_test")
+    elseif(_t STREQUAL "platform_app_test" OR _t STREQUAL "platform_diag_events_test"
+           OR _t STREQUAL "platform_router_test")
         # audrey_app_sdl brings audrey_platform_sdl and audrey_app_core (M3-A).
         target_link_libraries(${_t} PRIVATE audrey_app_sdl Threads::Threads)
     elseif(_t STREQUAL "platform_quit_test" OR _t STREQUAL "platform_diaglog_test" OR _t STREQUAL "platform_display_test"

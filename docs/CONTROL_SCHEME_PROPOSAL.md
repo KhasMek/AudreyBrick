@@ -2,6 +2,16 @@
 
 **Status: proposal, awaiting the human's approval. Nothing here is decided.** Based on `PARAMETERS.md`. The Brick's button names follow the SDL GameController API. Whether Menu and the Fn switch are free for apps is unknown (platform notes, open question 6), so neither is used.
 
+## 00. Changes made on the device (2026-11-18)
+
+These override section 0 where they differ.
+
+- **Quit is Menu + Start** (one press), as in other KNULLI games. The earlier Start + Select hold was removed because Select held + Start is KNULLI's screenshot.
+- **Start by itself does nothing, and Select + Start must stay free** for KNULLI's screenshot. So the "freeze" slot planned for Start in section 0 needs a different gesture when presets are built (M5). Candidates: Start + A, or a slot on the PRESETS tab only.
+- **A/B and X/Y are swapped by the launcher** so the Brick's labels match the table below. KNULLI names buttons by position; the Brick is labelled the Nintendo way.
+- No in-app screenshot: KNULLI's own works.
+- The screen shows no quit hint (the human's choice; Menu + Start is the system default).
+
 ## 0. Button-by-button proposal, version 2 (2026-11-17)
 
 **Status: approved by the human on 2026-11-17 as the first version, to be tweaked in use. The MOD tab comes after the plain port works on the Brick.** This replaces the page layout in sections 2 onward; the principle in section 1 and the trade-off reasoning still apply. It follows the human's feedback: tabs on L1/R1 as GrainBrick does, feedback on L2/R2, one tab per section.

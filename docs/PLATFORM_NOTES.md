@@ -124,7 +124,7 @@ The human's Brick runs `knulli-a133-trimui-brick-scarab-20260511.img.gz` (stable
 | **USB audio** | `snd-usb-audio` and `snd-usbmidi-lib` are **built into the 4.9.191 kernel**. So USB audio is supported at the driver level on this stable build, contrary to the worry in section 2. Whether capture and duplex work in practice is still [unknown] |
 | Microphone | The `ac107` ADC codec driver is built in. No init script mentions the mic or capture. Whether a capture device appears and at what level is [unknown] |
 | How Ports start | EmulationStation runs the port's `.sh` with `/bin/bash` through `configgen/generators/sh/shGenerator.py`. It writes `/tmp/gamecontrollerdb.txt` and **sets `SDL_GAMECONTROLLERCONFIG`** for the connected controllers before launching. So the SDL GameController API should see the Brick's buttons with standard names without us shipping a mapping |
-| Exit hotkey context | The generator registers `exit` as Alt+F4 key events for shell ports, so the system's hotkey sends Alt+F4. The app should quit on that (SDL delivers it as a key event or `SDL_QUIT`) [inferred] |
+| Exit hotkey context | The generator registers `exit` as Alt+F4 key events for shell ports, but `hotkeygen` is never started on this firmware, so nothing sends it (corrected 2026-11-18; see section 12, "System hotkeys", for how exit and screenshots really work) |
 | PortMaster | Not preinstalled; `/usr/share/portmaster/Install.PortMaster.sh` is. `control.txt` and `gptokeyb` are not in the image. A port that relies on PortMaster's helper scripts needs PortMaster installed first; a self-contained `.sh` does not |
 | Idle behaviour | `idlewatcher` daemon: after **300 s** idle the default mode is **dim**, and `system.batterysaver.mute` defaults to **1 (mute)**; after a further 900 s the default is suspend. Settings keys: `system.idlewatcher.timer`, `system.idlewatcher.extendedtimer`, `system.batterysaver.mode` (`dim`, `dispoff`, `suspend`, `shutdown`, `none`), `system.batterysaver.extendedmode`, `system.batterysaver.mute`. This confirms the 5-minute audio stop reported for GrainBrick. What counts as activity, and whether an app can inhibit it, is [unknown]; hooks live in `/etc/idlewatcher/active.d` and `extended.d` |
 | Tools on the device | `ldd`, `aplay`, `arecord`, `amixer`, `pactl`, `pw-cli`, `wpctl`, `evtest`, `sdl-jstest`'s controller database, Python 3.12, dropbear SSH |
@@ -173,3 +173,26 @@ Still unknown after this run: whether the system exit hotkey reaches the app (bo
 - The Ports system exposes this as a per-game option, **POWER MODE** (High Performance, Balanced, Power Saver). That is the supported way to run a port at full CPU speed, and KNULLI restores the governor itself afterwards.
 - KNULLI's exit path: `emulatorlauncher` kills the launcher script with SIGKILL and then runs the `gameStop` hooks; `knulli-es-swissknife --emukill` sends SIGTERM down the process tree.
 - The idle watcher's "aggressive" mode sets `powersave` and stops processes at nice -4; it is skipped while a `*.pause` file exists in `/var/run/battery-saver/`.
+
+## 12. Measured on the device (second run, 2026-11-18)
+
+Package `9b9d7db-dirty`. Two sessions: run 3 at KNULLI's defaults (about 15 minutes, mostly left droning untouched) and run 4 with the port's POWER MODE set to High Performance (about 4 minutes). Everything here is **[confirmed, device log or the human's report]**.
+
+| Item | Finding |
+|---|---|
+| **Face buttons** | Confirmed, all four. Labelled X = SDL `y` (raw button 6), Y = SDL `x` (raw 7), A = SDL `b` (raw 5), B = SDL `a` (raw 4). With both swaps on, the human reports every button doing what its label says. The inference in section 11 was right |
+| Other raw buttons | Raw joystick buttons 0 and 1 arrive (probably the volume buttons) and 14 is Menu (`guide`). None are mapped by the app; the volume buttons still change the system volume |
+| **Keep-awake** | Works. Run 3 went 12 minutes with no input; the screen stayed on and the sound kept playing (the human's report). The idle watcher's settings were at their defaults (dim and mute after 300 s) |
+| **Governor hypothesis** | Confirmed. With `schedutil` the CPU sat at **408 MHz in 76 of 89 ten-second samples** (600 MHz in 7, 816 in 1, 1416 in 5) and the callback load averaged **32 to 36 %** of a 256-frame buffer. With `performance` (KNULLI's POWER MODE: High Performance) the CPU stayed at 1416 MHz and the load was **11 to 12 %**, maximum 34 % |
+| **Overruns** | At the default governor: **9 callbacks in about 15 minutes took longer than their buffer** (maxima 100 to 122 %), one in each of 9 of the 89 windows. In High Performance mode: **0**. The human heard no problems in either run. So late callbacks do occur at the default setting, roughly one every 100 seconds, and they are either inaudible or absorbed by the audio server's own buffering |
+| Frame rate | 60.2 frames per second throughout both runs |
+| KNULLI's per-port settings | `ports["AudreyBrick.sh"].powermode=highperformance` is how the POWER MODE option is stored; `xbox_layout` unset. One cpufreq policy (`policy0`, CPUs 0 to 3); available governors: interactive, conservative, userspace, powersave, ondemand, performance, schedutil |
+| Battery | 83 % at the start of run 3, 79 % at the start of run 4, discharging (`axp2202-battery`) |
+| Text | The human finds the small text acceptable |
+| **System hotkeys** | Settled (firmware reading plus the human's tests on 2026-11-18). **Exit:** KNULLI's `triggerhappy` (`/etc/triggerhappy/triggers.d/multimedia_keys.conf`) runs `knulli-softreset` on Menu + Start; a **double press within half a second** sends SIGTERM down the game's process tree. The human confirmed this ends AudreyBrick. The single-press exit that emulators have comes from `evmapy`, which only starts when a `<rom>.keys` file exists; we ship none, and instead the app quits on Menu + Start itself (Menu is SDL `guide`, raw button 14). **Screenshot:** `triggerhappy` runs `knulli-screenshot` when **Start is pressed while Select is held**; it grabs `/dev/fb0` with `fbgrab` into `/userdata/screenshots/knulli-screenshot_1024x768_<date>.png`. The human confirmed these screenshots work and look right for our GLES app. Our former Start + Select hold-to-quit collided with it (every screenshot showed the quit banner), so that gesture was removed. `hotkeygen` is not used on this firmware: nothing starts it or sets its context, so the Alt+F4 exit context in `shGenerator.py` never fires |
+
+Decision by the human (2026-11-18): leave the default governor as it is for now; revisit if later features need the headroom.
+
+### Third run (2026-11-18)
+
+Package `401ae63-dirty`, three sessions. **[confirmed, device log and the human's report]** One press of Menu + Start closes the app (`exit: Menu + Start`), in either press order, with the keep-awake file removed and a clean shutdown each time. KNULLI's Select + Start screenshot of the running app shows the normal screen; the file is a 1024x768 PNG of about 15 kB in the card's `screenshots` folder.

@@ -131,6 +131,11 @@ int main()
                   fails({"--restore-on-exit", "/a", std::string(33, 'x').c_str(), "c"}),
               "content and expected must be [a-z0-9_]{1,32}");
     }
+    // M3-C: the help names Menu + Start as the pad's quit; no hold-to-quit is left.
+    check(keyboardHelpText().find("on a pad: Menu + Start") != std::string::npos &&
+              usageText("audreybrick").find("held 1 s") == std::string::npos &&
+              usageText("audreybrick").find("Select + Start") == std::string::npos,
+          "help: quit on a pad is Menu + Start; no Select + Start hold");
     check(fails({"--log"}), "--log without a value");
     check(fails({"--log", ""}), "--log with an empty name");
     check(fails({"--bogus"}), "unknown option is an error");

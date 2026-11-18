@@ -4,12 +4,13 @@
 # audrey_control (src/control/CMakeLists.txt).
 #
 # M3-A adds:
-#   audrey_app_core (static, no SDL): the Start + Select quit hold, the diagnostic
+#   audrey_app_core (static, no SDL): the Menu + Start quit (M3-C), the diagnostic
 #     log's file, formatting and rate limiting, and the build information. Built
 #     with or without SDL, so it is tested everywhere. M3-B adds the CPU frequency
 #     reader (CpuFreq.cpp), restore-on-exit (RestoreOnExit.cpp) and the stop-signal
 #     flag (Signals.cpp).
-#   audrey_app_sdl (static, SDL2): the diagnostic log's SDL parts (event
+#   audrey_app_sdl (static, SDL2): InputRouter (M3-C: InputMap actions to the
+#     model and the Menu + Start quit), and the diagnostic log's SDL parts (event
 #     descriptions, first-seen inputs, start-up facts).
 #   The version and build date: the cache variables AUDREY_VERSION and
 #     AUDREY_BUILD_DATE (root CMakeLists.txt), compiled into BuildInfo.cpp only.
@@ -17,7 +18,7 @@
 #     <prefix>/audreybrick with an rpath of $ORIGIN/libs.aarch64, and
 #     <prefix>/libs.aarch64/libaudrey_lgpl.so. Used by scripts/build_device.sh.
 add_library(audrey_app_core STATIC
-    QuitHold.cpp
+    MenuQuit.cpp
     DiagLog.cpp
     BuildInfo.cpp
     CpuFreq.cpp
@@ -32,6 +33,7 @@ set_source_files_properties(BuildInfo.cpp PROPERTIES COMPILE_DEFINITIONS
 if(AB_HAVE_SDL)
     add_library(audrey_app_sdl STATIC
         SdlDiagnostics.cpp
+        InputRouter.cpp
     )
     target_link_libraries(audrey_app_sdl PUBLIC audrey_app_core audrey_platform_sdl)
     # InputMap.h -> Buttons.h only; no DSP headers, but the same options as the app.

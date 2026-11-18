@@ -1,5 +1,7 @@
 # Second run on the Brick
 
+> **Historical.** This run happened on 2026-11-18; results are in `PLATFORM_NOTES.md` section 12. Quitting is now **Menu + Start**, not Select + Start. The current checklist is `THIRD_RUN_BRICK.md`.
+
 For the human. Written 2026-11-18 for the package built by `scripts/make_port.sh` after M3-B. **Not yet run.** The first run's results are in `PLATFORM_NOTES.md` section 11.
 
 ## What changed since the first run

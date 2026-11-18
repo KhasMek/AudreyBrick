@@ -1,14 +1,15 @@
 // Copyright (c) 2026 KhasMek
 // SPDX-License-Identifier: MIT
 //
-// M3-A, acceptance criterion 4, without SDL and with synthetic time:
-//   - QuitHold: Start + Select held together for 1 s quits. Not triggered by
-//     either button alone (however long), by a short press of both, or by
-//     releasing and re-pressing (holds do not add up); triggered at 1 s whichever
-//     button went down first; releaseAll cancels; progress for the banner.
-//   - Select still acts as the fine modifier while the hold is in progress: the
-//     same events go to a real ControlModel, which reports fine() and moves a
-//     parameter by the fine step.
+// M3-C (replacing M3-A's Start + Select hold), without SDL:
+//   - MenuQuit: Menu + Start quits at once, in either order (Start pressed while
+//     Menu is held, or Menu pressed while Start is held). Not Menu alone, not
+//     Start alone (however long), not after either was released, not on a
+//     repeated down of a button already held; releaseAll() forgets both; once
+//     triggered it stays triggered; other buttons do not matter.
+//   - Select + Start no longer quits and changes nothing: with a real
+//     ControlModel, Select is the fine modifier and Start does nothing (KNULLI's
+//     own Select + Start screenshot then shows the normal screen).
 //   - FramePacer: without vsync no more than 60 frames a second, with vsync no
 //     more than 75, whatever the frame's work time; FrameRate counts.
 
@@ -21,7 +22,7 @@
 #include "app/Buttons.h"
 #include "app/ControlModel.h"
 #include "app/FramePacer.h"
-#include "app/QuitHold.h"
+#include "app/MenuQuit.h"
 #include "control/ButtonControlSource.h"
 #include "control/ControlTuning.h"
 #include "core/ControlSource.h"
@@ -40,93 +41,74 @@ ButtonEvent up(Button b)
 {
     return {b, false};
 }
-
-// Steps a QuitHold from t0 to t1 in 1 ms steps; returns the time it triggered, or -1.
-double runUntil(QuitHold& q, double t0, double t1)
-{
-    for(double t = t0; t <= t1 + 1e-9; t += 0.001)
-        if(q.update(t))
-            return t;
-    return -1.0;
-}
 } // namespace
 
 int main()
 {
-    // --- Either button alone, however long ---------------------------------------
+    // --- Either button alone --------------------------------------------------------
     {
-        QuitHold q;
-        q.onButton(down(Button::Select), 0.0);
-        check(runUntil(q, 0.0, 5.0) < 0.0 && !q.active(), "Select alone for 5 s: no quit, no banner");
-        q.onButton(up(Button::Select), 5.0);
-        q.onButton(down(Button::Start), 5.0);
-        check(runUntil(q, 5.0, 10.0) < 0.0 && !q.active(), "Start alone for 5 s: no quit, no banner");
+        MenuQuit q;
+        q.onMenu(true);
+        q.onMenu(true); // a repeated down
+        check(!q.triggered() && q.menuHeld(), "Menu alone (held, repeated): no quit");
+        q.onMenu(false);
+        q.onButton(down(Button::Start));
+        q.onButton(down(Button::Start));
+        check(!q.triggered(), "Start alone (held, repeated): no quit");
+        q.onButton(up(Button::Start));
+        check(!q.triggered(), "Menu then Start, never together: no quit");
     }
-    // --- A short press of both ---------------------------------------------------
+    // --- Both, either order --------------------------------------------------------
     {
-        QuitHold q;
-        q.onButton(down(Button::Select), 0.0);
-        q.onButton(down(Button::Start), 0.1);
-        check(q.active(), "both down: the banner shows");
-        check(runUntil(q, 0.1, 0.9) < 0.0, "both held 0.8 s: no quit yet");
-        q.onButton(up(Button::Start), 0.9);
-        check(!q.active() && runUntil(q, 0.9, 5.0) < 0.0, "released at 0.8 s: cancelled, never quits");
+        MenuQuit q;
+        q.onMenu(true);
+        q.onButton(down(Button::Start));
+        check(q.triggered(), "Menu held, Start pressed: quits at once");
+        q.onButton(up(Button::Start));
+        q.onMenu(false);
+        check(q.triggered(), "and stays triggered after both are released");
     }
-    // --- Releasing and re-pressing does not add up --------------------------------
     {
-        QuitHold q;
-        q.onButton(down(Button::Start), 0.0);
-        q.onButton(down(Button::Select), 0.0);
-        check(runUntil(q, 0.0, 0.7) < 0.0, "first hold 0.7 s");
-        q.onButton(up(Button::Select), 0.7);
-        q.onButton(down(Button::Select), 0.75);
-        check(runUntil(q, 0.75, 1.70) < 0.0, "re-pressed: 0.7 + 0.95 s held in two parts does not quit");
-        const double at = runUntil(q, 1.70, 3.0);
-        check(std::fabs(at - 1.75) < 0.002, "the second hold quits after its own full second (at " +
-                                                 std::to_string(at) + " s, expected 1.75 s)");
+        MenuQuit q;
+        q.onButton(down(Button::Start));
+        q.onMenu(true);
+        check(q.triggered(), "Start held, Menu pressed: quits at once");
     }
-    // --- Triggered at 1 s, either order -------------------------------------------
-    for(int order = 0; order < 2; ++order)
+    // --- Releases, releaseAll, other buttons --------------------------------------------
     {
-        QuitHold     q;
-        const Button first  = order == 0 ? Button::Select : Button::Start;
-        const Button second = order == 0 ? Button::Start : Button::Select;
-        q.onButton(down(first), 2.0);
-        q.onButton(down(second), 2.5); // the clock starts here
-        check(std::fabs(q.progress(3.0) - 0.5f) < 1e-6f, std::string(buttonName(first)) + " first: progress 0.5 at 0.5 s");
-        check(!q.update(3.499), std::string(buttonName(first)) + " first: not yet at 0.999 s");
-        check(q.update(3.5) && q.triggered() && !q.active(), std::string(buttonName(first)) + " first: quits at exactly 1 s");
-        check(q.update(4.0) && q.progress(4.0) == 0.0f, "stays triggered; banner gone");
+        MenuQuit q;
+        q.onMenu(true);
+        q.onMenu(false);
+        q.onButton(down(Button::Start));
+        check(!q.triggered(), "Menu released before Start: no quit");
+        q.onButton(up(Button::Start));
+        q.onButton(down(Button::Start));
+        q.releaseAll(); // focus lost / controller removed while Start is held
+        q.onMenu(true);
+        check(!q.triggered() && q.menuHeld(), "releaseAll forgets Start: Menu afterwards does not quit");
+        q.releaseAll();
+        check(!q.menuHeld(), "releaseAll forgets Menu");
+        q.onButton(down(Button::Start));
+        check(!q.triggered(), "so Start after releaseAll does not quit either");
+        q.onButton(up(Button::Start));
+        q.onMenu(true);
+        for(Button b : {Button::Select, Button::A, Button::B, Button::X, Button::Y, Button::L1, Button::R1, Button::L2,
+                        Button::R2, Button::DpadUp, Button::DpadDown})
+            q.onButton(down(b));
+        check(!q.triggered(), "Menu held with every other button pressed: no quit");
+        q.onButton(down(Button::Start));
+        check(q.triggered(), "and Start then quits");
     }
-    // --- Other buttons do not matter; releaseAll cancels ---------------------------
-    {
-        QuitHold q;
-        q.onButton(down(Button::Select), 0.0);
-        q.onButton(down(Button::Start), 0.0);
-        q.onButton(down(Button::A), 0.2);
-        q.onButton(up(Button::A), 0.3);
-        q.onButton(down(Button::R2), 0.4);
-        check(q.active() && runUntil(q, 0.0, 0.95) < 0.0, "other presses during the hold do not restart or cancel it");
-        check(q.update(1.0), "... and it quits at 1 s");
 
-        QuitHold r;
-        r.onButton(down(Button::Select), 0.0);
-        r.onButton(down(Button::Start), 0.0);
-        r.releaseAll(); // focus lost
-        check(!r.active() && runUntil(r, 0.0, 3.0) < 0.0, "releaseAll (focus lost) cancels the hold");
-        r.onButton(down(Button::Start), 3.0); // Select is not down any more
-        check(runUntil(r, 3.0, 5.0) < 0.0, "after releaseAll, Start alone does not quit");
-        check(r.progress(0.5) == 0.0f, "progress is 0 when not active");
-    }
-    // --- Select is still the fine modifier during the hold ---------------------------
+    // --- Select + Start: no quit; Select is the fine modifier, Start does nothing -----
     {
         ButtonControlSource src;
         ControlModel        model(src);
-        QuitHold            q;
+        MenuQuit            q;
         ControlFrame        f{};
         auto both = [&](const ButtonEvent& e, double t) {
             model.onButton(e, t);
-            q.onButton(e, t);
+            q.onButton(e);
         };
         src.read(f);
         const float before = src.publishedStoredFeedback();
@@ -141,11 +123,14 @@ int main()
         check(std::fabs((after - before) - static_cast<float>(tuning::kFbTapStepFine)) < 1e-6f,
               "Select + R2 tap: the stored feedback moves by the fine step");
         both(down(Button::Start), 0.2);
-        check(model.fine() && q.active(), "Start + Select: banner active and FINE still on");
-        both(up(Button::Start), 0.5);
-        check(model.fine() && !q.active(), "Start released early: no quit, still FINE");
-        both(up(Button::Select), 0.6);
-        check(!model.fine() && !q.update(5.0), "Select released: FINE off, never quit");
+        model.tick(5.0);
+        for(int i = 0; i < 4; ++i)
+            src.read(f);
+        check(model.fine() && !q.triggered() && src.publishedStoredFeedback() == after,
+              "Select + Start held for 5 s: no quit, still FINE, nothing changed");
+        both(up(Button::Start), 5.1);
+        both(up(Button::Select), 5.2);
+        check(!model.fine() && !q.triggered(), "Select released: FINE off, never quit");
     }
 
     // --- Frame pacing -------------------------------------------------------------

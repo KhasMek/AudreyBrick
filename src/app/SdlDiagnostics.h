@@ -12,8 +12,8 @@
 //     or "[X/Y swapped]", M3-B);
 //   - whether L2/R2 arrive as trigger axes or as buttons: "controller axis first
 //     moved" and "controller button first pressed" lines, one per SDL button or
-//     axis, mapped or not (a press of an unmapped button such as guide or misc1
-//     is still logged);
+//     axis, mapped or not ('guide' is the Brick's Menu, used only for Menu +
+//     Start; a press of an unmapped button such as misc1 is still logged);
 //   - what the raw joystick reports for buttons the controller mapping does not
 //     cover (Menu, Fn): "joystick button/axis/hat first" lines. These are
 //     diagnostics only; the controls never use raw joystick indices;
@@ -96,7 +96,7 @@ class EventLogger
                  double t) noexcept;
 
     // The inputs that can quit the app or are part of a quit combination (Escape,
-    // Left/Right Alt, F4 as keys; Start and Select as Buttons) are logged the first
+    // Left/Right Alt, F4 as keys; Start as a Button and Menu, M3-C) are logged the first
     // time each is pressed ("quit-path input first seen"), so an unexpected quit can
     // be traced.
 
@@ -115,7 +115,7 @@ class EventLogger
     SeenSet<64>                         joyButtons_;
     SeenSet<16>                         joyAxes_;
     SeenSet<4 * 16>                     joyHats_; // hat index * 16 + value
-    SeenSet<6>                          quitInputs_; // Escape, LAlt, RAlt, F4, Start, Select
+    SeenSet<6>                          quitInputs_; // Escape, LAlt, RAlt, F4, Start, Menu
     RateLimiter                         keys_{kKeyLinesPerWindow, kKeyWindowSeconds};
     RateLimiter                         window_{20, 10.0};
     Uint32                              otherTypes_[48] = {};

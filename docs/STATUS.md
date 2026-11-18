@@ -12,7 +12,7 @@ Maintained by the orchestrator. Last updated: 2026-11-17.
 | M1 host DSP | **Done and reviewed (M1-A to M1-D).** Awaiting the human's sign-off of the milestone |
 | M2 host app | **Done and reviewed (M2-A, M2-B, M2-C): the app plays on the Mac with the full screen.** Awaiting the human's play test and sign-off of the milestone |
 | M2b input path | Not started |
-| M3 device build | **The app runs on the Brick** (first run 2026-11-18: screen, sound, buttons and quitting all work). M3-B fixes from that run are done and reviewed. Waiting for the human's second run (`docs/SECOND_RUN_BRICK.md`) |
+| M3 device build | **The app runs on the Brick; two device runs done (2026-11-18).** Buttons, keep-awake, screenshots and sound confirmed by the human. M3-C (quit on Menu + Start) is done, reviewed and confirmed on the device in a third run. **The plain port runs on the Brick with its full control scheme.** Awaiting the human's choice of what comes next |
 | M4 tuning | Not started |
 | M5 presets, polish, release decision | Not started |
 
@@ -60,7 +60,8 @@ The human commits. The orchestrator stops at each point and proposes a message.
 | 9 | M2-C the screen, reviewed | Committed |
 | 10 | Screen: plain engine values for the five unitless parameters | Committed |
 | 11 | M3-A device build, device behaviour and the Port package, reviewed; firmware findings and the first-run checklist | Committed |
-| 12 | M3-B fixes from the first device run (button swaps, CPU frequency logging, opt-in governor, signal hardening), reviewed; device results and the second-run checklist | Ready to commit |
+| 12 | M3-B fixes from the first device run (button swaps, CPU frequency logging, opt-in governor, signal hardening), reviewed; device results and the second-run checklist | Committed |
+| 13 | M3-C: quit on Menu + Start, hold-to-quit removed, quit hint in the status line; second-run results and the third-run checklist | Ready to commit |
 
 ## What was verified and how
 
@@ -219,7 +220,7 @@ Open after M2-C:
 - **`std::tanf`:** GCC 12's library does not declare it and the unmodified upstream `DSPUtils.h` calls it. `src/shim/std_cmath_compat.h` supplies it for libstdc++ older than 14 (orchestrator's decision). Arithmetic is unchanged: parity passes on Debian 12, whose renders match the same 17 of 25 macOS reference files as Debian 13.
 - **Tested against the device's own libraries** (`scripts/test_on_knulli_rootfs.sh`, a container whose root is extracted from the firmware image): the device's loader resolves everything; the app logs "linked 2.32.8"; the audio, controls and logging self-test passes with the test-only `--no-video` option; the launcher works from any directory, with spaces in the path and without the executable bit; SIGTERM, SIGINT, SIGHUP and a killed launcher all end the app cleanly.
 - **Not testable off the device:** the display path (Mali driver, EGL, renderer) and ALSA output. Without a framebuffer the app exits in milliseconds with SDL's error in both logs.
-- **Device behaviour added to the app:** `--fullscreen`; quit on SDL_QUIT, Alt+F4, Escape, and Start + Select held one second (with a "HOLD TO QUIT" banner); a diagnostic log (`--log`); renderer reset handling; integer scaling only when the output is at least 1024x768; an overrun counter (one atomic increment on the audio thread, nothing else new there).
+- **Device behaviour added to the app:** `--fullscreen`; quit on SDL_QUIT, Alt+F4, Escape, and (at the time; replaced by Menu + Start in M3-C) Start + Select held one second; a diagnostic log (`--log`); renderer reset handling; integer scaling only when the output is at least 1024x768; an overrun counter (one atomic increment on the audio thread, nothing else new there).
 - **Launcher** (`packaging/AudreyBrick.sh`): self-contained bash, no PortMaster. Keeps the last 8 runs' logs, records device state at start (battery-saver settings, CPU governor, sound cards, capture devices), forwards signals, and keeps the device awake by creating `/var/run/battery-saver/audreybrick.pause` while the app runs (the idle watcher's hooks skip dim, mute and suspend while any `*.pause` file exists; read from the firmware's scripts, untested on the device). `AUDREY_KEEP_AWAKE=0` turns that off.
 - **Package:** `scripts/make_port.sh <image>` builds, tests the build in the device root, packages, and tests the package itself; it prints hashes so the packaged binary is the tested one. Output in `dist/` (git-ignored).
 - Tests: 39 in Release and ASan/UBSan, 30 under ThreadSanitizer and without SDL, 30 in each Debian 13 container, 39 in the Debian 12 device build. Vendor check and reference hashes pass. Re-verified by the orchestrator from clean builds, including `make_port.sh` (exit 0).
@@ -228,7 +229,7 @@ Open after M2-C:
 Open after M3-A:
 - Everything in `docs/FIRST_RUN_BRICK.md` is untested until the human runs it.
 - `README.txt` in the package says "source repository: to be published"; resolve before any public distribution.
-- Start + Select is the quit chord; the control scheme reserves Start for the freeze slot (M5). Revisit then.
+- (Superseded in M3-C: quit is now Menu + Start.)
 - The device's SDL also has an OSS `dsp` audio driver, not listed in the platform notes' table.
 
 ## First device run and M3-B (2026-11-18)
@@ -248,6 +249,27 @@ Open:
 - A USB pad with Xbox-style labels would have its A/B and X/Y swapped by our defaults.
 - The swap applies per launch; there is no on-screen setting for it.
 
+## Second device run and M3-C (2026-11-18)
+
+**Second run (package 9b9d7db-dirty).** Results in `docs/PLATFORM_NOTES.md` section 12. In short: all four face buttons now match their labels; keep-awake works (12 minutes untouched, no dim or mute); the slow-CPU explanation is confirmed (408 MHz and 32 to 36 % callback load at the default governor, 1416 MHz and 11 to 12 % in KNULLI's High Performance mode); 9 callbacks overran in about 15 minutes at the default governor and none in High Performance, with nothing audible. The human finds the small text acceptable and decided to leave the default governor alone for now.
+
+**System hotkeys, worked out from the firmware and confirmed by the human.** KNULLI's exit for any game is Menu + Start pressed twice quickly (a soft reset that sends SIGTERM); its screenshot is Start pressed while Select is held. Both work with our port. Our Start + Select hold-to-quit collided with the screenshot.
+
+**M3-C:**
+- Quit is Menu + Start, one press, handled by the app (`src/app/MenuQuit`); Menu is not a control-model button.
+- The hold-to-quit feature and its banner are removed. Select + Start has no function in the app.
+- An in-app screenshot (Start + X, own PNG writer) and an evmapy `.keys` file were built and then removed at the human's decision: KNULLI's screenshot works, and the app handling Menu + Start itself makes the helper unnecessary. Nothing of either remains.
+- A `MENU+START QUIT` hint was added to the status line and then removed at the human's request (it looked out of place and cut the controller name; Menu + Start is the system default). The screen has no quit hint.
+- Event routing between the input map, the control model and the quit logic now lives in `src/app/InputRouter`, which is tested with synthetic SDL events.
+- Review: no blocking findings; the reviewer confirmed the removal left nothing behind and that a SIGTERM arriving during shutdown is harmless. It injected three bugs into the App-level wiring that no test caught; with `platform_router_test` each of them now fails a test. That follow-up round was verified by the orchestrator, not re-reviewed.
+- Tests: 44 in Release and ASan/UBSan, 35 under ThreadSanitizer, 33 without SDL, 33 in each Debian 13 container, 44 in the device build, 206 device-root checks. Vendor check and reference hashes pass. Re-verified by the orchestrator from clean builds, including `make_port.sh` (exit 0); the packaged binary's hash equals the tested build's.
+
+**Third run (package 401ae63-dirty), three sessions.** Each ended with `exit: Menu + Start` and a clean shutdown, in both press orders. The KNULLI screenshot the human sent shows the normal screen with no banner. The human reports everything working as expected.
+
+Open:
+- What a habitual double Menu + Start press does after the app has already closed was not reported.
+- The M5 "freeze" slot can no longer use Start alone or Select + Start; see `CONTROL_SCHEME_PROPOSAL.md` section 00.
+
 ## Pitch range finding (2026-11-17, from the human's first play test)
 
 The human played M2-B on the Mac: generally working as expected, but the pitch range seemed limited to about an octave, unlike the hardware.
@@ -264,6 +286,8 @@ Decision: choose a playable init patch by ear after the presets work (M5). Until
 - 2026-11-17: Human answered D1 to D7, asked for stereo-summed input with a gain control, and for tabs on L1/R1. M1 approved. Stopped at commit point 1.
 - 2026-11-17: M1-A to M1-D implemented, reviewed and committed. The human listened to the renders and reports they sound great.
 - 2026-11-17: M2 (A, B, C) implemented, reviewed, played by the human and committed. The human chose to get it running on the Brick before the input path; the firmware image (Scarab 20260511) was downloaded and inspected, findings in `docs/PLATFORM_NOTES.md` section 10.
+- 2026-11-18: Third device run: Menu + Start quits cleanly; KNULLI screenshots are clean. The human asked for the quit hint to be removed; done. Stopped at commit point 13.
+- 2026-11-18: Second device run: buttons, keep-awake, screenshots and the governor question all settled. The human chose Menu + Start for quitting and no in-app screenshot. M3-C in progress.
 - 2026-11-18: The human ran the package on the Brick: it works. M3-B (button swaps, frequency logging, opt-in governor, signal hardening) implemented, reviewed and verified. Stopped at commit point 12 for the second run.
 - 2026-11-18: M3-A implemented, reviewed and verified. Package in `dist/`. Stopped at commit point 11 for the human's first run on the Brick.
 - 2026-11-17: Human approved the button mapping as a first version, named the input sources (mic, USB, file) and asked for a modulation tab after the plain port works on the Brick. M2 briefs written. Stopped at commit point 6.

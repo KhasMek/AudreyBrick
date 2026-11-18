@@ -1,5 +1,7 @@
 # First run on the Brick
 
+> **Historical.** This run happened on 2026-11-18 and worked. Two things below have since changed: quitting is now **Menu + Start** (Select + Start is KNULLI's screenshot and no longer quits), and A/B/X/Y are swapped by the launcher to match their labels. Current facts are in `PLATFORM_NOTES.md` sections 11 and 12; the current checklist is `THIRD_RUN_BRICK.md`.
+
 For the human. Written 2026-11-18 for the package built by `scripts/make_port.sh` (M3-A). **Not yet run.**
 
 What has been tested off the device: the binary loads against the firmware's own glibc, C++ library and SDL 2.32.8; audio processing, controls, logging, the launcher and quitting on signals all work in a container built from the firmware image. **What has never been tested: the screen (the Mali video driver) and sound output through ALSA.** This run is their first test, so a failure here is useful information, not a setback.

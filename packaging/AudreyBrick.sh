@@ -26,6 +26,8 @@
 #     by default);
 #   - writes one line to stdout.log with the app's version and these settings as
 #     resolved ("launcher: settings: ...");
+#   - notes in stdout.log whether KNULLI's input helpers (evmapy, hotkeygen,
+#     triggerhappy) are running for this launch (see "System hotkeys" below);
 #   - runs the app in the background, forwards TERM, INT and HUP to it, waits
 #     until it has really exited, and returns its exit status. The app is also
 #     started with --exit-with-parent, so it quits even if this script is killed
@@ -33,6 +35,13 @@
 #     itself removes the keep-awake file and restores the governor
 #     (--remove-on-exit, --restore-on-exit); otherwise this script does it at exit
 #     as well (the second restore finds nothing to do).
+#
+# System hotkeys (M3-C): the app quits on Menu + Start itself (it reads both
+# buttons from the pad). KNULLI's soft reset (Menu + Start pressed twice quickly,
+# triggerhappy -> knulli-softreset) ends the port with SIGTERM, which the app also
+# handles. KNULLI's screenshot (Start pressed while Select is held, triggerhappy ->
+# knulli-screenshot -> /userdata/screenshots) needs nothing from the port. No
+# pad-to-keyboard (.keys) file is shipped, so KNULLI's evmapy does not run.
 #
 # The only files this script ever deletes or writes, other than its own log files
 # in data/: the keep-awake file it created, and, only with AUDREY_GOVERNOR set, the
@@ -379,6 +388,27 @@ main() {
             echo "launcher: $XBOX_LAYOUT_FLAG exists (KNULLI's SWITCH A/B and X/Y is on for this launch)"
         else
             echo "launcher: $XBOX_LAYOUT_FLAG does not exist (KNULLI's SWITCH A/B and X/Y is off)"
+        fi
+        # KNULLI's input helpers (M3-C): evmapy (pad to keyboard, started by KNULLI
+        # only if it finds a <rom>.keys file), hotkeygen and triggerhappy (thd).
+        if have pgrep; then
+            for helper in evmapy hotkeygen; do
+                pids="$(pgrep -f "bin/$helper" 2>/dev/null | tr '\n' ' ')"
+                if [ -n "$pids" ]; then echo "launcher: input helper $helper: running (pid ${pids% })"
+                else echo "launcher: input helper $helper: not running"; fi
+            done
+            pids="$(pgrep -x thd 2>/dev/null | tr '\n' ' ')"
+            if [ -n "$pids" ]; then echo "launcher: input helper triggerhappy (thd): running (pid ${pids% })"
+            else echo "launcher: input helper triggerhappy (thd): not running"; fi
+        else
+            echo "launcher: pgrep not found: input helpers not checked"
+        fi
+        if compgen -G "/var/run/evmapy/*.json" > /dev/null 2>&1; then
+            for cfg in /var/run/evmapy/*.json; do
+                echo "launcher: evmapy config ${cfg##*/}: $(grep -c '"trigger"' "$cfg" 2>/dev/null) action(s), keys: $(grep -o 'KEY_[A-Z0-9_]*' "$cfg" 2>/dev/null | sort -u | tr '\n' ' ')"
+            done
+        else
+            echo "launcher: no /var/run/evmapy/*.json (evmapy has no pad configuration for this launch)"
         fi
         if compgen -G "$PAUSE_DIR/*.pause" > /dev/null 2>&1; then
             echo "launcher: pause files present before start: $(cd "$PAUSE_DIR" && echo *.pause)"

@@ -31,6 +31,7 @@
 #include "app/BuildInfo.h"
 #include "app/CpuFreq.h"
 #include "app/DisplayPolicy.h"
+#include "app/InputRouter.h"
 #include "app/RestoreOnExit.h"
 #include "app/Signals.h"
 #include "core/ParamTable.h"
@@ -119,9 +120,8 @@ std::string keyboardHelpText()
            "  X              X button: hold to shift the d-pad to the tab's other parameters\n"
            "  Y              Y button: hold + a d-pad direction resets that parameter\n"
            "  Left Shift     Select: fine adjust while held\n"
-           "  Return         Start (no function yet)\n"
-           "  Left Shift + Return held 1 s, or Select + Start held 1 s on a pad: quit\n"
-           "  Escape, Alt+F4 quit\n";
+           "  Return         Start (no function by itself)\n"
+           "  Escape, Alt+F4 quit (on a pad: Menu + Start)\n";
 }
 
 std::string usageText(const char* program)
@@ -717,8 +717,6 @@ void App::fillSnapshot(double t)
     snap_.controllerConnected = input_.controllerConnected();
     copyString(snap_.controllerName, sizeof snap_.controllerName, input_.controllerName().c_str());
 
-    snap_.quitHoldActive   = quit_.active();
-    snap_.quitHoldProgress = quit_.progress(t);
 }
 
 void App::render(const UiSnapshot& s)
@@ -947,7 +945,8 @@ int App::run()
     std::uint64_t drainTarget = 0;
     double       lastPresent  = -1.0;
 
-    bool running = true;
+    InputRouter router(*model_, quit_, selftest);
+    bool        running = true;
     while(running)
     {
         const double frameStart = now();
@@ -973,7 +972,10 @@ int App::run()
             events_.onEvent(e, action, be, input_, logTime());
             if(e.type == SDL_RENDER_TARGETS_RESET || e.type == SDL_RENDER_DEVICE_RESET)
                 ui_.onRenderReset(); // the atlas is rebuilt on the next draw
-            if(action == InputMap::Action::Quit)
+            // M3-C: the model, MenuQuit and self-test filtering in one place
+            // (app/InputRouter.h), the same code the router test drives.
+            const InputRouter::Result routed = router.route(action, be, t);
+            if(routed == InputRouter::Result::Quit)
             {
                 if(running)
                 {
@@ -985,17 +987,10 @@ int App::run()
                 }
                 running = false;
             }
-            else if(selftest)
-                continue; // self-test: real input is ignored
-            else if(action == InputMap::Action::Button)
+            else if(routed == InputRouter::Result::MenuStart && running)
             {
-                model_->onButton(be, t);
-                quit_.onButton(be, t); // watches the same events; the model still gets them
-            }
-            else if(action == InputMap::Action::ReleaseAll)
-            {
-                model_->releaseAll(t);
-                quit_.releaseAll();
+                running     = false;
+                exitReason_ = "Menu + Start";
             }
         }
 
@@ -1013,11 +1008,6 @@ int App::run()
         }
 
         model_->tick(t);
-        if(!selftest && running && quit_.update(t))
-        {
-            running     = false;
-            exitReason_ = "Start + Select held for 1 s";
-        }
 
         if(selftest)
         {

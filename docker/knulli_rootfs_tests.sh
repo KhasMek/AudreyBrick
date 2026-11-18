@@ -108,6 +108,16 @@ ms="$(sed -n 's/^launcher: device state took \([0-9]*\) ms$/\1/p' "$DATA/stdout.
 cp "$DATA/audreybrick.log" /ab/out/launcher-audreybrick.log
 cp "$DATA/stdout.log" /ab/out/launcher-stdout.log
 
+section "M3-C: the launcher reports KNULLI's input helpers; no .keys file is shipped"
+[ ! -e "$PORTS/AudreyBrick.sh.keys" ] && pass "no AudreyBrick.sh.keys in the package (the app handles Menu + Start itself)" \
+    || fail "the package holds an AudreyBrick.sh.keys"
+grep -qE '^launcher: input helper evmapy: (running|not running)' "$DATA/stdout.log" \
+    && grep -qE '^launcher: input helper hotkeygen: (running|not running)' "$DATA/stdout.log" \
+    && grep -qE '^launcher: input helper triggerhappy \(thd\): (running|not running)' "$DATA/stdout.log" \
+    && grep -qE '^launcher: (no /var/run/evmapy/\*\.json|evmapy config )' "$DATA/stdout.log" \
+    && pass "stdout.log notes the input helpers (nothing runs in this container)" || fail "no input-helper notes"
+grep -E '^launcher: (input helper|evmapy config|no /var/run/evmapy)' "$DATA/stdout.log" | sed 's/^/  /'
+
 section "Executable bit restored, AUDREY_BUFFER 512, then out-of-range values"
 chmod a+x "$PKG_BIN"
 launch AUDREY_BUFFER=512 AUDREY_ARGS="$QUICK"

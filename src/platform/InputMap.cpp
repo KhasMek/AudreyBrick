@@ -207,6 +207,9 @@ InputMap::Action InputMap::handle(const SDL_Event& e, ButtonEvent& out)
         case SDL_CONTROLLERBUTTONDOWN:
         case SDL_CONTROLLERBUTTONUP:
         {
+            // M3-C: Menu (SDL 'guide') is reported on its own, for Menu + Start.
+            if(e.cbutton.button == SDL_CONTROLLER_BUTTON_GUIDE)
+                return e.type == SDL_CONTROLLERBUTTONDOWN ? Action::MenuDown : Action::MenuUp;
             const Binding* b = find(Source::ControllerButton, e.cbutton.button);
             if(b == nullptr)
                 return Action::None;

@@ -7,13 +7,13 @@
 //   - the first press of each Button logs one "button first seen" line naming the
 //     SDL event (controller button, trigger axis, key); later presses log nothing;
 //   - SDL controller buttons and axes log their first use, mapped or not (guide
-//     is "not mapped"; a trigger axis says "L2 (trigger axis)");
+//     is "Menu (quits with Start)", M3-C; a trigger axis says "L2 (trigger axis)");
 //   - raw joystick buttons, axes and hats log their first use (diagnostics);
 //   - unmapped keys are logged, at most 10 per 10 s, the rest counted; mapped keys
 //     and key repeats are not "unmapped";
 //   - Alt+F4 quits (F4 alone does not, and is logged as an unmapped key), with the
-//     reason text; Escape too; quit-path inputs (Escape, Alt, F4, Start, Select)
-//     are logged the first time each is pressed;
+//     reason text; Escape too; quit-path inputs (Escape, Alt, F4, Start, Menu)
+//     are logged the first time each is pressed; Select no longer is (M3-C);
 //   - focus changes, render resets and the first event of an unknown type are logged.
 // No SDL_Init: these SDL calls work without it.
 
@@ -165,8 +165,8 @@ int main()
     check(count(s, "controller button first pressed: 'a' (0) -> A") == 1 &&
               count(s, "controller button first pressed: 'back' (4) -> Select") == 1,
           "SDL controller buttons: first press logged with the Button they map to");
-    check(count(s, "controller button first pressed: 'guide' (5) -> not mapped") == 1,
-          "an unmapped controller button (guide) is still logged");
+    check(count(s, "controller button first pressed: 'guide' (5) -> Menu (quits with Start)") == 1,
+          "guide is logged as Menu, used for quitting");
     check(count(s, "controller axis first moved: 'lefttrigger' (4) = 32767 -> L2 (trigger axis)") == 1,
           "the trigger axis: logged once as L2 (trigger axis)");
 
@@ -244,9 +244,11 @@ int main()
               "Escape: quit-path first-seen line, marked (quits)");
         check(count(q, "quit-path input first seen: key scancode 226 'Left Alt' down") == 1, "Left Alt: quit-path first seen");
         check(count(q, "quit-path input first seen: key scancode 61 'F4' down") == 1, "F4: quit-path first seen, once");
-        check(count(q, "quit-path input first seen: key scancode 225 'Left Shift' down") == 1,
-              "Select (from Left Shift): quit-path first seen");
-        check(count(q, "quit-path input first seen:") == 4, "four quit-path inputs seen so far (Start not yet)");
+        check(count(q, "quit-path input first seen: key scancode 225 'Left Shift' down") == 0 &&
+                  count(q, "quit-path input first seen: controller button 'back'") == 0,
+              "Select is not a quit-path input any more");
+        check(count(q, "quit-path input first seen: controller button 'guide' (5) down") == 1, "Menu (guide): quit-path first seen");
+        check(count(q, "quit-path input first seen:") == 4, "four quit-path inputs seen so far: Escape, Left Alt, F4, Menu (Start not yet)");
     }
 
     // --- Focus, render resets, other events ---------------------------------------------
@@ -339,8 +341,9 @@ int main()
                   countLines(bs, "button first seen: L1", "swapped]") == 0,
               "both swaps: L1 unchanged and not marked");
         b.log.close();
-        check(count(ws, "'guide'") == 1 && count(ws, "controller button first pressed: 'guide' (5) -> not mapped") == 1,
-              "Menu (guide) pressed five times: one first-seen line, nothing else");
+        check(count(ws, "'guide'") == 2 && count(ws, "controller button first pressed: 'guide' (5) -> Menu (quits with Start)") == 1 &&
+                  count(ws, "quit-path input first seen: controller button 'guide' (5) down") == 1,
+              "Menu (guide) pressed five times: one first-pressed line and one quit-path line, nothing else");
         if(std::getenv("KEEP_LOG") == nullptr)
             std::remove(swapPath.c_str());
     }

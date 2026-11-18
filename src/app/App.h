@@ -35,8 +35,8 @@
 //   - The run ends when n seconds of audio have been rendered, plus at most two
 //     buffers so the commands sent last are processed. A wall-clock timeout of
 //     max(3 n, n + 10) seconds stops a run whose audio does not advance.
-//   - Keyboard and controller input are ignored (only quit is honoured; the
-//     Start + Select hold is not watched).
+//   - Keyboard and controller input are ignored (only quit is honoured; Menu +
+//     Start is not watched).
 //   - The final state is printed. The exit code is 0 only if the run reached n
 //     seconds of audio before the timeout, delivered every scripted event at or
 //     before n seconds, every reported value is finite, and every --expect-*
@@ -50,10 +50,12 @@
 //   - The renderer: accelerated with vsync (not in self-test mode), then
 //     accelerated without vsync, then the software renderer; every attempt is
 //     logged. Without vsync the frame rate is capped at 60 (FramePacer).
-//   - Quit paths: SDL_QUIT, window close, Escape, Alt+F4 (InputMap) and Start +
-//     Select held together for one second (QuitHold, fed the same ButtonEvents as
-//     the model, which still gets them: Select stays the fine modifier). While the
-//     hold is in progress the screen shows "HOLD TO QUIT".
+//   - Quit paths: SDL_QUIT, window close, Escape, Alt+F4 (InputMap), the stop
+//     signals, and Menu + Start on a pad (M3-C, app/MenuQuit.h: Start pressed while
+//     Menu is held, or Menu while Start is held, quits at once). Menu (SDL 'guide')
+//     reaches only MenuQuit; Start also goes to the model, which does nothing with it.
+//     Every event's InputMap action goes through InputRouter (app/InputRouter.h),
+//     which feeds the model and MenuQuit and reports the quit.
 //   - SDL_RENDER_TARGETS_RESET / SDL_RENDER_DEVICE_RESET rebuild the glyph atlas.
 //   - --exit-with-parent (Linux; the launcher passes it): PR_SET_PDEATHSIG, so the
 //     app gets SIGTERM (SDL turns it into SDL_QUIT, a clean exit) if the process
@@ -115,7 +117,7 @@
 #include "app/CpuFreq.h"
 #include "app/DiagLog.h"
 #include "app/FramePacer.h"
-#include "app/QuitHold.h"
+#include "app/MenuQuit.h"
 #include "app/RestoreOnExit.h"
 #include "app/SdlDiagnostics.h"
 #include "app/UiSnapshot.h"
@@ -245,7 +247,7 @@ class App
     double                        longestFrame_     = 0.0; // seconds of work in one loop iteration
 
     // Device behaviour (M3).
-    QuitHold      quit_;
+    MenuQuit      quit_;
     DiagLog       log_;
     EventLogger   events_{log_};
     FrameRate     fps_;

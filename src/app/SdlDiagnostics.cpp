@@ -552,8 +552,10 @@ void EventLogger::onEvent(const SDL_Event& e, InputMap::Action action, const But
         }
         if(which < 0 && action == InputMap::Action::Button && be.pressed)
         {
-            which = be.button == Button::Start ? 4 : be.button == Button::Select ? 5 : -1;
+            which = be.button == Button::Start ? 4 : -1;
         }
+        if(which < 0 && action == InputMap::Action::MenuDown)
+            which = 5;
         if(which >= 0 && quitInputs_.first(static_cast<std::size_t>(which)))
             log_.line(t, "quit-path input first seen: %s%s", desc,
                       action == InputMap::Action::Quit ? " (quits)" : "");
@@ -576,7 +578,10 @@ void EventLogger::onEvent(const SDL_Event& e, InputMap::Action action, const But
             if(controllerButtons_.first(e.cbutton.button))
                 log_.line(t, "controller button first pressed: '%s' (%d) -> %s%s", controllerButtonName(e.cbutton.button),
                           static_cast<int>(e.cbutton.button),
-                          action == InputMap::Action::Button ? buttonName(be.button) : "not mapped", swapNote);
+                          action == InputMap::Action::Button     ? buttonName(be.button)
+                          : action == InputMap::Action::MenuDown ? "Menu (quits with Start)"
+                                                                 : "not mapped",
+                          swapNote);
             break;
         case SDL_CONTROLLERAXISMOTION:
         {

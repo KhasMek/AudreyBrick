@@ -221,7 +221,12 @@ int main()
         check(isButton(m, cbutton(SDL_CONTROLLERBUTTONDOWN, p.cb), p.b, true), "controller down " + name);
         check(isButton(m, cbutton(SDL_CONTROLLERBUTTONUP, p.cb), p.b, false), "controller up " + name);
     }
-    check(isNone(m, cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_GUIDE)), "Guide ignored");
+    {
+        ButtonEvent g{};
+        check(m.handle(cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_GUIDE), g) == InputMap::Action::MenuDown &&
+                  m.handle(cbutton(SDL_CONTROLLERBUTTONUP, SDL_CONTROLLER_BUTTON_GUIDE), g) == InputMap::Action::MenuUp,
+              "Guide (the Brick's Menu) is reported as MenuDown / MenuUp, not as a Button (M3-C)");
+    }
 
     // --swap-ab (M3-B): controller 'a' -> B and 'b' -> A, presses and releases;
     // nothing else changes (X/Y, shoulders, d-pad, Start/Select, triggers, keyboard).
@@ -264,7 +269,9 @@ int main()
             check(isButton(s, key(SDL_KEYDOWN, k.sc), k.b, true) && isButton(s, key(SDL_KEYUP, k.sc), k.b, false),
                   "swap on, keyboard unchanged: " + name);
         }
-        check(isNone(s, cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_GUIDE)), "swap on: Guide still ignored");
+        ButtonEvent g{};
+        check(s.handle(cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_GUIDE), g) == InputMap::Action::MenuDown,
+              "swap on: Guide is still Menu");
         s.setSwapAB(false);
         check(isButton(s, cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_A), Button::A, true) &&
                   isButton(s, cbutton(SDL_CONTROLLERBUTTONUP, SDL_CONTROLLER_BUTTON_A), Button::A, false) &&

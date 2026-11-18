@@ -34,8 +34,10 @@
 // next available one is opened, and the caller is told to release all buttons.
 //
 // Other events that matter to the app are reported too: quit (window close,
-// SDL_QUIT, Escape, Alt+F4) and release-all (window focus lost, active controller
-// removed).
+// SDL_QUIT, Escape, Alt+F4), release-all (window focus lost, active controller
+// removed), and (M3-C) the Brick's Menu button, SDL game controller button
+// 'guide', as MenuDown / MenuUp: it is not a control-model Button; the app uses
+// it only for its Menu + Start quit (app/MenuQuit.h).
 // Whenever release-all is returned, the trigger pressed states are cleared as
 // well, so the next trigger press above the threshold is reported as a press.
 
@@ -63,6 +65,8 @@ class InputMap
         Button,     // `out` holds a button event
         Quit,       // window close, SDL_QUIT, Escape or Alt+F4
         ReleaseAll, // focus lost or the active controller was removed: release every button
+        MenuDown,   // M3-C: controller button 'guide' (the Brick's Menu) went down
+        MenuUp,     // and up
     };
 
     InputMap() = default;

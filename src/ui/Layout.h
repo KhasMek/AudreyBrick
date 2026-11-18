@@ -12,10 +12,6 @@
 //                  and "STORED" labels the big number.
 //   switch box     inverse and "ON" when on, LATCHED / HELD / LATCH+HELD, B key
 //                  (lit only for the momentary hold).
-//   quit banner    only while Start + Select are held (UiSnapshot::quitHoldActive):
-//                  "HOLD TO QUIT", a bar filling over the one-second hold and
-//                  "SELECT + START  RELEASE TO CANCEL", drawn in place of the
-//                  current tab's rows (the area below), so nothing overlaps.
 //   current tab    one row per bound d-pad binding: arrows (with an X key for X
 //                  bindings), name and value at 32 px or more, a position bar.
 //                  Rows for the other X state are dimmed with outline arrows;

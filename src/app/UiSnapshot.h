@@ -97,12 +97,6 @@ struct UiSnapshot
     // --- Controller -------------------------------------------------------------------
     bool controllerConnected = false;
     char controllerName[64]  = {}; // SDL GameController name, empty if none
-
-    // --- Quit (M3) --------------------------------------------------------------------
-    // Start + Select are held together and the one-second hold has not completed
-    // (app/QuitHold.h): the screen shows "HOLD TO QUIT" in place of the current tab.
-    bool  quitHoldActive   = false;
-    float quitHoldProgress = 0.0f; // 0..1 of the hold
 };
 
 } // namespace audreybrick

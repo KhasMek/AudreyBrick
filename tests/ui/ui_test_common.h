@@ -207,16 +207,23 @@ struct NamedSnapshot
     UiSnapshot  snap;
 };
 
-// M3: Start + Select held, 0.4 s into the one-second quit hold (Select is also
-// FINE). The current tab's area shows the quit banner.
-inline UiSnapshot quitHoldSnapshot()
+// M3-C: Select and Start held (KNULLI's screenshot combination; Select is FINE,
+// Start does nothing): the normal screen.
+inline UiSnapshot selectStartSnapshot()
 {
     UiSnapshot s = playingSnapshot(Tab::Filter);
     s.fine       = true;
     setButton(s, Button::Select, true);
     setButton(s, Button::Start, true);
-    s.quitHoldActive   = true;
-    s.quitHoldProgress = 0.4f;
+    return s;
+}
+
+// M3-C: the status line with the device's real strings (as logged on the Brick).
+inline UiSnapshot deviceStatusSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Loop);
+    std::snprintf(s.audio.driver, sizeof s.audio.driver, "%s", "alsa");
+    std::snprintf(s.controllerName, sizeof s.controllerName, "%s", "TRIMUI Brick Controller");
     return s;
 }
 
@@ -233,7 +240,8 @@ inline std::vector<NamedSnapshot> allSnapshots()
         {"startup", startupSnapshot()},
         {"delay_switch_held", delaySwitchHeldSnapshot()},
         {"long_status", longStatusSnapshot()},
-        {"quit_hold", quitHoldSnapshot()},
+        {"select_start", selectStartSnapshot()},
+        {"device_status", deviceStatusSnapshot()},
     };
 }
 

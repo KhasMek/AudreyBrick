@@ -44,11 +44,13 @@ Always:
   L2 (hold)        feedback down
   A (hold)         feedback to maximum while held
   B (hold)         delay switch on while held (the pitch-warping "!!" switch)
-  SELECT (hold)    fine: the d-pad and L2/R2 move in small steps
+  SELECT (hold)    fine: the d-pad and L2/R2 move in small steps (SELECT + START
+                   has no function in AudreyBrick; it is KNULLI's screenshot, see below)
   SELECT + B       latch the delay switch on or off
   X (hold)         the d-pad moves the tab's other parameter (DELAY: repeats)
   Y + d-pad        reset that parameter to its default
-  START            nothing yet
+  START            nothing by itself
+  MENU + START     quit
 
 Tabs (d-pad left/right, d-pad up/down):
   LOOP     frequency (one semitone per tap)   body
@@ -60,9 +62,18 @@ Tabs (d-pad left/right, d-pad up/down):
 
 Quitting
 --------
-  - SELECT + START held together for one second ("HOLD TO QUIT" shows while you hold), or
-  - KNULLI's exit hotkey (sent to the app as Alt+F4), or
-  - Escape on a USB keyboard.
+  - MENU + START: hold MENU and press START (or the other way round), once. The
+    app quits at once. (KNULLI's soft reset, MENU + START pressed twice quickly,
+    also ends AudreyBrick.)
+  - On a USB keyboard: Escape, or Alt+F4.
+
+
+Screenshots
+-----------
+AudreyBrick adds no screenshot function of its own. Use KNULLI's: hold SELECT and
+press START. KNULLI saves the screen as a PNG in the screenshots folder of the SD
+card (/userdata/screenshots on the device). AudreyBrick keeps running and the
+picture shows its normal screen.
 
 
 Logs
