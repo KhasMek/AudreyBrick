@@ -41,7 +41,7 @@ Each tab puts its first parameter on d-pad left/right and its second on up/down.
 
 Every tab shows all eleven values, the feedback level, the switch state, the output meter and the limiter state in a strip that never changes; the tab's own parameters are drawn large with the button that moves each one next to it.
 
-Stepping: a tap moves 1/128 of the knob's travel and holding ramps with acceleration (full travel in about 2.5 s). Ramps are computed on the audio side at the control rate, so they do not zipper.
+Stepping: a tap moves 1/128 of the knob's travel and holding ramps with acceleration (0.1 of travel per second rising to 0.4 over one second, so full travel takes about 2.9 s; a tuning constant for M4). Ramps are computed on the audio side at the control rate, so they do not zipper.
 
 ### Input sources (decided by the human, 2026-11-17)
 

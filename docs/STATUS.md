@@ -10,7 +10,7 @@ Maintained by the orchestrator. Last updated: 2026-11-17.
 |---|---|
 | M0 source study | Done, pending human review |
 | M1 host DSP | **Done and reviewed (M1-A to M1-D).** Awaiting the human's sign-off of the milestone |
-| M2 host app | Briefs written (`docs/briefs/M2.md`): M2-A button control logic, M2-B audio host and app shell, M2-C the screen. **Not started; waiting for the human's go-ahead** |
+| M2 host app | **M2-A (button control logic) done and reviewed.** M2-B (audio host and app shell) and M2-C (the screen) not started |
 | M2b input path | Not started |
 | M3 device build | Not started. Blocked on device checklist items 1 to 9 |
 | M4 tuning | Not started |
@@ -54,8 +54,8 @@ The human commits. The orchestrator stops at each point and proposes a message.
 | 3 | M1-B control abstraction and voice, reviewed | Committed |
 | 4 | M1-C render tool, parity test, reference set, reviewed | Committed |
 | 5 | M1-D aarch64 build check, reviewed | Committed |
-| 6 | M2 plan and briefs | Ready to commit |
-| 7 | M2-A button control logic, reviewed | |
+| 6 | M2 plan and briefs | Committed |
+| 7 | M2-A button control logic, reviewed | Ready to commit |
 | 8 | M2-B audio host and app shell, reviewed (first point where the human can play it on the Mac; blank window) | |
 | 9 | M2-C the screen, reviewed | |
 
@@ -154,6 +154,24 @@ Carried forward:
 - The switch's 8 ms debounce is not modelled.
 - Device checklist items 1 to 9 are needed before M3. A probe app does not exist yet.
 - Two questions to the human are still open: where the audio-input information came from, and whether a real unit or recordings are available for comparison.
+
+## M2-A result (2026-11-17)
+
+- Added the button control logic with no SDL: `ControlModel` (UI side: tabs, taps, holds, modifiers, with caller-supplied time), a wait-free single-producer single-consumer queue, the held-state word, and `ButtonControlSource` (audio side: applies commands and integrates ramps at the 12 kHz control rate). Built as `audrey_control`. All tuning numbers are in `src/control/ControlTuning.h`.
+- 17 tests pass in Release and ASan/UBSan, the 8 control tests pass under ThreadSanitizer, and all 17 pass with gcc 14 on Linux aarch64 in both containers. No warnings. Reference hashes unchanged. Re-verified by the orchestrator from clean builds, including the Linux script (exit 0).
+- With no input, output is bit-identical to the M1 voice at defaults. `read()` makes zero allocations.
+- Review: the first version failed to build with gcc on Linux (a missing include); fixed, and the Linux build is now part of every M2 task's verification. The reviewer derived 14 groups of expected values by hand, all matching, and injected 21 bugs, of which the tests caught 18. The three misses are closed: a bare queue test under ThreadSanitizer (shown to fail when either queue ordering is weakened) and reset tests on parameters with non-zero defaults.
+- Learned: ThreadSanitizer with Apple clang on arm64 does not see races in struct copies of 32 bytes or more, so the queue's ordering is tested with a 24-byte payload. The 72-byte command type itself cannot be race-checked on macOS.
+
+Decisions the implementer made where the scheme was silent (all tested; for the human to judge when playing):
+- L2/R2 use the same 250 ms tap-then-ramp delay as the d-pad, so a tap is exactly 0.5 dB.
+- After a tab change or an X press/release, a held d-pad direction does nothing until released. L2/R2 keep ramping through a tab change.
+- Opposite directions held together cancel.
+- L2/R2 while A is held move the stored feedback unheard; the sound jumps to it on release.
+- The frequency ramp is continuous; only taps are semitones.
+- Full travel on a held d-pad takes about 2.9 s.
+
+Notes for later tasks: M2-B must call `ControlModel::releaseAll` on focus loss and controller removal. Presets (M5) must save the stored feedback, not the frame value.
 
 ## Log
 
