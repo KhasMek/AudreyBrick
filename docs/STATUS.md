@@ -225,4 +225,5 @@ Decision: choose a playable init patch by ear after the presets work (M5). Until
 - 2026-11-17: M0 source study completed. Docs written. `CLAUDE.md` given an "M0 corrections" block. Stopped for human approval.
 - 2026-11-17: Human answered D1 to D7, asked for stereo-summed input with a gain control, and for tabs on L1/R1. M1 approved. Stopped at commit point 1.
 - 2026-11-17: M1-A to M1-D implemented, reviewed and committed. The human listened to the renders and reports they sound great.
+- 2026-11-17: M2 (A, B, C) implemented, reviewed, played by the human and committed. The human chose to get it running on the Brick before the input path; the firmware image (Scarab 20260511) was downloaded and inspected, findings in `docs/PLATFORM_NOTES.md` section 10.
 - 2026-11-17: Human approved the button mapping as a first version, named the input sources (mic, USB, file) and asked for a modulation tab after the plain port works on the Brick. M2 briefs written. Stopped at commit point 6.

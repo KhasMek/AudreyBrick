@@ -105,3 +105,38 @@ Follow PortMaster conventions so the app runs on KNULLI and, for free, on other 
 ## 9. Existing apps worth knowing (for UX reference and to avoid duplication)
 
 GrainBrick (granular, closed source, Python), Brickchord (chord synth, Python), ChipNomad and ChooChooTracker (trackers, SDL2), PocketTracker (GPL), LittleGPTracker (GPL-3.0), 4TRKmini (commercial groovebox, native C++, USB MIDI), MTRX, Pocket Acid (GPL-3.0, Zig), m8c, and several NextUI-only instruments by boorch (BRIXEQ, EUCLIDTRACK, Grampus, Dronage Terminal, PolyBrik). Use them as UX references. Their latency and CPU claims are developer statements, not benchmarks. [reported]
+
+## 10. Read from the firmware image (KNULLI "Scarab", 20260511, TrimUI Brick)
+
+The human's Brick runs `knulli-a133-trimui-brick-scarab-20260511.img.gz` (stable release of 11 May 2026; SHA-256 of the download `2c6e059b0f7db9d6b0fce3c383e72ca989b1c1224f4b3e81af11c66ebea5421f`). On 2026-11-17 the image was downloaded and its system squashfs inspected. Everything below is **[confirmed, read from the image]** unless marked otherwise. It describes what is installed, not how it behaves when running.
+
+| Item | Finding |
+|---|---|
+| Base | Batocera 42, Buildroot 2024.11, `OS_NAME=knulli` |
+| **glibc** | **2.39** (highest symbol version `GLIBC_2.39`). This is the build floor: a device binary must not need anything newer |
+| **libstdc++** | `libstdc++.so.6.0.32`, highest `GLIBCXX_3.4.32` (GCC 13). A build with a newer GCC must link libstdc++ statically or avoid newer symbols |
+| **SDL2** | **2.32.8** (`libSDL2-2.0.so.0.3200.8`), plus SDL2_ttf 2.24, SDL2_image 2.8, SDL2_mixer, SDL2_gfx, SDL2_net |
+| SDL2 audio drivers built in | **`alsa`**, `disk`, `dummy`. **No `pipewire` and no `pulseaudio` driver.** So there is nothing to choose between: SDL uses ALSA |
+| SDL2 video drivers built in | **`mali`** (Mali framebuffer), plus dummy/offscreen. No KMSDRM, Wayland or X11. Expect a fullscreen 1024x768 GLES surface; windowing and resizing do not apply |
+| Audio server | PipeWire 1.4.6 with WirePlumber and `pipewire-pulse`, started by `/etc/init.d/S06audio`. ALSA's default PCM is the PipeWire plugin (`99-pipewire-default.conf`), for playback **and capture**. So SDL (ALSA) goes through PipeWire |
+| Built-in sound card | WirePlumber rule `51-builtinspeaker.conf` forces the card to **S16LE, 48000 Hz, 2 channels, no mmap, software mixer**, with a comment that the driver does not publish its capabilities. 48 kHz is therefore the native rate; our float output is converted to 16-bit by the audio stack |
+| Kernel | Module trees for `4.9.191`, `4.9.191_v90s` and `6.11.11` are present. The 4.9.191 tree has the A133 codec drivers (`sun50iw10-codec`, `snd-soc-ac107`) built in, so that is the Brick's kernel [inferred from the driver names] |
+| **USB audio** | `snd-usb-audio` and `snd-usbmidi-lib` are **built into the 4.9.191 kernel**. So USB audio is supported at the driver level on this stable build, contrary to the worry in section 2. Whether capture and duplex work in practice is still [unknown] |
+| Microphone | The `ac107` ADC codec driver is built in. No init script mentions the mic or capture. Whether a capture device appears and at what level is [unknown] |
+| How Ports start | EmulationStation runs the port's `.sh` with `/bin/bash` through `configgen/generators/sh/shGenerator.py`. It writes `/tmp/gamecontrollerdb.txt` and **sets `SDL_GAMECONTROLLERCONFIG`** for the connected controllers before launching. So the SDL GameController API should see the Brick's buttons with standard names without us shipping a mapping |
+| Exit hotkey context | The generator registers `exit` as Alt+F4 key events for shell ports, so the system's hotkey sends Alt+F4. The app should quit on that (SDL delivers it as a key event or `SDL_QUIT`) [inferred] |
+| PortMaster | Not preinstalled; `/usr/share/portmaster/Install.PortMaster.sh` is. `control.txt` and `gptokeyb` are not in the image. A port that relies on PortMaster's helper scripts needs PortMaster installed first; a self-contained `.sh` does not |
+| Idle behaviour | `idlewatcher` daemon: after **300 s** idle the default mode is **dim**, and `system.batterysaver.mute` defaults to **1 (mute)**; after a further 900 s the default is suspend. Settings keys: `system.idlewatcher.timer`, `system.idlewatcher.extendedtimer`, `system.batterysaver.mode` (`dim`, `dispoff`, `suspend`, `shutdown`, `none`), `system.batterysaver.extendedmode`, `system.batterysaver.mute`. This confirms the 5-minute audio stop reported for GrainBrick. What counts as activity, and whether an app can inhibit it, is [unknown]; hooks live in `/etc/idlewatcher/active.d` and `extended.d` |
+| Tools on the device | `ldd`, `aplay`, `arecord`, `amixer`, `pactl`, `pw-cli`, `wpctl`, `evtest`, `sdl-jstest`'s controller database, Python 3.12, dropbear SSH |
+
+### What this settles
+
+- Open questions 1 and 2 of section 3: glibc is 2.39; the audio server is PipeWire and SDL reaches it through ALSA only.
+- The device build must target **glibc 2.39 or older and libstdc++ from GCC 13 or older**. The Debian 13 test image used in M1-D has glibc 2.41 and is too new for device binaries. Debian 12 (glibc 2.36, GCC 12) is a safe build base.
+- The app is built against SDL 2.0.18-level API and runs against 2.32.8, the same minor line as the development Mac.
+- The `--audio-driver` option is of little use on the device (only `alsa`), but buffer size still matters.
+- The app must handle a fullscreen Mali surface: no window manager, no vsync guarantee, and the logical size should equal the screen.
+
+### What still needs the device
+
+Stable buffer size and real callback load on the A53; what the idle watcher treats as activity; whether SDL reports the buttons as expected (including L2/R2 as buttons or axes, and which physical button SDL calls A); mic and USB capture devices and duplex latency; legibility of 16 px text; and whether the Fn switch or Menu are delivered to apps.
