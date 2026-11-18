@@ -4,8 +4,8 @@
 // Number formatting for the screen (ui/Format.h): note names and Hz across the
 // Frequency range (including its ends, notes 16 and 72), Hz/kHz tiers, ms/s
 // switch-over, dB with sign and no negative zero, percentages, CPU, values at the
-// ParamTable range ends (unitless knobs show their position, 0..100 %),
-// non-finite values and truncation.
+// ParamTable range ends (unitless knobs show the plain engine value, two
+// decimals), non-finite values and truncation.
 
 #include <cmath>
 #include <cstddef>
@@ -155,6 +155,13 @@ int main()
     expect(formatPercent, 0.42f, "42 %", "percent");
     expect(formatPercent, 1.0f, "100 %", "percent");
     expect(formatPercent, 1.5f, "150 %", "percent");
+    expect(formatPlain, 0.0f, "0.00", "plain");
+    expect(formatPlain, -0.0f, "0.00", "plain negative zero");
+    expect(formatPlain, -0.004f, "0.00", "plain rounding to zero from below");
+    expect(formatPlain, 0.2f, "0.20", "plain");
+    expect(formatPlain, 1.5f, "1.50", "plain");
+    expect(formatPlain, 0.854f, "0.85", "plain");
+    expect(formatPlain, std::numeric_limits<float>::quiet_NaN(), "--", "plain NaN");
     expect(formatCpu, 0.0f, "0.0 %", "cpu");
     expect(formatCpu, 0.034f, "3.4 %", "cpu");
     expect(formatCpu, 0.0996f, "10 %", "cpu rounding into whole numbers");
@@ -174,26 +181,26 @@ int main()
     expectKnob(Knob::FeedbackHPFCutoff, 0.0f, false, "10.0 Hz");
     expectKnob(Knob::FeedbackHPFCutoff, 1.0f, false, "4.00 kHz");
     expectKnob(Knob::FeedbackHPFCutoff, paramSpec(Knob::FeedbackHPFCutoff).defaultNorm, false, "250 Hz");
-    expectKnob(Knob::ReverbMix, 0.0f, false, "0 %");
-    expectKnob(Knob::ReverbMix, 1.0f, false, "100 %");
-    expectKnob(Knob::ReverbDecay, 0.0f, false, "0 %");
-    expectKnob(Knob::ReverbDecay, 0.5f, false, "50 %"); // engine 0.85: the number is the knob position
-    expectKnob(Knob::ReverbDecay, 1.0f, false, "100 %");
-    expectKnob(Knob::EchoDelaySend, 0.0f, false, "0 %");
-    expectKnob(Knob::EchoDelaySend, 1.0f, false, "100 %");
+    expectKnob(Knob::ReverbMix, 0.0f, false, "0.00");
+    expectKnob(Knob::ReverbMix, 1.0f, false, "1.00");
+    expectKnob(Knob::ReverbDecay, 0.0f, false, "0.20");
+    expectKnob(Knob::ReverbDecay, 0.5f, false, "0.85"); // ftension pre-shaping, engine 0.85
+    expectKnob(Knob::ReverbDecay, 1.0f, false, "1.00");
+    expectKnob(Knob::EchoDelaySend, 0.0f, false, "0.00");
+    expectKnob(Knob::EchoDelaySend, 1.0f, false, "1.00");
     expectKnob(Knob::EchoDelayTime, 0.0f, false, "50.0 ms");
     expectKnob(Knob::EchoDelayTime, 1.0f, false, "5.00 s");
     expectKnob(Knob::EchoDelayTime, 1.0f, true, "1.29 s");
     expectKnob(Knob::EchoDelayTime, paramSpec(Knob::EchoDelayTime).defaultNorm, false, "500 ms");
-    expectKnob(Knob::EchoDelayFeedback, 0.0f, false, "0 %");
-    expectKnob(Knob::EchoDelayFeedback, 1.0f, false, "100 %"); // engine 1.5
-    expectKnob(Knob::EchoDelayFeedback, 0.5f, false, "50 %");
-    expectKnob(Knob::OutputVolume, 0.0f, false, "0 %");
-    expectKnob(Knob::OutputVolume, 1.0f, false, "100 %");
-    expectKnob(Knob::OutputVolume, paramSpec(Knob::OutputVolume).defaultNorm, false, "71 %"); // engine 0.5
-    expectKnob(Knob::EchoDelaySend, 0.5f, false, "50 %"); // engine 0.25
-    expectKnob(Knob::ReverbMix, 0.5f, false, "50 %");
-    expectKnob(Knob::OutputVolume, -0.0f, false, "0 %");
+    expectKnob(Knob::EchoDelayFeedback, 0.0f, false, "0.00");
+    expectKnob(Knob::EchoDelayFeedback, 1.0f, false, "1.50");
+    expectKnob(Knob::EchoDelayFeedback, 0.5f, false, "0.75");
+    expectKnob(Knob::OutputVolume, 0.0f, false, "0.00");
+    expectKnob(Knob::OutputVolume, 1.0f, false, "1.00");
+    expectKnob(Knob::OutputVolume, paramSpec(Knob::OutputVolume).defaultNorm, false, "0.50");
+    expectKnob(Knob::EchoDelaySend, 0.5f, false, "0.25"); // square law
+    expectKnob(Knob::ReverbMix, 0.5f, false, "0.50");
+    expectKnob(Knob::OutputVolume, -0.0f, false, "0.00");
 
     // --- Truncation and odd units ---------------------------------------------------------------------
     {
@@ -208,13 +215,13 @@ int main()
         formatEngineValue(unk, sizeof unk, 2.5f, "V");
         check(std::strcmp(unk, "2.5 V") == 0, std::string("unknown unit: \"") + unk + "\"");
         formatEngineValue(unk, sizeof unk, 0.25f, nullptr);
-        check(std::strcmp(unk, "25 %") == 0, std::string("null unit reads as empty: \"") + unk + "\"");
+        check(std::strcmp(unk, "0.25") == 0, std::string("null unit reads as empty: \"") + unk + "\"");
         UiKnobView v;
         v.norm   = 0.3f;
         v.engine = 0.09f;
         v.unit   = nullptr;
         formatKnob(unk, sizeof unk, v);
-        check(std::strcmp(unk, "30 %") == 0, std::string("formatKnob with a null unit shows the position: \"") + unk + "\"");
+        check(std::strcmp(unk, "0.09") == 0, std::string("formatKnob with a null unit shows the engine value: \"") + unk + "\"");
     }
     return uitest::finish();
 }

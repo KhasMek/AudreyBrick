@@ -256,15 +256,20 @@ const UiKnobView& knobView(const UiSnapshot& s, Knob k) noexcept
     return i < kKnobCount ? s.knob[i] : kNone;
 }
 
-// The bar position for a knob. Unitless knobs show their position as a whole
-// percentage, so their bar fills to that same rounded percentage: the number and
-// the fill always agree (a 694 px bar would otherwise differ by up to 3.5 px).
-// Knobs with units fill to the exact knob position.
-float barPosition(const UiKnobView& v) noexcept
+// The bar position (0..1) for a knob. Knobs with a unit: the knob position.
+// Unitless knobs (shown as the plain engine value, two decimals): the same
+// engine value against the parameter's engine maximum from ParamTable, quantised
+// to the displayed hundredths, so number and bar always agree (decay at its
+// minimum reads "0.20" with a 20 % bar; repeats at 0.90 fills 0.90/1.50).
+float barPosition(Knob k, const UiKnobView& v) noexcept
 {
-    if(v.unit == nullptr || v.unit[0] == '\0')
-        return static_cast<float>(std::lround(static_cast<double>(v.norm) * 100.0)) / 100.0f;
-    return v.norm;
+    if(v.unit != nullptr && v.unit[0] != '\0')
+        return v.norm;
+    const double fullScale = std::round(static_cast<double>(paramSpec(k).max) * 100.0); // in hundredths
+    if(!(fullScale > 0.0) || !std::isfinite(v.engine))
+        return 0.0f;
+    const double hundredths = std::round(static_cast<double>(v.engine) * 100.0);
+    return static_cast<float>(hundredths / fullScale);
 }
 
 float clamp01(float v) noexcept
@@ -485,7 +490,7 @@ int widestValueChars(Knob k, bool noteOnly) noexcept
         case Knob::ReverbDecay:
         case Knob::EchoDelaySend:
         case Knob::EchoDelayFeedback:
-        case Knob::OutputVolume: return 5;              // "150 %"
+        case Knob::OutputVolume: return 4;              // "1.50"
         case Knob::Count: break;
     }
     return 15;
@@ -572,7 +577,7 @@ void tabRow(Builder& b, const UiSnapshot& s, const Row& row, int y, const RowGeo
 
     const int barY  = y + g.barY;
     const int barW  = barR - kRowNameX;
-    const int fillW = fraction(barW, barPosition(knobView(s, row.knob)));
+    const int fillW = fraction(barW, barPosition(row.knob, knobView(s, row.knob)));
     b.fill(kRowNameX, barY, barW, g.barH, pal::panelDark, RectTag::Bar);
     b.fill(kRowNameX, barY, fillW, g.barH, active ? pal::accent : pal::faint, RectTag::Bar);
     b.frame(kRowNameX, barY, barW, g.barH, pal::edge, 1);
@@ -700,7 +705,7 @@ void strip(Builder& b, const UiSnapshot& s) noexcept
         }
         b.text(lx, y + 6, 2, current ? pal::text : pal::dim, TextRole::StripLabel, knobShortName(k), knobIndex(k));
 
-        float norm = barPosition(knobView(s, k));
+        float norm = barPosition(k, knobView(s, k));
         if(k == Knob::FeedbackGain)
         {
             norm = s.storedFeedback;
@@ -923,25 +928,10 @@ const char* knobTabName(Knob k) noexcept
 
 float repeatsUnityPosition() noexcept
 {
-    // The knob position whose engine value is 1.0 (unity echo feedback), found
-    // from ParamTable's mapping by bisection (the mapping rises monotonically);
-    // computed once.
-    static const float kPosition = [] {
-        float lo = 0.0f;
-        float hi = 1.0f;
-        if(knobToEngine(Knob::EchoDelayFeedback, hi, false) < 1.0f)
-            return 1.0f;
-        for(int i = 0; i < 40; ++i)
-        {
-            const float mid = 0.5f * (lo + hi);
-            if(knobToEngine(Knob::EchoDelayFeedback, mid, false) < 1.0f)
-                lo = mid;
-            else
-                hi = mid;
-        }
-        return 0.5f * (lo + hi);
-    }();
-    return kPosition;
+    // The REPEATS bar is linear in the engine value from 0 to its maximum, so
+    // unity gain (engine 1.0) sits at 1.0 / max.
+    const float max = paramSpec(Knob::EchoDelayFeedback).max;
+    return max > 1.0f ? 1.0f / max : 1.0f;
 }
 
 std::size_t formatStripValue(char* out, std::size_t size, const UiSnapshot& s, Knob k) noexcept

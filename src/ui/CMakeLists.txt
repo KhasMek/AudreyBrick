@@ -7,8 +7,8 @@
 #   screenshot function. Only with SDL2.
 #
 # audrey_ui_core links audrey_control for the tab table (app/Tabs.h). Layout.cpp
-# includes core/ParamTable.h (upstream DSP headers, for the repeats unity
-# position), so the library applies AB_DSP_OPT_OPTIONS like any DSP consumer.
+# includes core/ParamTable.h (upstream DSP headers, for the engine ranges of
+# the unitless bars), so the library applies AB_DSP_OPT_OPTIONS like any DSP consumer.
 add_library(audrey_ui_core STATIC
     Font.cpp
     Format.cpp

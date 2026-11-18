@@ -19,12 +19,13 @@
 //           rounding, so 0.9996 s reads "1.00 s".
 //   "dB"    one decimal with a sign ("-10.0 dB", "+12.0 dB"); zero is "0.0 dB"
 //           (never "-0.0").
-//   ""      (reverb dry/wet, reverb decay, delay mix, repeats, volume) the KNOB
-//           POSITION as a whole percentage, 0..100 % (normalised value x 100,
-//           rounded; never "-0 %"), so the number always equals the bar's fill
-//           and moves linearly with the button presses (decided by the human,
-//           2026-11-17). formatKnob() applies this rule; formatEngineValue()
-//           with an empty unit still shows the engine value x 100.
+//   ""      (reverb dry/wet, reverb decay, delay mix, repeats, volume) the
+//           plain ENGINE value with two decimals and no unit: dry/wet
+//           "0.00".."1.00", decay "0.20".."1.00" (the ReverbSc feedback
+//           coefficient), mix "0.00".."1.00" (the send gain), repeats
+//           "0.00".."1.50", volume "0.00".."1.00" (the output gain). Never
+//           "-0.00". (Decided by the human, 2026-11-17; the bars for these
+//           five show the same engine value, see ui/Layout.cpp.)
 
 #pragma once
 
@@ -52,13 +53,14 @@ std::size_t formatSeconds(char* out, std::size_t size, float seconds) noexcept;
 std::size_t formatDb(char* out, std::size_t size, float db) noexcept;
 // `fraction` 1.0 = "100 %".
 std::size_t formatPercent(char* out, std::size_t size, float fraction) noexcept;
+// A plain number with two decimals, no unit: "0.85", "1.50"; never "-0.00".
+std::size_t formatPlain(char* out, std::size_t size, float value) noexcept;
 // CPU load (1.0 = 100 %): one decimal below 10 % ("3.2 %"), whole numbers above.
 std::size_t formatCpu(char* out, std::size_t size, float load) noexcept;
 
-// A knob's engine value in its unit, by the rules above ("" = engine x 100 %).
+// A knob's engine value in its unit, by the rules above ("" = plain, two decimals).
 std::size_t formatEngineValue(char* out, std::size_t size, float engine, const char* unit) noexcept;
-// What the screen shows for a knob: the engine value in its unit, or for a knob
-// without a unit its position, 0..100 %.
+// What the screen shows for a knob: its engine value by the rules above.
 std::size_t formatKnob(char* out, std::size_t size, const UiKnobView& k) noexcept;
 
 } // namespace ui

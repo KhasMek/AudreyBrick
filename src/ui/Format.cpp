@@ -132,6 +132,16 @@ std::size_t formatPercent(char* out, std::size_t size, float fraction) noexcept
     return finish(out, size, std::snprintf(out, size, "%.0f %%", p));
 }
 
+std::size_t formatPlain(char* out, std::size_t size, float value) noexcept
+{
+    if(!std::isfinite(value))
+        return notFinite(out, size);
+    double v = static_cast<double>(value);
+    if(roundTo(v, 2) == 0.0)
+        v = 0.0; // no "-0.00"
+    return finish(out, size, std::snprintf(out, size, "%.2f", v));
+}
+
 std::size_t formatCpu(char* out, std::size_t size, float load) noexcept
 {
     if(!std::isfinite(load))
@@ -157,7 +167,7 @@ std::size_t formatEngineValue(char* out, std::size_t size, float engine, const c
     if(std::strcmp(unit, "dB") == 0)
         return formatDb(out, size, engine);
     if(unit[0] == '\0')
-        return formatPercent(out, size, engine);
+        return formatPlain(out, size, engine);
     // Unknown unit: the plain value and the unit.
     if(!std::isfinite(engine))
         return notFinite(out, size);
@@ -166,8 +176,6 @@ std::size_t formatEngineValue(char* out, std::size_t size, float engine, const c
 
 std::size_t formatKnob(char* out, std::size_t size, const UiKnobView& k) noexcept
 {
-    if(k.unit == nullptr || k.unit[0] == '\0')
-        return formatPercent(out, size, k.norm);
     return formatEngineValue(out, size, k.engine, k.unit);
 }
 

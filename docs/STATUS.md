@@ -57,7 +57,8 @@ The human commits. The orchestrator stops at each point and proposes a message.
 | 6 | M2 plan and briefs | Committed |
 | 7 | M2-A button control logic, reviewed | Committed |
 | 8 | M2-B audio host and app shell, reviewed (first point where the human can play it on the Mac; blank window) | Committed |
-| 9 | M2-C the screen, reviewed | Ready to commit |
+| 9 | M2-C the screen, reviewed | Committed |
+| 10 | Screen: plain engine values for the five unitless parameters | Ready to commit |
 
 ## What was verified and how
 
@@ -198,8 +199,9 @@ Open after M2-B:
 - Display fixes from review: consistent cents at half-semitones, larger LATCHED/HELD, a mark on the delay time when the switch scales it, cut names end in "..", faint text raised to at least 4.5:1 contrast.
 
 Changes after the human saw it (2026-11-17), applied before the commit and re-verified by the orchestrator from clean builds:
-- The five parameters with no unit (reverb dry/wet, reverb decay, delay mix, repeats, volume) now show the **knob position as 0 to 100 %**, so the number always equals the bar. Parameters with units still show engine values. A tick on the repeats bar marks unity gain (two thirds along), since the number no longer shows it.
-- For those five the bar fills to the displayed whole percentage, so a single fine step (1/1024) may not move bar or number until the next 1 %. Tunable if it bothers the player.
+- The five parameters with no unit (reverb dry/wet, reverb decay, delay mix, repeats, volume) were first changed to show the knob position as a percentage (that version is in the "Add the screen" commit). The human then chose the truthful form: they show the **plain engine value with two decimals** (dry/wet and mix 0.00 to 1.00, decay 0.20 to 1.00, repeats 0.00 to 1.50, volume 0.00 to 1.00), and **the bar is drawn from the same value** against the parameter's engine maximum, so number and bar agree. A tick on the repeats bar marks 1.00 (unity gain). Parameters with units still show engine units with the bar at knob position.
+- Consequence: for the squared parameters (mix, volume) the bar moves slowly at the bottom and faster at the top while a button is held. That is the firmware's curve made visible.
+- For those five the bar is quantised to the displayed hundredths, so a single fine step may not move bar or number.
 - The "NOT USED ON THIS TAB" strip is removed; unbound directions are not shown.
 - Human's answers: colours fine for now; "SHIFT" for X is right; percentages fine; meter range -36 to 0 dB fine.
 - Not re-reviewed by a separate agent; the bug-injection table was not rerun after this last change.

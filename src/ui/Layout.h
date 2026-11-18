@@ -17,8 +17,9 @@
 //                  Rows for the other X state are dimmed with outline arrows;
 //                  unbound directions are not shown. While the delay switch is
 //                  on, TIME carries a "B" mark. REPEATS has a tick at unity gain.
-//                  Unitless values show the knob position (0..100 %), so the
-//                  number equals the bar's fill.
+//                  Unitless values show the plain engine value ("0.85") and
+//                  their bars show the same value against its maximum, so
+//                  number and bar agree.
 //   meter panel    L/R output meters with a dB scale, peak hold, CLIP caps.
 //   value strip    all eleven values (tab, name, value, small bar), the current
 //                  tab's cells framed; the twelfth cell is the CPU meter.
@@ -83,9 +84,9 @@ const char* knobTabName(Knob k) noexcept;
 // formatted engine value otherwise.
 std::size_t formatStripValue(char* out, std::size_t size, const UiSnapshot& s, Knob k) noexcept;
 
-// The knob position (0..1) where delay repeats reaches unity gain (engine value
-// 1.0), from ParamTable's range for EchoDelayFeedback; the REPEATS bars carry a
-// tick there.
+// Where unity gain (engine value 1.0) sits on the REPEATS bars (0..1): 1.0 /
+// the engine maximum from ParamTable, since those bars are linear in the engine
+// value. The REPEATS bars carry a tick there.
 float repeatsUnityPosition() noexcept;
 
 void buildLayout(const UiSnapshot& s, const MeterView& meters, DrawList& out) noexcept;

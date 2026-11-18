@@ -644,7 +644,7 @@ int main()
     {
         const UiSnapshot s = uitest::startupSnapshot();
         buildLayout(s, uitest::firstFrameMeters(s), *d);
-        for(const char* w : {"E2", "82.4 Hz", "-60.0 dB", "1.00 ms", "18.0 kHz", "250 Hz", "0 %", "500 ms", "71 %",
+        for(const char* w : {"E2", "82.4 Hz", "-60.0 dB", "1.00 ms", "18.0 kHz", "250 Hz", "0.00", "0.20", "500 ms", "0.50",
                              "OFF", "NO PAD: KEYBOARD", "0.0 %", "48000 Hz  256 fr  coreaudio"})
             check(hasText(*d, w), std::string("startup shows \"") + w + "\"");
         check(!hasText(*d, "LATCHED") && !hasText(*d, "HELD"), "startup: no switch detail");
@@ -672,8 +672,9 @@ int main()
         check(rows == 1 && vol >= 0, "OUT shows a single VOLUME row");
     }
 
-    // The five unitless knobs: the number is the knob position (0..100 %) and
-    // equals the bar's fill, in the tab row and the strip cell.
+    // The five unitless knobs: the plain engine value with two decimals (computed
+    // here from ParamTable's mapping), no "%", and the bar shows the same value
+    // against the engine maximum, in the tab row and the strip cell.
     {
         const Knob five[5] = {Knob::ReverbMix, Knob::ReverbDecay, Knob::EchoDelaySend, Knob::EchoDelayFeedback,
                               Knob::OutputVolume};
@@ -688,8 +689,12 @@ int main()
                 s.xHeld      = k == Knob::EchoDelayFeedback; // repeats is an X binding: make its row active
                 uitest::setKnob(s, k, norm);
                 buildLayout(s, MeterView{}, *d);
-                const long        pct  = std::lround(norm * 100.0f);
-                const std::string want = std::to_string(pct) + " %";
+                const double engine     = knobToEngine(k, norm, s.switchOn);
+                const long   hundredths = std::lround(engine * 100.0);
+                const double maxEngine  = paramSpec(k).max;
+                char         wantBuf[48];
+                std::snprintf(wantBuf, sizeof wantBuf, "%ld.%02ld", hundredths / 100, hundredths % 100);
+                const std::string want = wantBuf;
                 const std::string n = std::string(paramSpec(k).id) + " at " + std::to_string(norm) + ": ";
                 for(PanelKind kind : {PanelKind::Row, PanelKind::StripCell})
                 {
@@ -701,27 +706,46 @@ int main()
                            (d->texts[t].role == TextRole::TabParamValue || d->texts[t].role == TextRole::StripValue))
                             shown = d->texts[t].text;
                     check(p >= 0 && shown == want, n + where + " shows \"" + want + "\" (\"" + shown + "\")");
+                    int percents = 0;
+                    for(std::size_t t = 0; t < d->textCount; ++t)
+                        if(d->texts[t].panel == p && std::strchr(d->texts[t].text, '%') != nullptr)
+                            ++percents;
+                    check(percents == 0, n + where + " has no \"%\"");
                     // Bar rects of the panel in order: the background, then the fill.
                     std::vector<const RectItem*> bars;
                     for(std::size_t r = 0; r < d->rectCount; ++r)
                         if(d->rects[r].panel == p && d->rects[r].tag == RectTag::Bar)
                             bars.push_back(&d->rects[r]);
                     const bool ok = bars.size() >= 2 &&
-                                    std::fabs(bars[1]->w - bars[0]->w * static_cast<double>(pct) / 100.0) <= 1.0;
-                    check(ok, n + where + " bar fill equals the number within one pixel (" +
+                                    std::fabs(bars[1]->w - bars[0]->w * (hundredths / 100.0) / maxEngine) <= 1.0;
+                    check(ok, n + where + " bar fill equals " + want + " / " + std::to_string(maxEngine) +
+                                  " within one pixel (" +
                                   (bars.size() >= 2 ? std::to_string(bars[1]->w) + " of " + std::to_string(bars[0]->w)
                                                     : std::string("no bar")) + ")");
                 }
             }
         }
 
-        // The repeats unity tick: at the knob position whose engine value is 1.0,
-        // computed independently from ParamTable's linear range.
-        const ParamSpec& rp    = paramSpec(Knob::EchoDelayFeedback);
-        const double     unity = (1.0 - rp.min) / (rp.max - rp.min);
-        check(std::fabs(repeatsUnityPosition() - unity) < 1e-5 &&
-                  std::fabs(knobToEngine(Knob::EchoDelayFeedback, repeatsUnityPosition(), false) - 1.0f) < 1e-4f,
-              "repeats unity position " + std::to_string(repeatsUnityPosition()) + " (engine 1.0)");
+        // Decay at knob 0: "20 %" with a 20 % bar (both rows and strip covered
+        // above; stated here on its own).
+        {
+            UiSnapshot s = uitest::playingSnapshot(Tab::Reverb);
+            uitest::setKnob(s, Knob::ReverbDecay, 0.0f);
+            buildLayout(s, MeterView{}, *d);
+            const int p = findPanel(*d, PanelKind::Row, static_cast<int>(Knob::ReverbDecay));
+            std::vector<const RectItem*> bars;
+            for(std::size_t r = 0; r < d->rectCount; ++r)
+                if(d->rects[r].panel == p && d->rects[r].tag == RectTag::Bar)
+                    bars.push_back(&d->rects[r]);
+            check(hasText(*d, "0.20") && bars.size() >= 2 && std::fabs(bars[1]->w - 0.2 * bars[0]->w) <= 1.0,
+                  "decay at knob 0 shows \"0.20\" with a 20 % bar");
+        }
+
+        // The repeats unity tick: engine 1.0 on a bar that runs 0..max, so at
+        // 1.0 / max (computed here from ParamTable).
+        const double unity = 1.0 / paramSpec(Knob::EchoDelayFeedback).max;
+        check(std::fabs(repeatsUnityPosition() - unity) < 1e-6,
+              "repeats unity position " + std::to_string(repeatsUnityPosition()) + " = 1.0 / max");
         UiSnapshot s = uitest::playingSnapshot(Tab::Delay);
         buildLayout(s, MeterView{}, *d);
         for(PanelKind kind : {PanelKind::Row, PanelKind::StripCell})
@@ -751,8 +775,22 @@ int main()
                 ++otherTicks;
         check(otherTicks == 0, "only the REPEATS bars carry the unity tick (none on decay)");
 
-        // Units unchanged for the knobs that have them.
+        // Units unchanged for the knobs that have them, with knob-position bars.
+        auto rowFill = [&](Knob k, double& fill, double& full) {
+            const int p = findPanel(*d, PanelKind::Row, static_cast<int>(k));
+            std::vector<const RectItem*> bars;
+            for(std::size_t r = 0; r < d->rectCount; ++r)
+                if(d->rects[r].panel == p && d->rects[r].tag == RectTag::Bar)
+                    bars.push_back(&d->rects[r]);
+            fill = bars.size() >= 2 ? bars[1]->w : -1;
+            full = bars.size() >= 2 ? bars[0]->w : -1;
+        };
+        double fill = 0;
+        double full = 0;
         check(hasText(*d, "1.05 s"), "DELAY row: delay time still in engine units (1.05 s)");
+        rowFill(Knob::EchoDelayTime, fill, full);
+        check(std::fabs(fill - full * s.knob[static_cast<std::size_t>(Knob::EchoDelayTime)].norm) <= 1.0,
+              "DELAY row: delay time bar at the knob position");
         buildLayout(uitest::playingSnapshot(Tab::Loop), MeterView{}, *d);
         const int fp = findPanel(*d, PanelKind::Row, static_cast<int>(Knob::Frequency));
         std::string freq;
@@ -760,6 +798,10 @@ int main()
             if(d->texts[t].panel == fp && d->texts[t].role == TextRole::TabParamValue)
                 freq += (freq.empty() ? "" : " ") + std::string(d->texts[t].text);
         check(freq == "G2+30c 99.7 Hz", "LOOP row: frequency still a note and Hz (\"" + freq + "\")");
+        rowFill(Knob::Frequency, fill, full);
+        const UiSnapshot loop = uitest::playingSnapshot(Tab::Loop);
+        check(std::fabs(fill - full * loop.knob[static_cast<std::size_t>(Knob::Frequency)].norm) <= 1.0,
+              "LOOP row: frequency bar at the knob position");
     }
 
     checkFeedbackBand(*d);
