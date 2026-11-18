@@ -28,8 +28,8 @@ struct Binding
 };
 
 // Every binding in one table. Button names are SDL GameController names (A is the
-// bottom face button in SDL's naming); which physical Brick button that is gets
-// settled by the device checklist (M3).
+// bottom face button in SDL's naming). On KNULLI the Brick's A and B arrive
+// swapped (first device run); --swap-ab corrects that in controllerButton() below.
 constexpr Binding kBindings[] = {
     // Game controller buttons.
     {Source::ControllerButton, SDL_CONTROLLER_BUTTON_DPAD_UP, false, Button::DpadUp},
@@ -73,8 +73,31 @@ const Binding* find(Source s, int code) noexcept
     return nullptr;
 }
 
+// --swap-ab, --swap-xy (M3-B): the only place the swaps are applied. Controller
+// buttons only.
+Button controllerButton(Button bound, bool swapAB, bool swapXY) noexcept
+{
+    if(swapAB && bound == Button::A)
+        return Button::B;
+    if(swapAB && bound == Button::B)
+        return Button::A;
+    if(swapXY && bound == Button::X)
+        return Button::Y;
+    if(swapXY && bound == Button::Y)
+        return Button::X;
+    return bound;
+}
+
 constexpr float kAxisFullScale = 32767.0f;
 } // namespace
+
+const char* InputMap::swapNote(int sdlButton) const noexcept
+{
+    const Binding* b = find(Source::ControllerButton, sdlButton);
+    if(b == nullptr || controllerButton(b->button, swapAB_, swapXY_) == b->button)
+        return "";
+    return (b->button == Button::A || b->button == Button::B) ? "[A/B swapped]" : "[X/Y swapped]";
+}
 
 bool InputMap::mapsScancode(int scancode) noexcept
 {
@@ -187,7 +210,7 @@ InputMap::Action InputMap::handle(const SDL_Event& e, ButtonEvent& out)
             const Binding* b = find(Source::ControllerButton, e.cbutton.button);
             if(b == nullptr)
                 return Action::None;
-            out = {b->button, e.type == SDL_CONTROLLERBUTTONDOWN};
+            out = {controllerButton(b->button, swapAB_, swapXY_), e.type == SDL_CONTROLLERBUTTONDOWN};
             return Action::Button;
         }
 

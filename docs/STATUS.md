@@ -12,7 +12,7 @@ Maintained by the orchestrator. Last updated: 2026-11-17.
 | M1 host DSP | **Done and reviewed (M1-A to M1-D).** Awaiting the human's sign-off of the milestone |
 | M2 host app | **Done and reviewed (M2-A, M2-B, M2-C): the app plays on the Mac with the full screen.** Awaiting the human's play test and sign-off of the milestone |
 | M2b input path | Not started |
-| M3 device build | **M3-A done and reviewed: a Port package exists in `dist/` and passes every off-device test.** Waiting for the human's first run on the Brick (`docs/FIRST_RUN_BRICK.md`). The screen and ALSA output are untested until then |
+| M3 device build | **The app runs on the Brick** (first run 2026-11-18: screen, sound, buttons and quitting all work). M3-B fixes from that run are done and reviewed. Waiting for the human's second run (`docs/SECOND_RUN_BRICK.md`) |
 | M4 tuning | Not started |
 | M5 presets, polish, release decision | Not started |
 
@@ -59,7 +59,8 @@ The human commits. The orchestrator stops at each point and proposes a message.
 | 8 | M2-B audio host and app shell, reviewed (first point where the human can play it on the Mac; blank window) | Committed |
 | 9 | M2-C the screen, reviewed | Committed |
 | 10 | Screen: plain engine values for the five unitless parameters | Committed |
-| 11 | M3-A device build, device behaviour and the Port package, reviewed; firmware findings and the first-run checklist | Ready to commit |
+| 11 | M3-A device build, device behaviour and the Port package, reviewed; firmware findings and the first-run checklist | Committed |
+| 12 | M3-B fixes from the first device run (button swaps, CPU frequency logging, opt-in governor, signal hardening), reviewed; device results and the second-run checklist | Ready to commit |
 
 ## What was verified and how
 
@@ -230,6 +231,23 @@ Open after M3-A:
 - Start + Select is the quit chord; the control scheme reserves Start for the freeze slot (M5). Revisit then.
 - The device's SDL also has an OSS `dsp` audio driver, not listed in the platform notes' table.
 
+## First device run and M3-B (2026-11-18)
+
+**First run (package 7af286f-dirty), two sessions on the Brick.** The app started in 0.4 s, drew at a steady 60 frames per second through the Mali driver and GLES2, played through ALSA at 48 kHz with the 256-frame buffer it asked for, recognised every button, and quit cleanly with Start + Select both times. No audio callback overran. Details: `docs/PLATFORM_NOTES.md` section 11. The human reported A and B swapped, CPU spikes, and possibly one crackle.
+
+**M3-B, from that run:**
+- **Button swaps.** `--swap-ab` and `--swap-xy` in `InputMap`, both on by default from the launcher. A/B was reported by the human; X/Y is inferred from the firmware's controller tables (about 85 % confident) and was not checked in the first run. If KNULLI's own per-port "SWITCH A/B and X/Y" is on for a launch (flag file `/var/run/ports_xbox_layout.flag`), the launcher turns both swaps off so they cannot cancel.
+- **Measurement.** Each 10-second stats line now carries the CPU frequency per policy (current, and the window's minimum and maximum) and a six-bucket histogram of callback load. The histogram is the only new work on the audio thread: one relaxed atomic update per callback, covered by the allocation test.
+- **Governor: opt-in.** The launcher can set a governor while the app runs (`AUDREY_GOVERNOR`) and restore it afterwards, but the default is `keep`. Orchestrator's decision on the reviewer's advice: the first run had no overruns, the slow-CPU explanation is unconfirmed, `performance` costs battery, and KNULLI's own per-port POWER MODE does the same with its own restore. Restores happen only if the governor is still the value we set.
+- **Signals.** The device's bash 5.2.21 aborts if a trap runs while it parses a command substitution; the launcher's own shell now runs none, and its traps only set a flag before the app starts. The app handles SIGTERM, SIGINT and SIGHUP itself from before `main` and always exits through its normal shutdown. Sweeps in the device-root container: 260 launcher runs with 0 aborts and 0 unclean end states; 400 app runs with exit actions run in 399 (one signal landed inside the dynamic loader before any program code; the launcher covers that case).
+- Tests: 43 in Release and ASan/UBSan, 34 under ThreadSanitizer, 33 without SDL, 33 in each Debian 13 container, 43 in the device build, 202 device-root checks. Vendor check and reference hashes pass. Re-verified by the orchestrator from clean builds, including `make_port.sh` (exit 0); the packaged binary's hash equals the tested build's.
+- Review: nothing blocking. The reviewer ran about 25 failure and hostile-input scenarios against a fake sysfs tree (the launcher never wrote outside the governor files), found the bash abort and the unconditional-restore problem, and worked out the X/Y mapping from the firmware. Its findings were applied; that follow-up round was verified by the orchestrator, not re-reviewed.
+
+Open:
+- Everything in `docs/SECOND_RUN_BRICK.md`: the four face buttons, the system exit path, keep-awake over six minutes, and the governor comparison.
+- A USB pad with Xbox-style labels would have its A/B and X/Y swapped by our defaults.
+- The swap applies per launch; there is no on-screen setting for it.
+
 ## Pitch range finding (2026-11-17, from the human's first play test)
 
 The human played M2-B on the Mac: generally working as expected, but the pitch range seemed limited to about an octave, unlike the hardware.
@@ -246,5 +264,6 @@ Decision: choose a playable init patch by ear after the presets work (M5). Until
 - 2026-11-17: Human answered D1 to D7, asked for stereo-summed input with a gain control, and for tabs on L1/R1. M1 approved. Stopped at commit point 1.
 - 2026-11-17: M1-A to M1-D implemented, reviewed and committed. The human listened to the renders and reports they sound great.
 - 2026-11-17: M2 (A, B, C) implemented, reviewed, played by the human and committed. The human chose to get it running on the Brick before the input path; the firmware image (Scarab 20260511) was downloaded and inspected, findings in `docs/PLATFORM_NOTES.md` section 10.
+- 2026-11-18: The human ran the package on the Brick: it works. M3-B (button swaps, frequency logging, opt-in governor, signal hardening) implemented, reviewed and verified. Stopped at commit point 12 for the second run.
 - 2026-11-18: M3-A implemented, reviewed and verified. Package in `dist/`. Stopped at commit point 11 for the human's first run on the Brick.
 - 2026-11-17: Human approved the button mapping as a first version, named the input sources (mic, USB, file) and asked for a modulation tab after the plain port works on the Brick. M2 briefs written. Stopped at commit point 6.

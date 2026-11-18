@@ -6,7 +6,9 @@
 # M3-A adds:
 #   audrey_app_core (static, no SDL): the Start + Select quit hold, the diagnostic
 #     log's file, formatting and rate limiting, and the build information. Built
-#     with or without SDL, so it is tested everywhere.
+#     with or without SDL, so it is tested everywhere. M3-B adds the CPU frequency
+#     reader (CpuFreq.cpp), restore-on-exit (RestoreOnExit.cpp) and the stop-signal
+#     flag (Signals.cpp).
 #   audrey_app_sdl (static, SDL2): the diagnostic log's SDL parts (event
 #     descriptions, first-seen inputs, start-up facts).
 #   The version and build date: the cache variables AUDREY_VERSION and
@@ -18,6 +20,9 @@ add_library(audrey_app_core STATIC
     QuitHold.cpp
     DiagLog.cpp
     BuildInfo.cpp
+    CpuFreq.cpp
+    RestoreOnExit.cpp
+    Signals.cpp
 )
 target_include_directories(audrey_app_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(audrey_app_core PRIVATE ${AB_WARNING_OPTIONS})

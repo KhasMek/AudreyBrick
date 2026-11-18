@@ -119,12 +119,25 @@ class SeenSet
     bool seen_[N] = {};
 };
 
+// Callback load histogram buckets (as platform/Meters.h, kLoadBuckets): below 10,
+// 25, 50, 75, 100 % of the buffer time, and 100 % or more.
+constexpr std::size_t kStatsLoadBuckets = 6;
+
+// The bucket holding the p-th percentile (0 < p <= 1) of `counts`, or -1 if they
+// are all zero.
+int loadPercentileBucket(const std::uint64_t (&counts)[kStatsLoadBuckets], double p) noexcept;
+// "<10 %", "<25 %", "<50 %", "<75 %", "<100 %", ">=100 %" for a bucket; "n/a" otherwise.
+const char* loadBucketLabel(int bucket) noexcept;
+
 // One periodic statistics line.
 struct PeriodicStats
 {
     double        windowSeconds   = 0.0; // wall-clock length of the window
     float         cpuSmoothed     = 0.0f; // callback load at the end of the window (1.0 = 100 %)
     float         cpuMax          = 0.0f; // largest callback load in the window
+    bool          haveHistogram   = false; // loadHistogram is filled
+    std::uint64_t loadHistogram[kStatsLoadBuckets] = {}; // callbacks per load bucket in the window
+    const char*   cpuFreq         = nullptr; // CPU frequency text (CpuFreqMonitor), or nullptr/empty: none
     std::uint64_t largestCallback = 0;    // largest callback buffer since start, frames
     std::uint64_t callbacks       = 0;    // callbacks in the window
     std::uint64_t overruns        = 0;    // callbacks in the window that took longer than their buffer
@@ -137,8 +150,13 @@ struct PeriodicStats
     std::uint64_t keysSuppressed  = 0;    // unmapped-key lines suppressed in the window
 };
 
-// "stats: window 10.0 s, cpu 3.4 % (max 5.2 %), callbacks 1875, overruns 0, largest 256 frames,
-//  audio clock 1.000x real time, peak L 0.123 R 0.130, dropped 0, frames 600 (60.0 fps)"
+// "stats: window 10.0 s, callback load 3.4 % (max 5.2 %, p50 <10 %, p95 <10 %,
+//  histogram 1870/5/0/0/0/0), callbacks 1875, overruns 0, largest 256 frames,
+//  audio clock 1.000x real time, peak L 0.123 R 0.130, dropped 0, frames 600 (60.0 fps),
+//  cpu freq policy0 1416 MHz (window 408..1416)"
+// The percentile and histogram part only with haveHistogram; the cpu freq part only
+// with a non-empty cpuFreq. "callback load" is the time spent in the audio callback
+// as a share of the buffer's duration (the screen calls it CPU).
 std::size_t formatStats(char* out, std::size_t size, const PeriodicStats& s) noexcept;
 
 } // namespace audreybrick

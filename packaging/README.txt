@@ -83,6 +83,60 @@ off first.
 To change the audio buffer size, edit the number on the AUDREY_BUFFER line near the
 top of AudreyBrick.sh (default 256 frames; 16 to 32768).
 
+stdout.log has one line starting "launcher: settings:" with the app's version and
+the settings below as they were used for that run.
+
+
+A, B, X and Y buttons
+---------------------
+KNULLI's default controller mapping for ports names the buttons by position,
+Xbox style, while the Brick's buttons are labelled Nintendo style. So the button
+labelled A reaches apps as "B" and the other way round, and (expected from the
+firmware's mapping; the next run's log confirms it) the same for X and Y. The
+launcher therefore starts the app with A/B and X/Y swapped back, so every button
+does what the button table above says for its label. Only these four buttons are
+affected. stdout.log says which swaps were used and why ("launcher: buttons: ...").
+
+To turn a swap off, set AUDREY_SWAP_AB=0 or AUDREY_SWAP_XY=0 (or change
+DEFAULT_SWAP_AB / DEFAULT_SWAP_XY near the top of AudreyBrick.sh to 0).
+
+KNULLI has its own switch for this, per port: in AudreyBrick's game options,
+"SWITCH A/B and X/Y". When it is on, the buttons already arrive with their
+labels' names, and the launcher sees this (KNULLI creates the file
+/var/run/ports_xbox_layout.flag for that launch) and turns both of its own swaps
+off, so the buttons are never swapped twice. You can use either; you do not need
+both. A value set in the environment (AUDREY_SWAP_AB=... or AUDREY_SWAP_XY=...)
+overrides this automatic choice.
+
+
+CPU speed (governor)
+--------------------
+By default the launcher leaves the CPU speed to KNULLI. KNULLI normally lets the
+CPU slow down when it has little to do ("schedutil"). If you want the CPU at full
+speed while AudreyBrick plays (to give the sound processing more headroom), the
+recommended way is KNULLI's own option for the port: in AudreyBrick's game options,
+POWER MODE: High Performance. KNULLI sets it when the port starts and puts the
+normal mode back when it ends.
+
+The alternative is the launcher's AUDREY_GOVERNOR setting: change
+AUDREY_GOVERNOR="${AUDREY_GOVERNOR:-keep}" near the top of AudreyBrick.sh to
+AUDREY_GOVERNOR="${AUDREY_GOVERNOR:-performance}". The launcher then switches the
+CPU to the "performance" governor while the app runs and writes back the governor
+it found when the app ends (unless something else changed it meanwhile).
+stdout.log lists each change ("governor: ...") and the restore.
+
+Neither is required: the first run on the Brick had no audio overruns at KNULLI's
+normal setting. Both cost battery while the app runs. The app's log shows the CPU
+frequency in every statistics line, whichever you choose.
+
+If the app or the launcher is stopped abruptly, whichever of the two is left puts
+the governor back. If both are killed at once, KNULLI's own end-of-game step
+(which re-applies the system's power mode when the port ends) normally puts the
+governor back anyway. In that rare case the keep-awake file
+/var/run/battery-saver/audreybrick.pause would remain until the next reboot, and
+KNULLI would not dim the screen or mute when idle; to remove it by hand, reboot,
+or over SSH run: rm /var/run/battery-saver/audreybrick.pause
+
 
 Keeping the device awake
 ------------------------
@@ -98,7 +152,8 @@ Testing aid
 -----------
 If the environment variable AUDREY_ARGS is set, its words are added to the app's
 command line (for example "--selftest <script> --seconds 5 --no-video"). Leave it
-unset for normal use.
+unset for normal use. AUDREY_SYSFS_CPU, also for testing only, points the launcher
+and the app at a fake copy of /sys/devices/system/cpu.
 
 
 LGPL notice: libaudrey_lgpl.so

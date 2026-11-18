@@ -222,6 +222,109 @@ int main()
         check(isButton(m, cbutton(SDL_CONTROLLERBUTTONUP, p.cb), p.b, false), "controller up " + name);
     }
     check(isNone(m, cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_GUIDE)), "Guide ignored");
+
+    // --swap-ab (M3-B): controller 'a' -> B and 'b' -> A, presses and releases;
+    // nothing else changes (X/Y, shoulders, d-pad, Start/Select, triggers, keyboard).
+    {
+        InputMap s;
+        check(!s.swapAB() && !s.swapsControllerButton(SDL_CONTROLLER_BUTTON_A), "swap off by default");
+        s.setSwapAB(true);
+        check(s.swapAB(), "setSwapAB(true)");
+        check(isButton(s, cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_A), Button::B, true) &&
+                  isButton(s, cbutton(SDL_CONTROLLERBUTTONUP, SDL_CONTROLLER_BUTTON_A), Button::B, false),
+              "swap on: controller 'a' down/up -> B down/up");
+        check(isButton(s, cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_B), Button::A, true) &&
+                  isButton(s, cbutton(SDL_CONTROLLERBUTTONUP, SDL_CONTROLLER_BUTTON_B), Button::A, false),
+              "swap on: controller 'b' down/up -> A down/up");
+        check(s.swapsControllerButton(SDL_CONTROLLER_BUTTON_A) && s.swapsControllerButton(SDL_CONTROLLER_BUTTON_B) &&
+                  !s.swapsControllerButton(SDL_CONTROLLER_BUTTON_X) && !s.swapsControllerButton(SDL_CONTROLLER_BUTTON_GUIDE),
+              "swapsControllerButton: only 'a' and 'b'");
+        check(std::string(s.swapNote(SDL_CONTROLLER_BUTTON_A)) == "[A/B swapped]" &&
+                  std::string(s.swapNote(SDL_CONTROLLER_BUTTON_Y)).empty(),
+              "swapNote: [A/B swapped] for 'a', nothing for 'y'");
+        for(const auto& p : pads)
+        {
+            if(p.cb == SDL_CONTROLLER_BUTTON_A || p.cb == SDL_CONTROLLER_BUTTON_B)
+                continue;
+            const std::string name = std::string(SDL_GameControllerGetStringForButton(
+                                         static_cast<SDL_GameControllerButton>(p.cb))) +
+                                     " -> " + buttonName(p.b);
+            check(isButton(s, cbutton(SDL_CONTROLLERBUTTONDOWN, p.cb), p.b, true) &&
+                      isButton(s, cbutton(SDL_CONTROLLERBUTTONUP, p.cb), p.b, false),
+                  "swap on, unchanged: controller " + name);
+        }
+        check(isButton(s, caxis(SDL_CONTROLLER_AXIS_TRIGGERLEFT, 30000), Button::L2, true) &&
+                  isButton(s, caxis(SDL_CONTROLLER_AXIS_TRIGGERLEFT, 0), Button::L2, false) &&
+                  isButton(s, caxis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT, 30000), Button::R2, true) &&
+                  isButton(s, caxis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT, 0), Button::R2, false),
+              "swap on, unchanged: triggers L2/R2");
+        for(const auto& k : keys)
+        {
+            const std::string name = std::string(SDL_GetScancodeName(k.sc)) + " -> " + buttonName(k.b);
+            check(isButton(s, key(SDL_KEYDOWN, k.sc), k.b, true) && isButton(s, key(SDL_KEYUP, k.sc), k.b, false),
+                  "swap on, keyboard unchanged: " + name);
+        }
+        check(isNone(s, cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_GUIDE)), "swap on: Guide still ignored");
+        s.setSwapAB(false);
+        check(isButton(s, cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_A), Button::A, true) &&
+                  isButton(s, cbutton(SDL_CONTROLLERBUTTONUP, SDL_CONTROLLER_BUTTON_A), Button::A, false) &&
+                  isButton(s, cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_B), Button::B, true) &&
+                  isButton(s, cbutton(SDL_CONTROLLERBUTTONUP, SDL_CONTROLLER_BUTTON_B), Button::B, false),
+              "swap off again: 'a' -> A and 'b' -> B, press and release");
+    }
+    // --swap-xy (M3-B review): 'x' -> Y and 'y' -> X; the mirror of the A/B tests.
+    {
+        InputMap s;
+        check(!s.swapXY(), "X/Y swap off by default");
+        s.setSwapXY(true);
+        check(isButton(s, cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_X), Button::Y, true) &&
+                  isButton(s, cbutton(SDL_CONTROLLERBUTTONUP, SDL_CONTROLLER_BUTTON_X), Button::Y, false),
+              "X/Y swap on: controller 'x' down/up -> Y down/up");
+        check(isButton(s, cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_Y), Button::X, true) &&
+                  isButton(s, cbutton(SDL_CONTROLLERBUTTONUP, SDL_CONTROLLER_BUTTON_Y), Button::X, false),
+              "X/Y swap on: controller 'y' down/up -> X down/up");
+        check(std::string(s.swapNote(SDL_CONTROLLER_BUTTON_X)) == "[X/Y swapped]" &&
+                  std::string(s.swapNote(SDL_CONTROLLER_BUTTON_A)).empty(),
+              "swapNote: [X/Y swapped] for 'x'; 'a' not swapped by --swap-xy alone");
+        for(const auto& p : pads)
+        {
+            if(p.cb == SDL_CONTROLLER_BUTTON_X || p.cb == SDL_CONTROLLER_BUTTON_Y)
+                continue;
+            const std::string name = std::string(SDL_GameControllerGetStringForButton(
+                                         static_cast<SDL_GameControllerButton>(p.cb))) +
+                                     " -> " + buttonName(p.b);
+            check(isButton(s, cbutton(SDL_CONTROLLERBUTTONDOWN, p.cb), p.b, true) &&
+                      isButton(s, cbutton(SDL_CONTROLLERBUTTONUP, p.cb), p.b, false),
+                  "X/Y swap on, unchanged: controller " + name);
+        }
+        for(const auto& k : keys)
+            check(isButton(s, key(SDL_KEYDOWN, k.sc), k.b, true) && isButton(s, key(SDL_KEYUP, k.sc), k.b, false),
+                  std::string("X/Y swap on, keyboard unchanged: ") + SDL_GetScancodeName(k.sc));
+        check(isButton(s, caxis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT, 30000), Button::R2, true) &&
+                  isButton(s, caxis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT, 0), Button::R2, false),
+              "X/Y swap on, unchanged: trigger R2");
+
+        // Both swaps on (the launcher's default on the Brick).
+        s.setSwapAB(true);
+        const struct
+        {
+            int    cb;
+            Button b;
+        } both[] = {{SDL_CONTROLLER_BUTTON_A, Button::B}, {SDL_CONTROLLER_BUTTON_B, Button::A},
+                    {SDL_CONTROLLER_BUTTON_X, Button::Y}, {SDL_CONTROLLER_BUTTON_Y, Button::X},
+                    {SDL_CONTROLLER_BUTTON_LEFTSHOULDER, Button::L1}, {SDL_CONTROLLER_BUTTON_BACK, Button::Select},
+                    {SDL_CONTROLLER_BUTTON_START, Button::Start}, {SDL_CONTROLLER_BUTTON_DPAD_UP, Button::DpadUp}};
+        bool ok = true;
+        for(const auto& p : both)
+            ok = ok && isButton(s, cbutton(SDL_CONTROLLERBUTTONDOWN, p.cb), p.b, true) &&
+                 isButton(s, cbutton(SDL_CONTROLLERBUTTONUP, p.cb), p.b, false);
+        check(ok, "both swaps on: a->B, b->A, x->Y, y->X; shoulders, Select, Start, d-pad unchanged");
+        check(isButton(s, key(SDL_KEYDOWN, SDL_SCANCODE_SPACE), Button::A, true) &&
+                  isButton(s, key(SDL_KEYDOWN, SDL_SCANCODE_B), Button::B, true) &&
+                  isButton(s, key(SDL_KEYDOWN, SDL_SCANCODE_X), Button::X, true) &&
+                  isButton(s, key(SDL_KEYDOWN, SDL_SCANCODE_Y), Button::Y, true),
+              "both swaps on: keyboard Space/B/X/Y unchanged");
+    }
     check(isNone(m, cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_LEFTSTICK)), "stick click ignored");
     check(isNone(m, cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_MISC1)), "Misc1 ignored");
 

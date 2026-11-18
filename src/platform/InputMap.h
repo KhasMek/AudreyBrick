@@ -17,6 +17,18 @@
 //     AZERTY keyboard "Q" (L1) is the key labelled A, and so on. Key repeat is
 //     ignored.
 //
+// A/B and X/Y swaps (M3-B, --swap-ab, --swap-xy): KNULLI's default port mapping
+// names the Brick's buttons by position, Xbox style, while the Brick is labelled
+// Nintendo style, so the button labelled A arrives as SDL 'b', B as 'a', and
+// (expected from the firmware's mapping, to be confirmed on the device) X as 'y'
+// and Y as 'x'. With setSwapAB(true), SDL controller button 'a' produces Button::B
+// and 'b' produces Button::A; with setSwapXY(true), 'x' produces Button::Y and 'y'
+// produces Button::X; for presses and releases alike. Nothing else changes: not
+// the shoulders, triggers, d-pad, Start/Select, and not the keyboard binding. The
+// swaps are two flags applied in one place (controllerButton() in InputMap.cpp).
+// Changing them while a swapped button is held would pair a press with the other
+// button's release; the app sets them once, before the first event.
+//
 // One controller is active at a time: the first one found at start, or the first
 // one plugged in while none is active. If the active controller is removed, the
 // next available one is opened, and the caller is told to release all buttons.
@@ -68,6 +80,17 @@ class InputMap
     // controllers that are open, and only one is opened). Never blocks.
     Action handle(const SDL_Event& e, ButtonEvent& out);
 
+    // --swap-ab, --swap-xy: see above. Off by default (SDL's own naming).
+    void setSwapAB(bool on) noexcept { swapAB_ = on; }
+    bool swapAB() const noexcept { return swapAB_; }
+    void setSwapXY(bool on) noexcept { swapXY_ = on; }
+    bool swapXY() const noexcept { return swapXY_; }
+    // For the diagnostic log: "[A/B swapped]" or "[X/Y swapped]" if `sdlButton`
+    // (an SDL_GameControllerButton) produces a Button other than the one of the
+    // same name because of a swap; "" otherwise.
+    const char* swapNote(int sdlButton) const noexcept;
+    bool        swapsControllerButton(int sdlButton) const noexcept { return swapNote(sdlButton)[0] != '\0'; }
+
     bool               controllerConnected() const noexcept { return controller_ != nullptr; }
     const std::string& controllerName() const noexcept { return controllerName_; }
 
@@ -88,6 +111,8 @@ class InputMap
     SDL_JoystickID      instance_   = -1;
     std::string         controllerName_;
     bool                triggerDown_[2] = {false, false}; // L2, R2
+    bool                swapAB_         = false;
+    bool                swapXY_         = false;
 };
 
 } // namespace audreybrick

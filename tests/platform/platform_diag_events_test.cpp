@@ -290,6 +290,60 @@ int main()
     h.log.close();
     if(std::getenv("KEEP_LOG") == nullptr)
         std::remove(path.c_str());
+
+    // --- M3-B: --swap-ab / --swap-xy keep the first-seen lines truthful; Menu once only --
+    {
+        const std::string swapPath = std::string(dir) + "/swap.log";
+        Harness           w;
+        check(w.log.open(swapPath, err), "swap log opened: " + err);
+        w.input.setSwapAB(true);
+        w.feed(cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_B));
+        w.feed(cbutton(SDL_CONTROLLERBUTTONUP, SDL_CONTROLLER_BUTTON_B));
+        w.feed(cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_A));
+        w.feed(cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_X));
+        w.feed(cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
+        for(int i = 0; i < 5; ++i)
+        {
+            w.feed(cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_GUIDE));
+            w.feed(cbutton(SDL_CONTROLLERBUTTONUP, SDL_CONTROLLER_BUTTON_GUIDE));
+        }
+        const std::string ws = readAll(swapPath);
+        check(countLines(ws, "button first seen: A <- controller button 'b' (1) down", "[A/B swapped]") == 1,
+              "swap: 'b' logged as A, marked [A/B swapped]");
+        check(countLines(ws, "button first seen: B <- controller button 'a' (0) down", "[A/B swapped]") == 1,
+              "swap: 'a' logged as B, marked [A/B swapped]");
+        check(count(ws, "controller button first pressed: 'b' (1) -> A [A/B swapped]") == 1 &&
+                  count(ws, "controller button first pressed: 'a' (0) -> B [A/B swapped]") == 1,
+              "swap: the SDL-button lines name the resulting Button and the swap");
+        check(count(ws, "button first seen: X <- controller button 'x' (2) down") == 1 &&
+                  countLines(ws, "button first seen: X", "swapped]") == 0,
+              "A/B swap only: X is unchanged and not marked");
+        w.log.close();
+        // Both swaps (a fresh logger, so first-seen lines appear again).
+        Harness b;
+        check(b.log.open(swapPath, err), "swap log reopened: " + err);
+        b.input.setSwapAB(true);
+        b.input.setSwapXY(true);
+        b.feed(cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_Y));
+        b.feed(cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_X));
+        b.feed(cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_B));
+        b.feed(cbutton(SDL_CONTROLLERBUTTONDOWN, SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
+        const std::string bs = readAll(swapPath);
+        check(countLines(bs, "button first seen: X <- controller button 'y' (3) down", "[X/Y swapped]") == 1 &&
+                  countLines(bs, "button first seen: Y <- controller button 'x' (2) down", "[X/Y swapped]") == 1,
+              "X/Y swap: 'y' logged as X and 'x' as Y, marked [X/Y swapped]");
+        check(count(bs, "controller button first pressed: 'y' (3) -> X [X/Y swapped]") == 1 &&
+                  countLines(bs, "button first seen: A <- controller button 'b' (1) down", "[A/B swapped]") == 1,
+              "both swaps: the SDL-button line names X; A/B still marked [A/B swapped]");
+        check(count(bs, "button first seen: L1 <- controller button 'leftshoulder'") == 1 &&
+                  countLines(bs, "button first seen: L1", "swapped]") == 0,
+              "both swaps: L1 unchanged and not marked");
+        b.log.close();
+        check(count(ws, "'guide'") == 1 && count(ws, "controller button first pressed: 'guide' (5) -> not mapped") == 1,
+              "Menu (guide) pressed five times: one first-seen line, nothing else");
+        if(std::getenv("KEEP_LOG") == nullptr)
+            std::remove(swapPath.c_str());
+    }
     rmdir(dir);
     return ptest::finish();
 }

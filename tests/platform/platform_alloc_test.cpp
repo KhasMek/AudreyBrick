@@ -17,10 +17,12 @@
 #include <cstdlib>
 #include <memory>
 #include <new>
+#include <string>
 #include <vector>
 
 #include "platform/AudioRender.h"
 #include "platform/Denormals.h"
+#include "platform/Meters.h"
 #include "platform_test_common.h"
 
 namespace
@@ -134,6 +136,12 @@ int main()
                     static_cast<unsigned long long>(rig.src->commandsProcessed()), allocs);
         check(rig.src->commandsProcessed() > 0, "commands arrived during the run");
         check(allocs == 0, "AudioRender::render performs no operator new (" + std::to_string(frames) + "-frame calls)");
+        // M3-B: the load histogram is updated inside the counted calls: one count per callback.
+        std::uint64_t histogram = 0;
+        for(std::size_t i = 0; i < kLoadBuckets; ++i)
+            histogram += render.cpu().bucketCount(i);
+        check(histogram == render.callbacks(), "the load histogram counted every callback (" + std::to_string(histogram) +
+                                                   " of " + std::to_string(render.callbacks()) + ") with no operator new");
         std::printf("  overruns with the real clock: %llu\n", static_cast<unsigned long long>(render.overruns()));
     }
 
@@ -156,6 +164,7 @@ int main()
         check(render.overruns() == 200 && render.callbacks() == 200,
               "every slow callback counted as an overrun (" + std::to_string(render.overruns()) + " of 200)");
         check(allocs == 0, "the overrun path performs no operator new");
+        check(render.cpu().bucketCount(kLoadBuckets - 1) == 200, "every slow callback is in the >=100 % histogram bucket");
     }
     return ptest::finish();
 }

@@ -35,7 +35,10 @@
 #      $ORIGIN resolution through the dynamic loader; and the packaged
 #      AudreyBrick.sh with the executable bit removed, from another working
 #      directory, with a space in the Ports path, plus log rotation, AUDREY_BUFFER
-#      handling and exit-status propagation.
+#      handling and exit-status propagation; and (M3-B) the CPU governor handling
+#      against a fake sysfs tree (AUDREY_SYSFS_CPU): set and restored on a normal
+#      exit, on SIGTERM and on SIGKILL to the launcher, AUDREY_GOVERNOR=keep, a
+#      governor not offered, invalid names, read-only files; and AUDREY_SWAP_AB.
 #   Nothing from the image is executed except the dynamic loader, the libraries
 #   and standard tools (bash, ldd, coreutils, grep, sed, procps).
 #

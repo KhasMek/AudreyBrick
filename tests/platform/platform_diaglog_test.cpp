@@ -10,11 +10,14 @@
 //     unopenable path fails with a message;
 //   - RateLimiter: N per window, the rest counted;
 //   - SeenSet: first() exactly once per index, out of range never;
-//   - formatStats: every field of the statistics line.
+//   - formatStats: every field of the statistics line (M3-B: "callback load", the
+//     load histogram with p50/p95, the CPU frequency part).
 
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -160,12 +163,51 @@ int main()
         st.framesDrawn     = 600;
         char buf[512];
         formatStats(buf, sizeof buf, st);
-        const std::string want = "stats: window 10.0 s, cpu 3.4 % (max 5.2 %), callbacks 1875, overruns 3, largest 256 frames, "
+        const std::string want = "stats: window 10.0 s, callback load 3.4 % (max 5.2 %), callbacks 1875, overruns 3, largest 256 frames, "
                                  "audio clock 1.000x real time, peak L 0.123 R 0.130, dropped 0, frames 600 (60.0 fps)";
         check(want == buf, std::string("statistics line: '") + buf + "'");
         st.keysSuppressed = 12;
         formatStats(buf, sizeof buf, st);
         check(std::string(buf) == want + ", unmapped-key lines suppressed 12", "suppressed key lines appended");
+
+        // M3-B: the histogram with p50/p95 inside the load's parentheses, and the
+        // CPU frequency before the suppressed-keys tail.
+        st.haveHistogram = true;
+        const std::uint64_t h[kStatsLoadBuckets] = {10, 1500, 300, 60, 4, 1};
+        for(std::size_t i = 0; i < kStatsLoadBuckets; ++i)
+            st.loadHistogram[i] = h[i];
+        st.cpuFreq = "policy0 408 MHz (window 408..1416 MHz, 10 samples)";
+        char big[1200];
+        formatStats(big, sizeof big, st);
+        const std::string want2 =
+            "stats: window 10.0 s, callback load 3.4 % (max 5.2 %, p50 <25 %, p95 <50 %, histogram 10/1500/300/60/4/1), "
+            "callbacks 1875, overruns 3, largest 256 frames, audio clock 1.000x real time, peak L 0.123 R 0.130, dropped 0, "
+            "frames 600 (60.0 fps), cpu freq policy0 408 MHz (window 408..1416 MHz, 10 samples), unmapped-key lines suppressed 12";
+        check(want2 == big, std::string("statistics line with histogram and cpu freq: '") + big + "'");
+        st.cpuFreq        = "";
+        st.keysSuppressed = 0;
+        for(std::size_t i = 0; i < kStatsLoadBuckets; ++i)
+            st.loadHistogram[i] = 0;
+        formatStats(big, sizeof big, st);
+        check(std::strstr(big, "p50 n/a, p95 n/a, histogram 0/0/0/0/0/0") != nullptr && std::strstr(big, "cpu freq") == nullptr,
+              "empty histogram: n/a; empty cpu freq text: no cpu freq part");
+        st.haveHistogram = false;
+        st.keysSuppressed = 12;
+
+        // Percentiles over buckets: the smallest bucket whose cumulative count
+        // reaches ceil(p x total).
+        const std::uint64_t one[kStatsLoadBuckets]   = {0, 0, 0, 7, 0, 0};
+        const std::uint64_t spike[kStatsLoadBuckets] = {95, 0, 0, 0, 0, 5};
+        const std::uint64_t edge[kStatsLoadBuckets]  = {94, 0, 0, 0, 0, 6};
+        const std::uint64_t none[kStatsLoadBuckets]  = {};
+        check(loadPercentileBucket(one, 0.5) == 3 && loadPercentileBucket(one, 0.95) == 3, "one bucket: p50 = p95 = it");
+        check(loadPercentileBucket(spike, 0.5) == 0 && loadPercentileBucket(spike, 0.95) == 0,
+              "95 of 100 below 10 %: p95 is still <10 %");
+        check(loadPercentileBucket(edge, 0.95) == 5, "94 of 100 below 10 %: p95 is >=100 %");
+        check(loadPercentileBucket(none, 0.5) == -1 && std::strcmp(loadBucketLabel(-1), "n/a") == 0 &&
+                  std::strcmp(loadBucketLabel(5), ">=100 %") == 0 && std::strcmp(loadBucketLabel(0), "<10 %") == 0 &&
+                  std::strcmp(loadBucketLabel(6), "n/a") == 0,
+              "no data: -1 and n/a; labels");
         st.windowSeconds = 0.0;
         formatStats(buf, sizeof buf, st);
         check(std::strstr(buf, "audio clock 0.000x") != nullptr && std::strstr(buf, "(0.0 fps)") != nullptr,

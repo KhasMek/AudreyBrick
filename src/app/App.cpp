@@ -26,11 +26,16 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "app/BuildInfo.h"
+#include "app/CpuFreq.h"
 #include "app/DisplayPolicy.h"
+#include "app/RestoreOnExit.h"
+#include "app/Signals.h"
 #include "core/ParamTable.h"
 #include "platform/Denormals.h"
+#include "platform/Meters.h"
 
 namespace audreybrick
 {
@@ -49,6 +54,11 @@ constexpr double kCpuWindowSeconds = 1.0;
 
 // The diagnostic log's statistics line, every this many seconds (wall clock).
 constexpr double kStatsSeconds = 10.0;
+
+// CPU frequency samples (M3-B), about this often (wall clock, UI thread).
+constexpr double kFreqSampleSeconds = 1.0;
+
+static_assert(kStatsLoadBuckets == kLoadBuckets, "the log's histogram matches the meter's");
 
 double steadySeconds() noexcept
 {
@@ -130,6 +140,16 @@ std::string usageText(const char* program)
            "  --exit-with-parent       quit (cleanly, as on SIGTERM) when the parent process dies (Linux)\n"
            "  --remove-on-exit <file>  delete this one file when the app exits (the launcher's\n"
            "                           keep-awake file, in case the launcher itself was killed)\n"
+           "  --restore-on-exit <file> <content> <expected>\n"
+           "                           when the app exits, write <content> to this existing file\n"
+           "                           (absolute path) if it still holds <expected>; never creates it;\n"
+           "                           a failure is logged, not fatal. <content> and <expected>: 1 to 32\n"
+           "                           characters a-z, 0-9, _. Repeatable. The launcher passes the CPU\n"
+           "                           governors it changed (found, set).\n"
+           "  --swap-ab                game controller A and B swapped: SDL 'a' acts as B, 'b' as A\n"
+           "                           (KNULLI on the TrimUI Brick); keyboard and other buttons unaffected\n"
+           "  --swap-xy                game controller X and Y swapped: SDL 'x' acts as Y, 'y' as X\n"
+           "  --version                print the version and exit\n"
            "  --no-video               self-test only: no window, renderer or drawing (for a system\n"
            "                           without a usable video driver, e.g. the device's libraries in a\n"
            "                           container); audio, events, controls and the log run as usual\n"
@@ -175,6 +195,36 @@ bool parseOptions(int argc, const char* const* argv, AppOptions& out, std::strin
             o.noVideo = true;
         else if(a == "--exit-with-parent")
             o.exitWithParent = true;
+        else if(a == "--swap-ab")
+            o.swapAB = true;
+        else if(a == "--swap-xy")
+            o.swapXY = true;
+        else if(a == "--version")
+            o.version = true;
+        else if(a == "--restore-on-exit")
+        {
+            if(i + 3 >= argc || argv[i + 1] == nullptr || argv[i + 2] == nullptr || argv[i + 3] == nullptr)
+            {
+                error = "--restore-on-exit needs <file> <content> <expected>";
+                return false;
+            }
+            RestoreAction r;
+            r.file     = argv[++i];
+            r.content  = argv[++i];
+            r.expected = argv[++i];
+            if(r.file.empty() || r.file[0] != '/')
+            {
+                error = "--restore-on-exit: the file must be an absolute path, got '" + r.file + "'";
+                return false;
+            }
+            if(!isRestoreValue(r.content) || !isRestoreValue(r.expected))
+            {
+                error = "--restore-on-exit " + r.file + ": <content> and <expected> must be 1 to 32 characters "
+                        "a-z, 0-9 or _, got '" + r.content + "' and '" + r.expected + "'";
+                return false;
+            }
+            o.restoreOnExit.push_back(std::move(r));
+        }
         else if(a == "--remove-on-exit")
         {
             if(!value(v))
@@ -448,14 +498,41 @@ bool App::createWindowAndRenderer(std::string& error)
     return true;
 }
 
-void App::removeOnExit()
+void App::exitActions()
 {
-    if(opts_.removeOnExit.empty())
+    if(exitActionsDone_)
         return;
-    if(std::remove(opts_.removeOnExit.c_str()) == 0)
-        log_.line(logTime(), "remove-on-exit: removed %s", opts_.removeOnExit.c_str());
+    exitActionsDone_ = true;
+    if(!opts_.removeOnExit.empty())
+    {
+        if(std::remove(opts_.removeOnExit.c_str()) == 0)
+            log_.line(logTime(), "remove-on-exit: removed %s", opts_.removeOnExit.c_str());
+        else
+            log_.line(logTime(), "remove-on-exit: %s: %s", opts_.removeOnExit.c_str(), std::strerror(errno));
+    }
+    if(!opts_.restoreOnExit.empty())
+    {
+        logGovernors("at exit, before restore-on-exit");
+        for(const RestoreAction& r : opts_.restoreOnExit)
+        {
+            std::string msg;
+            writeRestore(r, msg);
+            log_.line(logTime(), "%s", msg.c_str());
+            std::printf("audreybrick: %s\n", msg.c_str()); // also in stdout.log
+        }
+        std::fflush(stdout);
+        logGovernors("after restore-on-exit");
+    }
     else
-        log_.line(logTime(), "remove-on-exit: %s: %s", opts_.removeOnExit.c_str(), std::strerror(errno));
+    {
+        logGovernors("at exit");
+    }
+}
+
+void App::logGovernors(const char* when)
+{
+    if(cpuFreq_.available())
+        log_.line(logTime(), "cpu governor %s: %s", when, cpuFreq_.governors().c_str());
 }
 
 void App::videoFailure(double t, bool fatal, const char* fmt, ...)
@@ -491,6 +568,11 @@ bool App::startUp(std::string& error)
     // Video separately from the rest, so that a video failure is reported as one,
     // and so that --no-video (self-test only) runs audio, events and controllers
     // without it. A video failure is fatal: there is no automatic fallback.
+    // The app's own stop-signal handlers stay in place (app/Signals.h); SDL must
+    // not install its own.
+    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+    if(stopAt("before SDL_Init", error))
+        return false;
     if(SDL_Init(SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0)
     {
         error = std::string("SDL_Init failed: ") + SDL_GetError();
@@ -513,9 +595,13 @@ bool App::startUp(std::string& error)
             videoFailure(logTime(), true, "%s", error.c_str());
             return false;
         }
+        if(stopAt("after SDL_Init", error))
+            return false;
         if(!createWindowAndRenderer(error))
             return false;
     }
+    if(stopAt("after the video set-up", error))
+        return false;
 
     // The instrument. All allocation happens here, before audio is unpaused.
     voice_ = std::make_unique<AudreyVoice>();
@@ -526,6 +612,8 @@ bool App::startUp(std::string& error)
                                            counterFreq_);
     host_   = std::make_unique<AudioHost>(*audio_);
     if(!host_->open(opts_.bufferFrames, error))
+        return false;
+    if(stopAt("after opening the audio device", error))
         return false;
 
     const ObtainedAudioSpec& a = host_->obtained();
@@ -548,6 +636,8 @@ bool App::startUp(std::string& error)
 
     logAudioDevices(log_, logTime());
     logJoysticks(log_, logTime());
+    input_.setSwapAB(opts_.swapAB);
+    input_.setSwapXY(opts_.swapXY);
     if(input_.openFirstController())
         std::printf("controller: %s\n", input_.controllerName().c_str());
     else
@@ -556,6 +646,15 @@ bool App::startUp(std::string& error)
               input_.controllerConnected() ? input_.controllerName().c_str() : "none (keyboard only)");
     std::printf("%s", keyboardHelpText().c_str());
     std::fflush(stdout);
+    return !stopAt("after the controllers", error);
+}
+
+bool App::stopAt(const char* stage, std::string& error)
+{
+    if(!stopRequested())
+        return false;
+    stoppedInStartUp_ = true;
+    error = std::string("stopped by ") + stopSignalName(stopSignal()) + " during start-up (" + stage + ")";
     return true;
 }
 
@@ -661,12 +760,25 @@ void App::logStats(double wall, const char* label)
     st.overruns        = ov - statsOverruns_;
     st.audioFrames     = fr - statsAudioFrames_;
     st.sampleRate      = AudreyVoice::kSampleRate;
+    st.haveHistogram   = true;
+    std::uint64_t buckets[kStatsLoadBuckets];
+    for(std::size_t i = 0; i < kStatsLoadBuckets; ++i)
+    {
+        buckets[i]          = audio_->cpu().bucketCount(i);
+        st.loadHistogram[i] = buckets[i] - statsBuckets_[i];
+    }
+    char freq[512] = "";
+    if(cpuFreq_.available())
+    {
+        cpuFreq_.formatAndReset(freq, sizeof freq);
+        st.cpuFreq = freq;
+    }
     st.peakL           = statsPeak_[0];
     st.peakR           = statsPeak_[1];
     st.dropped         = model_->commandsDropped();
     st.framesDrawn     = fps_.frames();
     st.keysSuppressed  = events_.takeKeysSuppressed();
-    char buf[512];
+    char buf[1200];
     formatStats(buf, sizeof buf, st);
     log_.line(logTime(), "%s%s", label, buf);
 
@@ -677,6 +789,8 @@ void App::logStats(double wall, const char* label)
     statsCallbacks_   = cb;
     statsOverruns_    = ov;
     statsAudioFrames_ = fr;
+    for(std::size_t i = 0; i < kStatsLoadBuckets; ++i)
+        statsBuckets_[i] = buckets[i];
     fps_.take(st.windowSeconds);
 }
 
@@ -684,6 +798,21 @@ int App::run()
 {
     runStart_  = steadySeconds();
     parentPid_ = static_cast<long>(getppid());
+    // --exit-with-parent first, before anything slow (M3-B review, fix 4): if the
+    // parent has already gone, or the app was re-parented to init, stop cleanly.
+    bool parentGoneAtStart = false;
+    int  pdeathErrno       = 0;
+    bool pdeathSet         = false;
+    if(opts_.exitWithParent)
+    {
+#if defined(__linux__)
+        if(prctl(PR_SET_PDEATHSIG, SIGTERM) == 0)
+            pdeathSet = true;
+        else
+            pdeathErrno = errno;
+#endif
+        parentGoneAtStart = parentPid_ <= 1 || static_cast<long>(getppid()) != parentPid_;
+    }
     if(!opts_.logPath.empty())
     {
         std::string err;
@@ -705,28 +834,64 @@ int App::run()
                   opts_.bufferFrames, opts_.fullscreen ? "yes" : "no", opts_.noVideo ? "none (--no-video)" : "yes",
                   opts_.audioDriver.empty() ? "(SDL's choice)" : opts_.audioDriver.c_str(),
                   opts_.selftest() ? opts_.selftestScript.c_str() : "no");
+        if(opts_.swapAB)
+            log_.line(0.0, "input: A/B swap ON (--swap-ab): controller button 'a' acts as B and 'b' as A");
+        else
+            log_.line(0.0, "input: A/B swap off (SDL's naming: controller 'a' is A, 'b' is B)");
+        if(opts_.swapXY)
+            log_.line(0.0, "input: X/Y swap ON (--swap-xy): controller button 'x' acts as Y and 'y' as X");
+        else
+            log_.line(0.0, "input: X/Y swap off (SDL's naming: controller 'x' is X, 'y' is Y)");
+        log_.line(0.0, "input: the other buttons and the keyboard are never swapped");
+        for(const RestoreAction& r : opts_.restoreOnExit)
+            log_.line(0.0, "restore-on-exit requested: '%s' -> %s if it still holds '%s'", r.content.c_str(),
+                      r.file.c_str(), r.expected.c_str());
         errno            = 0;
         const int niceV  = getpriority(PRIO_PROCESS, 0);
         log_.line(0.0, "process: pid %ld, parent %ld, nice %d", static_cast<long>(getpid()), parentPid_,
                   errno == 0 ? niceV : 0);
     }
-    if(opts_.exitWithParent)
     {
-#if defined(__linux__)
-        if(prctl(PR_SET_PDEATHSIG, SIGTERM) == 0)
+        // CPU frequency (M3-B). AUDREY_SYSFS_CPU is a testing aid only.
+        const char*       env  = std::getenv(kSysfsCpuEnv);
+        const std::string base = (env != nullptr && env[0] != '\0') ? env : kSysfsCpuDefault;
+        if(env != nullptr && env[0] != '\0')
+            log_.line(logTime(), "cpu frequency: sysfs base %s (from %s, a testing aid)", base.c_str(), kSysfsCpuEnv);
+        if(cpuFreq_.discover(base) == 0)
         {
-            log_.line(logTime(), "exit-with-parent: SIGTERM is delivered if the parent process (%ld) dies", parentPid_);
-            if(static_cast<long>(getppid()) != parentPid_)
-                std::raise(SIGTERM); // the parent died before the request took effect
+            log_.line(logTime(), "cpu frequency: not available (no cpufreq policy under %s)", base.c_str());
         }
         else
         {
-            log_.line(logTime(), "exit-with-parent: prctl failed (%s)", std::strerror(errno));
+            std::string names;
+            for(std::size_t i = 0; i < cpuFreq_.count(); ++i)
+                names += std::string(i == 0 ? "" : ", ") + cpuFreq_.directory(i);
+            log_.line(logTime(), "cpu frequency: %zu policy(ies): %s; sampled about every %.0f s on the UI thread",
+                      cpuFreq_.count(), names.c_str(), kFreqSampleSeconds);
+            logGovernors("at start");
+            cpuFreq_.sample();
         }
-#else
-        log_.line(logTime(), "exit-with-parent: not supported on this system (ignored)");
-#endif
     }
+    if(opts_.exitWithParent)
+    {
+#if defined(__linux__)
+        if(pdeathSet)
+            log_.line(logTime(), "exit-with-parent: SIGTERM is delivered if the parent process (%ld) dies", parentPid_);
+        else
+            log_.line(logTime(), "exit-with-parent: prctl failed (%s)", std::strerror(pdeathErrno));
+#else
+        (void)pdeathSet;
+        (void)pdeathErrno;
+        log_.line(logTime(), "exit-with-parent: not supported on this system (only the start-up check is done)");
+#endif
+        if(parentGoneAtStart || (opts_.exitWithParent && static_cast<long>(getppid()) != parentPid_))
+        {
+            exitReason_ = "the launcher (parent process) was already gone at start";
+            return stopEarly("at start");
+        }
+    }
+    if(stopRequested())
+        return stopEarly("at start");
 
     if(opts_.selftest())
     {
@@ -736,20 +901,24 @@ int App::run()
             std::fprintf(stderr, "audreybrick: self-test script %s: %s\n", opts_.selftestScript.c_str(), err.c_str());
             log_.line(logTime(), "self-test script %s: %s", opts_.selftestScript.c_str(), err.c_str());
             log_.line(logTime(), "exit: bad self-test script, exit code 2");
-            removeOnExit();
+            exitActions();
             return 2;
         }
         std::printf("selftest: script %s, %zu events, %.3f s\n", opts_.selftestScript.c_str(), script_.size(),
                     opts_.selftestSeconds);
     }
+    if(stopRequested())
+        return stopEarly("after loading the self-test script");
 
     std::string error;
     if(!startUp(error))
     {
+        if(stoppedInStartUp_)
+            return stopEarly(error.c_str());
         std::fprintf(stderr, "audreybrick: %s\n", error.c_str());
         log_.line(logTime(), "start-up failed: %s", error.c_str());
         log_.line(logTime(), "exit: start-up failure, exit code 1");
-        removeOnExit();
+        exitActions();
         shutDown();
         return 1;
     }
@@ -763,6 +932,8 @@ int App::run()
         render(snap_);
     }
 
+    if(stopRequested())
+        return stopEarly("before starting audio");
     t0_ = SDL_GetPerformanceCounter();
     host_->start();
     log_.line(logTime(), "audio started; statistics every %.0f s", kStatsSeconds);
@@ -785,8 +956,17 @@ int App::run()
         // the audio-side ramps (see App.h).
         const double t = selftest ? audioSeconds() : frameStart;
 
+        if(running && stopRequested())
+        {
+            exitReason_ = std::string(stopSignalName(stopSignal())) +
+                          " (a stop signal: from the launcher, the system, or --exit-with-parent)";
+            if(static_cast<long>(getppid()) != parentPid_)
+                exitReason_ += " - the launcher (parent process) is gone";
+            running = false;
+        }
+
         SDL_Event e;
-        while(SDL_PollEvent(&e))
+        while(running && SDL_PollEvent(&e))
         {
             ButtonEvent                 be{};
             const InputMap::Action action = input_.handle(e, be);
@@ -870,6 +1050,11 @@ int App::run()
                 render(snap_);
             lastPresent = frameStart;
         }
+        if(cpuFreq_.available() && frameStart - lastFreqSample_ >= kFreqSampleSeconds)
+        {
+            cpuFreq_.sample(); // a few small sysfs reads, UI thread only
+            lastFreqSample_ = frameStart;
+        }
         if(frameStart - statsStart_ >= kStatsSeconds)
             logStats(frameStart, "");
 
@@ -894,7 +1079,29 @@ int App::run()
     const int code = selftest ? finishSelftest(wall, timedOut) : 0;
     log_.line(logTime(), "exit: %s, exit code %d", exitReason_.c_str(), code);
     shutDown();
-    removeOnExit();
+    exitActions();
+    log_.line(logTime(), "shut down cleanly");
+    log_.close();
+    return code;
+}
+
+int App::stopEarly(const char* stage)
+{
+    if(exitReason_ == "unknown")
+    {
+        exitReason_ = std::string(stopSignalName(stopSignal())) + " during start-up";
+        if(static_cast<long>(getppid()) != parentPid_)
+            exitReason_ += " - the launcher (parent process) is gone";
+    }
+    const int code = opts_.selftest() ? 3 : 0;
+    log_.line(logTime(), "stopping before the main loop (%s): %s", stage, exitReason_.c_str());
+    std::printf("audreybrick: stopped during start-up (%s): %s\n", stage, exitReason_.c_str());
+    std::fflush(stdout);
+    if(host_)
+        host_->close();
+    log_.line(logTime(), "exit: %s, exit code %d", exitReason_.c_str(), code);
+    shutDown();
+    exitActions();
     log_.line(logTime(), "shut down cleanly");
     log_.close();
     return code;
@@ -941,7 +1148,7 @@ int App::finishSelftest(double wallSeconds, bool timedOut)
     const float cpuMax  = std::max(cpuSessionMax_, lastMax);
     const float cpuSm   = audio_->cpu().smoothed();
     allFinite           = allFinite && finite(cpuMax) && finite(cpuSm);
-    std::printf("cpu: max %.2f %% of the buffer time (after the first second %.2f %%), smoothed at end %.2f %%\n",
+    std::printf("callback load: max %.2f %% of the buffer time (after the first second %.2f %%), smoothed at end %.2f %%\n",
                 100.0 * static_cast<double>(cpuMax), 100.0 * static_cast<double>(std::max(cpuMaxAfterFirstSecond_, lastMax)),
                 100.0 * static_cast<double>(cpuSm));
     const float peak[2] = {std::max(peakSessionMax_[0], audio_->peakL().take()),
@@ -1028,7 +1235,7 @@ int App::finishSelftest(double wallSeconds, bool timedOut)
         std::printf("selftest: PASSED\n");
     else
         std::printf("selftest: FAILED (%d problem(s))\n", problems);
-    log_.line(logTime(), "self-test: %s (%d problem(s)); delivered %zu of %zu events; peak L %.4f R %.4f; cpu max %.2f %%",
+    log_.line(logTime(), "self-test: %s (%d problem(s)); delivered %zu of %zu events; peak L %.4f R %.4f; callback load max %.2f %%",
               problems == 0 ? "PASSED" : "FAILED", problems, nextEvent_, script_.size(), static_cast<double>(peak[0]),
               static_cast<double>(peak[1]), 100.0 * static_cast<double>(cpuMax));
     std::fflush(stdout);

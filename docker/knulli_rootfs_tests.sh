@@ -14,6 +14,8 @@
 #   /tmp                              a tmpfs mounted exec (Docker's default tmpfs is noexec)
 # The package is copied to "/tmp/ports with space" (a space in the path, a file
 # system where chmod works; on the Mac's shared folder it does not).
+# M3-B: the CPU governor handling, the A/B swap setting and the settings line are
+# tested against a fake sysfs tree in /tmp/fakesys (AUDREY_SYSFS_CPU, a testing aid).
 #
 # Only the device's loader, libraries and standard tools (bash, ldd, coreutils,
 # grep, sed, procps) run here, plus our app.
@@ -167,8 +169,8 @@ for sig in TERM INT HUP KILL; do
     left="$(pgrep -f "audreybrick/audreybrick" | tr '\n' ' ')"
     reason="$(grep -m1 'exit:' "$DATA/audreybrick.log" | sed 's/^\[[ 0-9.]*\] //')"
     echo "  SIG$sig: launcher exit $rc; app log: $reason; last line: $(tail -n 1 "$DATA/audreybrick.log" | sed 's/^\[[ 0-9.]*\] //')"
-    if [ -z "$left" ] && tail -n 1 "$DATA/audreybrick.log" | grep -q 'shut down cleanly' && printf '%s' "$reason" | grep -q 'SDL_QUIT'; then
-        pass "SIG$sig to the launcher: the app quit cleanly (SDL_QUIT), no process left"
+    if [ -z "$left" ] && tail -n 1 "$DATA/audreybrick.log" | grep -q 'shut down cleanly' && printf '%s' "$reason" | grep -q 'a stop signal'; then
+        pass "SIG$sig to the launcher: the app quit cleanly (its stop-signal path), no process left"
     else
         fail "SIG$sig to the launcher: processes left '$left', reason '$reason'"
     fi
@@ -179,6 +181,297 @@ for sig in TERM INT HUP KILL; do
 done
 
 set +m
+
+# --- M3-B: CPU governor (fake sysfs tree), A/B swap, settings line -------------------------
+# The container's real /sys is read-only (or has no cpufreq), so the governor handling
+# runs against a fake tree through AUDREY_SYSFS_CPU (a testing aid for launcher and
+# app). policy0 offers performance; policy4 does not (it must be skipped with a note).
+FAKE=/tmp/fakesys
+mkfake() {
+    rm -rf "$FAKE"
+    mkdir -p "$FAKE/cpufreq/policy0" "$FAKE/cpufreq/policy4"
+    printf 'schedutil\n' > "$FAKE/cpufreq/policy0/scaling_governor"
+    printf 'ondemand userspace powersave performance schedutil \n' > "$FAKE/cpufreq/policy0/scaling_available_governors"
+    printf '408000\n' > "$FAKE/cpufreq/policy0/scaling_cur_freq"
+    printf '408000\n' > "$FAKE/cpufreq/policy0/scaling_min_freq"
+    printf '1416000\n' > "$FAKE/cpufreq/policy0/scaling_max_freq"
+    printf '0 1 2 3\n' > "$FAKE/cpufreq/policy0/affected_cpus"
+    printf 'schedutil\n' > "$FAKE/cpufreq/policy4/scaling_governor"
+    printf 'powersave schedutil \n' > "$FAKE/cpufreq/policy4/scaling_available_governors"
+    printf '1200000\n' > "$FAKE/cpufreq/policy4/scaling_cur_freq"
+}
+gov() { cat "$FAKE/cpufreq/$1/scaling_governor" 2>/dev/null; }
+
+section "Governor: performance while the app runs, restored on a normal exit (fake sysfs)"
+mkfake
+launch AUDREY_SYSFS_CPU="$FAKE" AUDREY_GOVERNOR=performance AUDREY_ARGS="--selftest /ab/rise.txt --seconds 3 --no-video" &
+lpid=$!
+sleep 1.5
+during0="$(gov policy0)"; during4="$(gov policy4)"
+wait "$lpid"
+rc=$?
+sed 's/^/  stdout.log: /' "$DATA/stdout.log" | grep -E 'governor|settings|restore|policy'
+grep -E 'cpu (frequency|governor)|restore-on-exit|stats:|input: A/B' "$DATA/audreybrick.log" | sed 's/^/  app log: /'
+[ "$rc" -eq 0 ] && pass "launcher returned 0" || fail "launcher returned $rc"
+[ "$during0" = performance ] && pass "policy0 was 'performance' while the app ran" || fail "policy0 during the run: '$during0'"
+[ "$during4" = schedutil ] && grep -q "governor: policy4: 'performance' is not in scaling_available_governors ('powersave schedutil'); skipped, left at 'schedutil'" "$DATA/stdout.log" \
+    && pass "policy4 (no performance governor offered) skipped with a note, left at schedutil" || fail "policy4: '$during4'"
+[ "$(gov policy0)" = schedutil ] && [ "$(gov policy4)" = schedutil ] && pass "both policies are 'schedutil' after the exit" || fail "after exit: '$(gov policy0)' '$(gov policy4)'"
+grep -q "governor: policy0: 'schedutil' -> 'performance' (restored when the app ends)" "$DATA/stdout.log" && pass "stdout.log: the change, before -> after" || fail "change not logged"
+grep -q "restore-on-exit requested: 'schedutil' -> $FAKE/cpufreq/policy0/scaling_governor if it still holds 'performance'" "$DATA/audreybrick.log" \
+    && ! grep -q "restore-on-exit requested: .*policy4" "$DATA/audreybrick.log" \
+    && pass "the app was given --restore-on-exit for policy0 only" || fail "restore-on-exit arguments"
+grep -q "restore-on-exit: wrote 'schedutil' to $FAKE/cpufreq/policy0/scaling_governor" "$DATA/audreybrick.log" \
+    && grep -q "governor: $FAKE/cpufreq/policy0: already back to 'schedutil' (the app restores it too); nothing to do" "$DATA/stdout.log" \
+    && pass "the app restored first; the launcher's second restore found nothing to do (harmless)" || fail "restore sequence"
+grep -q 'cpu governor at start: policy0 performance; policy4 schedutil' "$DATA/audreybrick.log" \
+    && grep -q 'cpu governor after restore-on-exit: policy0 schedutil; policy4 schedutil' "$DATA/audreybrick.log" \
+    && pass "the app logs the governors at start and after its restore" || fail "governor lines in the app log"
+grep -qE 'stats: .*callback load .*p50 .*, cpu freq policy0 408 MHz \(window 408\.\.408 MHz, [0-9]+ samples\); policy4 1200 MHz' "$DATA/audreybrick.log" \
+    && pass "the stats line carries the CPU frequency of both policies" || fail "no cpu freq on the stats line"
+grep -qE "^launcher: settings: AudreyBrick [^ ]+ \(built .*\); AUDREY_BUFFER=256 AUDREY_KEEP_AWAKE=1 AUDREY_SWAP_AB=1 AUDREY_SWAP_XY=1 AUDREY_GOVERNOR=performance AUDREY_SYSFS_CPU=$FAKE \(testing aid\)$" "$DATA/stdout.log" \
+    && pass "one settings line with the app's version and the resolved settings" || fail "settings line"
+grep -q 'launcher: policy0 governor schedutil, cur 408000 kHz, min 408000 kHz, max 1416000 kHz, cpus 0 1 2 3' "$DATA/stdout.log" \
+    && pass "device state lists each policy before the change" || fail "device state policy line"
+cp "$DATA/audreybrick.log" /ab/out/governor-normal-audreybrick.log; cp "$DATA/stdout.log" /ab/out/governor-normal-stdout.log
+
+section "Governor: the launcher restores by itself when the app did not (app rejects its options, exit 2)"
+mkfake
+launch AUDREY_SYSFS_CPU="$FAKE" AUDREY_GOVERNOR=performance AUDREY_ARGS="--bogus-option"
+rc=$?
+grep -E 'governor' "$DATA/stdout.log" | sed 's/^/  stdout.log: /'
+[ "$rc" -eq 2 ] && [ "$(gov policy0)" = schedutil ] \
+    && grep -q "governor: $FAKE/cpufreq/policy0: restored 'performance' -> 'schedutil'" "$DATA/stdout.log" \
+    && pass "app exit 2 before its own restore: the launcher restored schedutil and logged it" || fail "launcher-only restore (rc $rc, '$(gov policy0)')"
+
+section "Governor: SIGTERM and SIGKILL to the launcher (fake sysfs)"
+set -m
+for sig in TERM KILL; do
+    mkfake
+    launch AUDREY_SYSFS_CPU="$FAKE" AUDREY_GOVERNOR=performance AUDREY_ARGS="--selftest /ab/rise.txt --seconds 60 --no-video" &
+    lpid=$!
+    sleep 2
+    during="$(gov policy0)"
+    bpid="$(pgrep -f -n "/bin/bash $PORTS/AudreyBrick.sh")"
+    apid="$(pgrep -f -n "audreybrick/audreybrick --fullscreen")"
+    kill "-$sig" "$bpid"
+    for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$apid" 2>/dev/null || break; sleep 0.5; done
+    wait "$lpid" 2>/dev/null
+    after="$(gov policy0)"
+    echo "  SIG$sig: policy0 during '$during', after '$after'"
+    grep -E 'governor|restore' "$DATA/stdout.log" | sed 's/^/  stdout.log: /'
+    grep -E 'restore-on-exit|cpu governor|exit:' "$DATA/audreybrick.log" | sed 's/^/  app log: /'
+    [ "$during" = performance ] && [ "$after" = schedutil ] && pass "SIG$sig to the launcher: performance during the run, schedutil restored" \
+        || fail "SIG$sig: during '$during', after '$after'"
+    grep -q "restore-on-exit: wrote 'schedutil'" "$DATA/audreybrick.log" && pass "SIG$sig: the app restored it (logged)" || fail "SIG$sig: no app restore"
+    if [ "$sig" = TERM ]; then
+        grep -q "already back to 'schedutil' (the app restores it too)" "$DATA/stdout.log" && pass "SIGTERM: the launcher's restore after the app's was harmless" || fail "SIGTERM: launcher restore line"
+    else
+        ! grep -q "already back to\|governor: .*restored '" "$DATA/stdout.log" && pass "SIGKILL: the launcher could not restore (killed); the app did" || fail "SIGKILL: unexpected launcher restore"
+    fi
+    pgrep -f "audreybrick/audreybrick" > /dev/null && fail "SIG$sig: an app process is left" || pass "SIG$sig: no app process left"
+    cp "$DATA/audreybrick.log" "/ab/out/governor-$sig-audreybrick.log"; cp "$DATA/stdout.log" "/ab/out/governor-$sig-stdout.log"
+done
+set +m
+
+section "Governor: keep, a governor not offered, an invalid name, a read-only file (fake sysfs)"
+mkfake
+mtime0="$(stat -c %.9Y "$FAKE/cpufreq/policy0/scaling_governor")"
+launch AUDREY_SYSFS_CPU="$FAKE" AUDREY_ARGS="--selftest /ab/rise.txt --seconds 2 --no-video" &
+lpid=$!
+sleep 1
+during="$(gov policy0)"
+wait "$lpid"
+[ "$during" = schedutil ] && [ "$(gov policy0)" = schedutil ] && grep -q 'governor: left alone (AUDREY_GOVERNOR=keep)' "$DATA/stdout.log" \
+    && grep -q 'AUDREY_GOVERNOR=keep' "$DATA/stdout.log" && ! grep -q 'restore-on-exit requested' "$DATA/audreybrick.log" \
+    && pass "AUDREY_GOVERNOR unset (default keep): nothing changed, nothing to restore" || fail "default keep (during '$during')"
+[ "$(stat -c %.9Y "$FAKE/cpufreq/policy0/scaling_governor")" = "$mtime0" ] \
+    && pass "keep: scaling_governor was not written (modification time unchanged, $mtime0)" || fail "keep: scaling_governor was written"
+mkfake
+launch AUDREY_SYSFS_CPU="$FAKE" AUDREY_GOVERNOR=conservative AUDREY_ARGS="$QUICK"
+grep -q "governor: policy0: 'conservative' is not in scaling_available_governors" "$DATA/stdout.log" \
+    && grep -q "governor: policy4: 'conservative' is not in scaling_available_governors" "$DATA/stdout.log" && [ "$(gov policy0)" = schedutil ] \
+    && pass "a governor no policy offers: skipped with a note, nothing changed" || fail "unavailable governor"
+for bad in 'perf ormance' 'performance;reboot' '../x' 'PERFORMANCE'; do
+    mkfake
+    launch AUDREY_SYSFS_CPU="$FAKE" AUDREY_GOVERNOR="$bad" AUDREY_ARGS="$QUICK"
+    grep -qF "AUDREY_GOVERNOR '$bad' is not a governor name; using keep" "$DATA/stdout.log" && [ "$(gov policy0)" = schedutil ] \
+        && pass "AUDREY_GOVERNOR '$bad': treated as keep" || fail "AUDREY_GOVERNOR '$bad'"
+done
+mkfake
+chmod a-w "$FAKE/cpufreq/policy0/scaling_governor"
+launch AUDREY_SYSFS_CPU="$FAKE" AUDREY_GOVERNOR=performance AUDREY_ARGS="$QUICK" 2> /tmp/ro-stderr.txt
+rc=$?
+[ ! -s /tmp/ro-stderr.txt ] && pass "a failed governor write prints nothing on the launcher's stderr" || { fail "launcher stderr:"; cat /tmp/ro-stderr.txt; }
+chmod u+w "$FAKE/cpufreq/policy0/scaling_governor"
+[ "$rc" -eq 0 ] && grep -q "governor: policy0: could not write 'performance' (no permission or read-only); left at 'schedutil'" "$DATA/stdout.log" \
+    && ! grep -q 'restore-on-exit requested' "$DATA/audreybrick.log" && [ "$(gov policy0)" = schedutil ] \
+    && pass "a scaling_governor that cannot be written: noted, not fatal, nothing to restore" || fail "read-only governor (rc $rc)"
+# The app's own restore against a file that cannot be written: logged, not fatal.
+mkfake
+chmod a-w "$FAKE/cpufreq/policy0/scaling_governor"
+SDL_AUDIODRIVER=dummy /ab/port/audreybrick --selftest /ab/rise.txt --seconds 0.3 --no-video --log /ab/out/restore-ro.log \
+    --restore-on-exit "$FAKE/cpufreq/policy0/scaling_governor" ondemand schedutil > /dev/null 2>&1
+rc=$?
+chmod u+w "$FAKE/cpufreq/policy0/scaling_governor"
+[ "$rc" -eq 0 ] && grep -q 'restore-on-exit: writing .ondemand. to .* failed\|restore-on-exit: .*Permission denied (not written; not fatal)' /ab/out/restore-ro.log \
+    && [ "$(gov policy0)" = schedutil ] && pass "app restore into a read-only file: logged, exit 0" || fail "app restore read-only (rc $rc)"
+echo "  real /sys in this container (no AUDREY_SYSFS_CPU), from the first launcher run:"
+grep -E 'governor|cpufreq' /ab/out/launcher-stdout.log | sed 's/^/    /'
+grep -E 'cpu frequency|cpu governor' /ab/out/launcher-audreybrick.log | sed 's/^/    /'
+
+section "AUDREY_SWAP_AB / AUDREY_SWAP_XY: values reach the app; KNULLI's layout flag turns both off"
+for v in 1 0 unset yes 2 ""; do
+    if [ "$v" = unset ]; then launch AUDREY_ARGS="$QUICK"; else launch AUDREY_SWAP_AB="$v" AUDREY_SWAP_XY="$v" AUDREY_ARGS="$QUICK"; fi
+    rc=$?
+    case "$v" in
+        0) wa='input: A/B swap off'; wx='input: X/Y swap off'; set_want='AUDREY_SWAP_AB=0 AUDREY_SWAP_XY=0' ;;
+        *) wa='input: A/B swap ON (--swap-ab)'; wx='input: X/Y swap ON (--swap-xy)'; set_want='AUDREY_SWAP_AB=1 AUDREY_SWAP_XY=1' ;;
+    esac
+    ok=1
+    [ "$rc" -eq 0 ] || ok=0
+    grep -qF "$wa" "$DATA/audreybrick.log" || ok=0
+    grep -qF "$wx" "$DATA/audreybrick.log" || ok=0
+    grep -qF "$set_want" "$DATA/stdout.log" || ok=0
+    case "$v" in
+        yes|2) grep -qF "AUDREY_SWAP_AB '$v' is not 0 or 1; using 1" "$DATA/stdout.log" && grep -qF "AUDREY_SWAP_XY '$v' is not 0 or 1; using 1" "$DATA/stdout.log" || ok=0 ;;
+        unset|"") grep -qF "launcher: buttons: A/B swap 1 (default); X/Y swap 1 (default)" "$DATA/stdout.log" || ok=0 ;;
+        *) grep -qF "A/B swap $([ "$v" = 0 ] && echo 0 || echo 1) (set in the environment)" "$DATA/stdout.log" || ok=0 ;;
+    esac
+    [ "$ok" -eq 1 ] && pass "AUDREY_SWAP_AB/XY '$v': app log says '$wa' and '$wx', settings line $set_want" || fail "AUDREY_SWAP_AB/XY '$v' (rc $rc)"
+done
+# KNULLI's own SWITCH A/B and X/Y for this launch: the flag file (ports_hooks.sh).
+touch /var/run/ports_xbox_layout.flag
+launch AUDREY_ARGS="$QUICK"
+grep -qF "launcher: buttons: A/B swap 0 (off: KNULLI's SWITCH A/B and X/Y is on for this port (/var/run/ports_xbox_layout.flag exists)); X/Y swap 0 (off: KNULLI's" "$DATA/stdout.log" \
+    && grep -qF 'input: A/B swap off' "$DATA/audreybrick.log" && grep -qF 'input: X/Y swap off' "$DATA/audreybrick.log" \
+    && grep -qF '/var/run/ports_xbox_layout.flag exists' "$DATA/stdout.log" \
+    && pass "KNULLI's layout flag present: both swaps off, and stdout.log says why" || fail "layout flag: swaps not turned off"
+launch AUDREY_SWAP_AB=1 AUDREY_ARGS="$QUICK"
+grep -qF "launcher: buttons: A/B swap 1 (set in the environment); X/Y swap 0 (off: KNULLI's" "$DATA/stdout.log" \
+    && grep -qF 'input: A/B swap ON' "$DATA/audreybrick.log" && grep -qF 'input: X/Y swap off' "$DATA/audreybrick.log" \
+    && pass "layout flag present, AUDREY_SWAP_AB=1 in the environment: the environment wins for A/B only" || fail "layout flag with env override"
+rm -f /var/run/ports_xbox_layout.flag
+launch AUDREY_ARGS="$QUICK"
+grep -qF '/var/run/ports_xbox_layout.flag does not exist' "$DATA/stdout.log" && grep -qF 'input: X/Y swap ON' "$DATA/audreybrick.log" \
+    && pass "flag removed: defaults (both swaps on) again" || fail "after removing the flag"
+
+section "Launcher logging additions (before any state change)"
+for want in 'launcher: knulli-settings-get not found' 'launcher: knulli-settings-get-master not found' \
+            'launcher: /var/run/ports_xbox_layout.flag does not exist' 'launcher: cpufreq layout: ' 'power_supply'; do
+    grep -qF "$want" "$DATA/stdout.log" && pass "stdout.log has: $want" || fail "stdout.log lacks: $want"
+done
+mkfake
+launch AUDREY_SYSFS_CPU="$FAKE" AUDREY_ARGS="$QUICK"
+grep -qF "launcher: cpufreq layout: 2 policy director(ies) under $FAKE/cpufreq, 0 cpu*/cpufreq director(ies)" "$DATA/stdout.log" \
+    && pass "cpufreq layout counted (2 policies, no cpu*/cpufreq)" || fail "cpufreq layout line"
+dev_line="$(grep -n 'end of device state' "$DATA/stdout.log" | cut -d: -f1)"
+first_change="$(grep -n 'keep-awake: created' "$DATA/stdout.log" | cut -d: -f1)"
+[ -n "$dev_line" ] && [ -n "$first_change" ] && [ "$dev_line" -lt "$first_change" ] \
+    && pass "every device-state item is logged before the first change to the system" || fail "order of device state and keep-awake"
+
+section "Governor: changed by someone else while the app runs -> not restored (fake sysfs)"
+mkfake
+launch AUDREY_SYSFS_CPU="$FAKE" AUDREY_GOVERNOR=performance AUDREY_ARGS="--selftest /ab/rise.txt --seconds 3 --no-video" &
+lpid=$!
+sleep 1.5
+during="$(gov policy0)"
+printf 'powersave\n' > "$FAKE/cpufreq/policy0/scaling_governor" # as KNULLI's gameStop hook might
+wait "$lpid"
+grep -E 'restore|governor' "$DATA/audreybrick.log" "$DATA/stdout.log" | grep -i 'someone' | sed 's/^/  /'
+[ "$during" = performance ] && [ "$(gov policy0)" = powersave ] \
+    && grep -q "restore-on-exit: $FAKE/cpufreq/policy0/scaling_governor: changed by someone else to 'powersave' (expected 'performance'); not restoring 'schedutil'" "$DATA/audreybrick.log" \
+    && grep -q "governor: $FAKE/cpufreq/policy0: changed by someone else to 'powersave'; not restoring 'schedutil'" "$DATA/stdout.log" \
+    && pass "a governor changed by someone else is left alone by the app and the launcher, both logged" || fail "changed-by-someone-else (now '$(gov policy0)')"
+
+section "Signal sweep: SIGTERM to the launcher at 0 to 400 ms (fake sysfs, AUDREY_GOVERNOR=performance)"
+# Each run: a fresh fake tree, the launcher started directly (its pid is $!),
+# SIGTERM after a delay, then the final state must be clean: every policy back to
+# schedutil, no pause file, no app process; and bash must never abort.
+mkfake_many() { # <n policies>
+    rm -rf "$FAKE"
+    local k
+    for k in $(seq 0 $(( $1 - 1 ))); do
+        mkdir -p "$FAKE/cpufreq/policy$k"
+        printf 'schedutil\n' > "$FAKE/cpufreq/policy$k/scaling_governor"
+        printf 'ondemand powersave performance schedutil \n' > "$FAKE/cpufreq/policy$k/scaling_available_governors"
+        printf '408000\n' > "$FAKE/cpufreq/policy$k/scaling_cur_freq"
+    done
+}
+sweep() { # <label> <runs> <max ms> <policies>
+    local label="$1" runs="$2" maxms="$3" npol="$4" r d pid rc aborts=0 dirty=0 changed_runs=0 app_started=0 stopped_early=0
+    for r in $(seq 0 $(( runs - 1 ))); do
+        mkfake_many "$npol"
+        rm -f /var/run/battery-saver/audreybrick.pause "$DATA/stdout.log"
+        d=$(( r * maxms / runs ))
+        ( cd / && exec env SDL_AUDIODRIVER=dummy AUDREY_SYSFS_CPU="$FAKE" AUDREY_GOVERNOR=performance \
+              AUDREY_ARGS="--selftest /ab/rise.txt --seconds 5 --no-video" /bin/bash "$PORTS/AudreyBrick.sh" 2> /tmp/sweep-err.txt ) &
+        pid=$!
+        sleep "$(printf '%d.%03d' $((d / 1000)) $((d % 1000)))"
+        kill -TERM "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null
+        rc=$?
+        for i in $(seq 1 50); do pgrep -f "audreybrick/audreybrick --fullscreen" > /dev/null || break; sleep 0.1; done
+        if [ "$rc" -eq 134 ] || grep -q 'bad jump\|Aborting' /tmp/sweep-err.txt 2>/dev/null; then
+            aborts=$((aborts + 1))
+            echo "  ABORT at $d ms (rc $rc): $(tr '\n' ' ' < /tmp/sweep-err.txt)"
+            grep -q 'keep-awake: created' "$DATA/stdout.log" && echo "    (after the system had been changed)"
+        fi
+        grep -q 'keep-awake: created' "$DATA/stdout.log" && changed_runs=$((changed_runs + 1))
+        grep -q 'starting the app' "$DATA/stdout.log" && app_started=$((app_started + 1))
+        grep -q 'before the app started' "$DATA/stdout.log" && stopped_early=$((stopped_early + 1))
+        bad=""
+        for g in "$FAKE"/cpufreq/policy*/scaling_governor; do
+            [ "$(cat "$g")" = schedutil ] || bad="$bad ${g#$FAKE/cpufreq/}=$(cat "$g")"
+        done
+        [ -e /var/run/battery-saver/audreybrick.pause ] && bad="$bad pause-file-left"
+        pgrep -f "audreybrick/audreybrick --fullscreen" > /dev/null && { bad="$bad app-left"; kill -KILL $(pgrep -f "audreybrick/audreybrick --fullscreen") 2>/dev/null; }
+        if [ -n "$bad" ]; then
+            dirty=$((dirty + 1))
+            echo "  DIRTY at $d ms (rc $rc):$bad"
+            sed 's/^/    /' "$DATA/stdout.log" | grep -E 'governor|keep-awake|SIG|starting|exited' | head -n 12
+        fi
+    done
+    echo "  $label: $runs runs, delays 0..$maxms ms: launcher stopped before starting the app $stopped_early, app started $app_started, system changed $changed_runs; bash aborts $aborts; unclean final states $dirty"
+    [ "$aborts" -eq 0 ] && pass "$label: no bash abort in $runs runs" || fail "$label: $aborts bash abort(s)"
+    [ "$dirty" -eq 0 ] && pass "$label: every run ended clean (governors restored, no pause file, no app left)" || fail "$label: $dirty unclean run(s)"
+}
+sweep "one policy" 200 400 1
+sweep "64 policies" 60 400 64
+
+section "Signal sweep: SIGTERM to the app itself at 0 to 300 ms after exec"
+# The app run directly with --remove-on-exit and --restore-on-exit; its exit
+# actions must have run, unless the signal arrived before its handlers existed
+# (before main: the process then dies by SIGTERM, status 143), which is counted.
+aok=0; apre=0; abad=0
+for r in $(seq 0 199); do
+    d=$(( r * 300 / 200 ))
+    mkfake
+    printf 'performance\n' > "$FAKE/cpufreq/policy0/scaling_governor"
+    : > /tmp/app-sweep.pause
+    rm -f /tmp/app-sweep.log
+    ( exec env SDL_AUDIODRIVER=dummy /ab/port/audreybrick --selftest /ab/rise.txt --seconds 5 --no-video --log /tmp/app-sweep.log \
+          --remove-on-exit /tmp/app-sweep.pause --restore-on-exit "$FAKE/cpufreq/policy0/scaling_governor" schedutil performance \
+          > /tmp/app-sweep.out 2>&1 ) &
+    pid=$!
+    sleep "$(printf '0.%03d' "$d")"
+    kill -TERM "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    rc=$?
+    if [ "$(gov policy0)" = schedutil ] && [ ! -e /tmp/app-sweep.pause ]; then
+        aok=$((aok + 1))
+    elif [ "$rc" -eq 143 ] && ! grep -q 'AudreyBrick' /tmp/app-sweep.log 2>/dev/null; then
+        apre=$((apre + 1))
+    else
+        abad=$((abad + 1))
+        echo "  BAD at $d ms (rc $rc): governor '$(gov policy0)', pause $( [ -e /tmp/app-sweep.pause ] && echo left || echo removed)"
+        tail -n 5 /tmp/app-sweep.log 2>/dev/null | sed 's/^/    /'
+    fi
+done
+echo "  app sweep: 200 runs, delays 0..300 ms: exit actions ran $aok; killed before the app's handlers existed (status 143, no log) $apre; other failures $abad"
+[ "$abad" -eq 0 ] && pass "app sweep: whenever the app had started, a SIGTERM ended in its exit actions" || fail "app sweep: $abad failure(s)"
+rm -f /tmp/app-sweep.pause
+rm -rf "$FAKE"
 
 section "Launcher-level failures"
 F="/tmp/fail test"

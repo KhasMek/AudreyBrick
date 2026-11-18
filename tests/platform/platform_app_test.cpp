@@ -97,6 +97,40 @@ int main()
               "--remove-on-exit <file>");
         check(fails({"--remove-on-exit"}) && fails({"--remove-on-exit", ""}), "--remove-on-exit needs a file name");
     }
+    // M3-B: --swap-ab, --swap-xy, --version, --restore-on-exit <file> <content> <expected>
+    // (repeatable, validated).
+    {
+        AppOptions  o;
+        std::string err;
+        check(parse({}, o, err) && !o.swapAB && !o.swapXY && !o.version && o.restoreOnExit.empty(),
+              "defaults: no swaps, no --version, nothing to restore");
+        check(parse({"--fullscreen", "--swap-ab"}, o, err) && o.swapAB && !o.swapXY, "--swap-ab");
+        check(parse({"--swap-xy"}, o, err) && o.swapXY && !o.swapAB, "--swap-xy");
+        check(parse({"--swap-xy", "--swap-ab"}, o, err) && o.swapXY && o.swapAB, "--swap-ab and --swap-xy together");
+        check(parse({"--version"}, o, err) && o.version, "--version");
+        check(parse({"--restore-on-exit", "/sys/devices/system/cpu/cpufreq/policy0/scaling_governor", "schedutil",
+                     "performance", "--restore-on-exit", "/x/policy4/scaling_governor", "ondemand", "performance",
+                     "--swap-ab"},
+                    o, err) &&
+                  o.restoreOnExit.size() == 2 &&
+                  o.restoreOnExit[0].file == "/sys/devices/system/cpu/cpufreq/policy0/scaling_governor" &&
+                  o.restoreOnExit[0].content == "schedutil" && o.restoreOnExit[0].expected == "performance" &&
+                  o.restoreOnExit[1].file == "/x/policy4/scaling_governor" && o.restoreOnExit[1].content == "ondemand" &&
+                  o.swapAB,
+              "--restore-on-exit takes three values, is repeatable, in order, and options after it still parse");
+        check(fails({"--restore-on-exit"}) && fails({"--restore-on-exit", "/a"}) && fails({"--restore-on-exit", "/a", "x"}),
+              "--restore-on-exit needs <file> <content> <expected>");
+        check(fails({"--restore-on-exit", "/a", "schedutil", "--swap-ab"}) &&
+                  fails({"--restore-on-exit", "/a", "--swap-ab", "performance"}),
+              "a following option is never taken as content or expected (usage error)");
+        check(fails({"--restore-on-exit", "relative/file", "a", "b"}) && fails({"--restore-on-exit", "", "a", "b"}),
+              "the file must be an absolute path");
+        check(fails({"--restore-on-exit", "/a", "", "b"}) && fails({"--restore-on-exit", "/a", "a", ""}) &&
+                  fails({"--restore-on-exit", "/a", "Performance", "b"}) &&
+                  fails({"--restore-on-exit", "/a", "a b", "c"}) && fails({"--restore-on-exit", "/a", "a;reboot", "c"}) &&
+                  fails({"--restore-on-exit", "/a", std::string(33, 'x').c_str(), "c"}),
+              "content and expected must be [a-z0-9_]{1,32}");
+    }
     check(fails({"--log"}), "--log without a value");
     check(fails({"--log", ""}), "--log with an empty name");
     check(fails({"--bogus"}), "unknown option is an error");

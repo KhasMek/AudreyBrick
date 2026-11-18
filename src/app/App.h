@@ -62,6 +62,31 @@
 //   - --remove-on-exit <file>: that one file is deleted when the app exits, on
 //     every exit path that runs (the launcher passes its keep-awake pause file, so
 //     it goes away even when the launcher was killed with SIGKILL).
+//   - --restore-on-exit <file> <content> <expected> (M3-B, repeatable): <content>
+//     is written to that existing file on the same exit paths, only if it still
+//     holds <expected> (app/RestoreOnExit.h). The launcher passes, per policy, the
+//     CPU governor it replaced and the one it set. Each result is
+//     logged; a failure is never fatal. Not run if the app crashes or is killed
+//     with SIGKILL (the launcher then restores, if it is still there).
+//   - --swap-ab, --swap-xy (M3-B): game-controller A and B, X and Y swapped
+//     (platform/InputMap.h). The log states at start whether each swap is on.
+//   - Stop signals (M3-B review): SIGTERM, SIGINT and SIGHUP are handled by the
+//     app's own handler from before main() (app/Signals.h); SDL installs none
+//     (SDL_HINT_NO_SIGNAL_HANDLERS). Start-up checks for a stop signal after each
+//     stage and the main loop every iteration; either way the app leaves through
+//     the normal shutdown with its exit actions. With --exit-with-parent the
+//     parent is checked first thing: if it is already gone (or the app's parent
+//     is init), the app stops the same way.
+//   - --version (M3-B): prints "AudreyBrick <version> (built <date>, <compiler>)"
+//     and exits (the launcher puts it in stdout.log).
+//   - CPU frequency (M3-B, app/CpuFreq.h): at start the policies and their
+//     governors are logged (or "cpu frequency: not available" once); about once a
+//     second the UI thread reads each policy's scaling_cur_freq; every statistics
+//     line ends with the frequency now and the window's minimum and maximum. The
+//     governors are logged again at exit, before and after restore-on-exit.
+//     AUDREY_SYSFS_CPU overrides the sysfs base (a testing aid only).
+//   - The statistics line calls the callback figure "callback load" and adds its
+//     p50 and p95 and the per-window histogram (platform/Meters.h).
 //   - --no-video (self-test only): SDL_INIT_VIDEO, the window, the renderer and all
 //     drawing are skipped; audio, events, controllers, the model, the quit logic,
 //     the loop (paced by SDL_Delay(1) as in any self-test) and the log run as usual.
@@ -87,9 +112,11 @@
 
 #include "app/ButtonScript.h"
 #include "app/ControlModel.h"
+#include "app/CpuFreq.h"
 #include "app/DiagLog.h"
 #include "app/FramePacer.h"
 #include "app/QuitHold.h"
+#include "app/RestoreOnExit.h"
 #include "app/SdlDiagnostics.h"
 #include "app/UiSnapshot.h"
 #include "control/ButtonControlSource.h"
@@ -121,6 +148,10 @@ struct AppOptions
     bool        noVideo   = false;   // --no-video (self-test only): no window, renderer or drawing
     bool        exitWithParent = false; // --exit-with-parent (Linux): SIGTERM when the parent dies
     std::string removeOnExit;        // --remove-on-exit <file>: deleted when the app exits
+    std::vector<RestoreAction> restoreOnExit; // --restore-on-exit <file> <content>, repeatable (M3-B)
+    bool        swapAB    = false;   // --swap-ab: controller A and B swapped (M3-B)
+    bool        swapXY    = false;   // --swap-xy: controller X and Y swapped (M3-B)
+    bool        version   = false;   // --version: print the version and exit (M3-B)
     std::string selftestScript;      // --selftest; empty = normal mode
     double      selftestSeconds = 0; // --seconds (required with --selftest), seconds of audio
 
@@ -176,7 +207,12 @@ class App
     double logTime() const noexcept; // seconds since run() started (the log's clock)
     void   logStats(double wall, const char* label);
     void   logAtlasState();
-    void   removeOnExit(); // --remove-on-exit
+    void   exitActions(); // --remove-on-exit and --restore-on-exit, once per run
+    void   logGovernors(const char* when);
+    // A stop signal during start-up: true (with `error` set) if one has arrived.
+    bool   stopAt(const char* stage, std::string& error);
+    // Leaves through the normal shutdown with the exit actions; returns the exit code.
+    int    stopEarly(const char* stage);
     // A video start-up failure (fatal) or a failed attempt with a fallback (not
     // fatal): to the log and to stderr (so to stdout.log on the device).
     void videoFailure(double t, bool fatal, const char* fmt, ...) AB_PRINTF_FORMAT(4, 5);
@@ -222,6 +258,11 @@ class App
     std::uint64_t statsCallbacks_      = 0; // callbacks at the start of the window
     std::uint64_t statsOverruns_       = 0; // overruns at the start of the window
     std::uint64_t statsAudioFrames_    = 0; // audio frames rendered at the start of the window
+    std::uint64_t statsBuckets_[kStatsLoadBuckets] = {}; // load histogram counters at the start of the window
+    CpuFreqMonitor cpuFreq_;                   // M3-B
+    double        lastFreqSample_      = -1.0; // wall clock (now()) of the last frequency sample
+    bool          exitActionsDone_     = false;
+    bool          stoppedInStartUp_    = false;
     unsigned      atlasBuildsLogged_   = 0;
     unsigned      atlasFailuresLogged_ = 0;
 

@@ -559,17 +559,24 @@ void EventLogger::onEvent(const SDL_Event& e, InputMap::Action action, const But
                       action == InputMap::Action::Quit ? " (quits)" : "");
     }
 
-    // Every Button, the first time it is pressed, with the SDL event behind it.
+    // Every Button, the first time it is pressed, with the SDL event behind it. With
+    // --swap-ab / --swap-xy, a swapped controller button is marked, so the line
+    // stays truthful ("button first seen: A <- controller button 'b' (1) down, ...
+    // [A/B swapped]"; likewise "[X/Y swapped]").
+    const bool  isButton = e.type == SDL_CONTROLLERBUTTONDOWN || e.type == SDL_CONTROLLERBUTTONUP;
+    const char* note     = isButton ? input.swapNote(e.cbutton.button) : "";
+    char        swapNote[24];
+    std::snprintf(swapNote, sizeof swapNote, "%s%s", note[0] != '\0' ? " " : "", note);
     if(action == InputMap::Action::Button && be.pressed && buttons_.first(static_cast<std::size_t>(be.button)))
-        log_.line(t, "button first seen: %s <- %s", buttonName(be.button), desc);
+        log_.line(t, "button first seen: %s <- %s%s", buttonName(be.button), desc, swapNote);
 
     switch(e.type)
     {
         case SDL_CONTROLLERBUTTONDOWN:
             if(controllerButtons_.first(e.cbutton.button))
-                log_.line(t, "controller button first pressed: '%s' (%d) -> %s", controllerButtonName(e.cbutton.button),
+                log_.line(t, "controller button first pressed: '%s' (%d) -> %s%s", controllerButtonName(e.cbutton.button),
                           static_cast<int>(e.cbutton.button),
-                          action == InputMap::Action::Button ? buttonName(be.button) : "not mapped");
+                          action == InputMap::Action::Button ? buttonName(be.button) : "not mapped", swapNote);
             break;
         case SDL_CONTROLLERAXISMOTION:
         {

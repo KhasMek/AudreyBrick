@@ -18,7 +18,8 @@
 //   4. Reads the clock again and records the load (time / buffer duration); a
 //      callback that took longer than its buffer lasts (load above 1, a likely
 //      underrun) also increments the overrun counter (one relaxed atomic add).
-//   5. Publishes peaks, load and counters through atomics.
+//   5. Publishes peaks, load and counters through atomics (the load also goes
+//      into CpuMeter's histogram: one relaxed counter store, M3-B).
 // No allocation, lock, I/O, logging, exception or wait.
 //
 // Threads: prepare() and the constructor on the main thread before audio starts;

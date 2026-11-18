@@ -10,7 +10,14 @@
 //             maximum.
 //   CpuMeter: callback load (time spent in the callback / the buffer's duration).
 //             The audio thread calls record(); the UI reads smoothed() and
-//             takeMax().
+//             takeMax(), and the load histogram through bucketCount() (M3-B).
+//
+// The load histogram (M3-B): kLoadBuckets counters, one per load range (below
+// 10 %, 25 %, 50 %, 75 %, 100 %, and 100 % or more of the buffer time). record()
+// adds one to exactly one of them: a relaxed load and a relaxed store of the same
+// counter, with the audio thread as the only writer, so no read-modify-write loop
+// and no wait. The reader takes differences between two readings; the counters
+// only grow (they wrap after 2^64 callbacks).
 //
 // offer() is a compare-and-swap max with a bounded number of attempts. It uses
 // compare_exchange_strong: on the Brick's Cortex-A53 (load/store-exclusive, no
@@ -32,6 +39,8 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 
 namespace audreybrick
 {
@@ -65,6 +74,20 @@ class MaxHold
     static_assert(std::atomic<float>::is_always_lock_free, "meters must be lock-free");
 };
 
+// Number of load histogram buckets and their upper edges (fractions of the
+// buffer time; the last bucket has no upper edge).
+constexpr std::size_t kLoadBuckets                       = 6;
+constexpr double      kLoadBucketEdges[kLoadBuckets - 1] = {0.10, 0.25, 0.50, 0.75, 1.00};
+
+// The bucket a load falls in: the first whose edge is above it.
+constexpr std::size_t loadBucket(double load) noexcept
+{
+    std::size_t i = 0;
+    while(i < kLoadBuckets - 1 && !(load < kLoadBucketEdges[i]))
+        ++i;
+    return i;
+}
+
 class CpuMeter
 {
   public:
@@ -82,17 +105,27 @@ class CpuMeter
         smoothedLocal_ += a * (load - smoothedLocal_);
         smoothed_.store(static_cast<float>(smoothedLocal_), std::memory_order_relaxed);
         max_.offer(static_cast<float>(load));
+        std::atomic<std::uint64_t>& b = buckets_[loadBucket(load)];
+        b.store(b.load(std::memory_order_relaxed) + 1u, std::memory_order_relaxed); // single writer
     }
 
     // Any thread: the smoothed load.
     float smoothed() const noexcept { return smoothed_.load(std::memory_order_relaxed); }
     // Reader: the maximum load since the last takeMax(), and resets it.
     float takeMax() noexcept { return max_.take(); }
+    // Any thread: callbacks recorded in histogram bucket i since start (0 if i is
+    // out of range).
+    std::uint64_t bucketCount(std::size_t i) const noexcept
+    {
+        return i < kLoadBuckets ? buckets_[i].load(std::memory_order_relaxed) : 0u;
+    }
 
   private:
-    double             smoothedLocal_ = 0.0; // audio thread only
-    std::atomic<float> smoothed_{0.0f};
-    MaxHold            max_;
+    double                     smoothedLocal_ = 0.0; // audio thread only
+    std::atomic<float>         smoothed_{0.0f};
+    MaxHold                    max_;
+    std::atomic<std::uint64_t> buckets_[kLoadBuckets] = {};
+    static_assert(std::atomic<std::uint64_t>::is_always_lock_free, "histogram counters must be lock-free");
 };
 
 } // namespace audreybrick

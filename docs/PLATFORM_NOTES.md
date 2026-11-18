@@ -140,3 +140,36 @@ The human's Brick runs `knulli-a133-trimui-brick-scarab-20260511.img.gz` (stable
 ### What still needs the device
 
 Stable buffer size and real callback load on the A53; what the idle watcher treats as activity; whether SDL reports the buttons as expected (including L2/R2 as buttons or axes, and which physical button SDL calls A); mic and USB capture devices and duplex latency; legibility of 16 px text; and whether the Fn switch or Menu are delivered to apps.
+
+## 11. Measured on the device (first run, 2026-11-18)
+
+The human ran package `7af286f-dirty` on the Brick (KNULLI Scarab 20260511) twice, about three minutes and thirty seconds. Logs are kept outside the repo. Everything here is **[confirmed, device log]** unless marked.
+
+| Item | Finding |
+|---|---|
+| Result | The app started, drew, played, responded to every button and quit cleanly both times. The human reports everything working as expected apart from A and B being swapped, CPU spikes, and possibly one crackle |
+| Start-up | Window and renderer ready 0.28 s after launch, audio 0.37 s, first frame 0.43 s |
+| Video | SDL driver `mali`, one display, 1024x768 at 60 Hz, `SDL_PIXELFORMAT_RGBX8888`. A `SDL_WINDOW_FULLSCREEN_DESKTOP` window works. Renderer **`opengles2`**, accelerated, vsync honoured (60.2 frames per second measured), render targets supported, maximum texture 8192x8192. `/dev/fb0` mode `U:1024x768p-60`. Render drivers available: opengles2, opengles, software |
+| Audio out | SDL driver `alsa`, device "default", **48000 Hz, 2 channels, float32, 256 frames granted as requested**. Callback clock 1.000x real time. PipeWire's default sample spec is float32 48 kHz. Sink `alsa_output._sys_devices_platform_soc_sndcodec_sound_card0.playback.0.0` |
+| Audio in | A capture device exists: ALSA card 0 `audiocodec` (SUNXI-CODEC sun50iw10codec), PipeWire default source `alsa_input..._sound_card0.capture.0.0`, and SDL lists one capture device. So the internal mic is reachable in principle; level and quality are [unknown] |
+| Controller | "TRIMUI Brick Controller", GUID `030000005e0400008e02000014010000` (it presents as an Xbox 360 pad). KNULLI sets `SDL_GAMECONTROLLERCONFIG`: `b:b5,a:b4,x:b7,y:b6,leftshoulder:b8,rightshoulder:b9,lefttrigger:b10,righttrigger:b11,back:b12,start:b13,guide:b14,` d-pad on hat 0 |
+| **A and B, X and Y** | SDL's `a` is raw button 4 and `b` is raw button 5, and the human reports that **the physical A and B come out swapped** relative to their labels. The human also reported X and Y as correct, but only one of the two was pressed in either run (SDL `y`, raw button 6, once), so that was never checked [reported, unverified]. From the firmware (`es_input.cfg`: a = BTN_EAST id 5, b = BTN_SOUTH id 4, x = BTN_NORTH id 6, y = BTN_WEST id 7; `configgen/controller.py`'s default mapping swaps a/b and x/y into SDL's positional Xbox naming), the Brick's Nintendo-style labels give: labelled A (right) = SDL `b`, B (bottom) = SDL `a`, **X (top) = SDL `y`, Y (left) = SDL `x`** [inferred, about 85 % confident]. So both pairs need swapping for labels to match. KNULLI's per-port option "SWITCH A/B and X/Y" does the same at the mapping level (flag file `/var/run/ports_xbox_layout.flag`) |
+| L2 / R2 | Raw buttons 10 and 11; SDL delivers them as **trigger axes jumping to 32767**, which the app's axis threshold handles |
+| Menu | Arrives as SDL `guide` (raw button 14). Not used by the app |
+| Select, Start | SDL `back` and `start`. Start + Select held for a second quits, as designed |
+| Process | Launched at nice -4 with `SDL_RENDER_VSYNC=1` in the environment, as read from the image |
+| CPU governor | `schedutil`, range 408 to 1416 MHz |
+| **Callback load** | With a 256-frame buffer the smoothed callback load was **30 to 36 % of the buffer time** for most of both runs, including in silence, with maxima of 42 to 48 % and single spikes of 80 % and 94 %; at the end of the second run the smoothed value read **11.9 %** (this is the smoothed load at the end of a window, a half-second average, not a window average; it coincided with the Start + Select hold). No callback overran its buffer (overrun counter 0 throughout). The likely explanation is the governor: `schedutil` runs the core slowly while the load is light, so the same work takes about three times longer than at full speed, and the 11.9 % reading is the core at or near 1416 MHz [inferred from one reading; the next build logs the frequency and a load histogram to confirm or refute]. If that holds, the engine costs roughly an eighth of one core at 256 frames at full speed |
+| Idle watcher settings | `system.batterysaver.mode=dim`, `mute=1`, `aggressive=0`, `extendedmode=suspend`, timers 300 s and 900 s (the defaults). The keep-awake pause file was created and removed correctly. No run was long enough to show whether it prevents dimming |
+| Clock | The device's clock read 1970-06-16, so it has no usable real-time clock without a network. The launcher's run counter kept the logs in order |
+| Storage | `/userdata` is `/dev/mmcblk0p5`, 115 GB; the Mac could read the card, so it is not ext4 [inferred from the human copying the data folder directly] |
+
+Still unknown after this run: whether the system exit hotkey reaches the app (both runs were ended with Start + Select); whether keep-awake prevents the five-minute dim and mute; legibility of the small text (the human did not complain); the Fn switch and volume buttons (nothing from them appears in the log, so they are handled by the system); mic level; USB audio.
+
+### How KNULLI handles power mode and the governor (read from the image, 2026-11-18)
+
+- `/etc/init.d/S18governor` sets the boot governor from `system.cpu.governor`, falling back to `schedutil`.
+- Every game or port launch runs hook scripts at `gameStart` and `gameStop`. `powermode_launch_hooks.sh` calls `/usr/bin/knulli-power-mode` with the per-game, per-system or global power mode at start, and re-applies the global or default mode at stop. "High Performance" maps to the `performance` governor.
+- The Ports system exposes this as a per-game option, **POWER MODE** (High Performance, Balanced, Power Saver). That is the supported way to run a port at full CPU speed, and KNULLI restores the governor itself afterwards.
+- KNULLI's exit path: `emulatorlauncher` kills the launcher script with SIGKILL and then runs the `gameStop` hooks; `knulli-es-swissknife --emukill` sends SIGTERM down the process tree.
+- The idle watcher's "aggressive" mode sets `powersave` and stops processes at nice -4; it is skipped while a `*.pause` file exists in `/var/run/battery-saver/`.

@@ -140,6 +140,40 @@ std::uint64_t RateLimiter::takeSuppressed() noexcept
     return s;
 }
 
+int loadPercentileBucket(const std::uint64_t (&counts)[kStatsLoadBuckets], double p) noexcept
+{
+    std::uint64_t total = 0;
+    for(const std::uint64_t c : counts)
+        total += c;
+    if(total == 0)
+        return -1;
+    if(!(p > 0.0))
+        p = 0.0;
+    if(p > 1.0)
+        p = 1.0;
+    // The smallest bucket whose cumulative count reaches ceil(p * total) (at least 1).
+    const double  want   = p * static_cast<double>(total);
+    std::uint64_t needed = static_cast<std::uint64_t>(want);
+    if(static_cast<double>(needed) < want)
+        ++needed;
+    if(needed == 0)
+        needed = 1;
+    std::uint64_t cum = 0;
+    for(std::size_t i = 0; i < kStatsLoadBuckets; ++i)
+    {
+        cum += counts[i];
+        if(cum >= needed)
+            return static_cast<int>(i);
+    }
+    return static_cast<int>(kStatsLoadBuckets) - 1;
+}
+
+const char* loadBucketLabel(int bucket) noexcept
+{
+    static const char* const kLabels[kStatsLoadBuckets] = {"<10 %", "<25 %", "<50 %", "<75 %", "<100 %", ">=100 %"};
+    return bucket >= 0 && bucket < static_cast<int>(kStatsLoadBuckets) ? kLabels[bucket] : "n/a";
+}
+
 std::size_t formatStats(char* out, std::size_t size, const PeriodicStats& s) noexcept
 {
     if(out == nullptr || size == 0)
@@ -147,21 +181,35 @@ std::size_t formatStats(char* out, std::size_t size, const PeriodicStats& s) noe
     const double expected = s.windowSeconds * static_cast<double>(s.sampleRate);
     const double ratio    = expected > 0.0 ? static_cast<double>(s.audioFrames) / expected : 0.0;
     const double fps      = s.windowSeconds > 0.0 ? static_cast<double>(s.framesDrawn) / s.windowSeconds : 0.0;
-    // The optional tail is formatted first into its own buffer, then the whole line
-    // in one call, so the result is cut at `size` in one place.
+    // The optional parts are formatted first into their own buffers, then the whole
+    // line in one call, so the result is cut at `size` in one place.
+    char hist[160] = "";
+    if(s.haveHistogram)
+    {
+        const std::uint64_t* h = s.loadHistogram;
+        std::snprintf(hist, sizeof hist, ", p50 %s, p95 %s, histogram %llu/%llu/%llu/%llu/%llu/%llu",
+                      loadBucketLabel(loadPercentileBucket(s.loadHistogram, 0.50)),
+                      loadBucketLabel(loadPercentileBucket(s.loadHistogram, 0.95)), static_cast<unsigned long long>(h[0]),
+                      static_cast<unsigned long long>(h[1]), static_cast<unsigned long long>(h[2]),
+                      static_cast<unsigned long long>(h[3]), static_cast<unsigned long long>(h[4]),
+                      static_cast<unsigned long long>(h[5]));
+    }
+    char freq[320] = "";
+    if(s.cpuFreq != nullptr && s.cpuFreq[0] != '\0')
+        std::snprintf(freq, sizeof freq, ", cpu freq %s", s.cpuFreq);
     char tail[64] = "";
     if(s.keysSuppressed > 0)
         std::snprintf(tail, sizeof tail, ", unmapped-key lines suppressed %llu",
                       static_cast<unsigned long long>(s.keysSuppressed));
     const int n = std::snprintf(
         out, size,
-        "stats: window %.1f s, cpu %.1f %% (max %.1f %%), callbacks %llu, overruns %llu, largest %llu frames, audio clock %.3fx "
-        "real time, peak L %.3f R %.3f, dropped %llu, frames %llu (%.1f fps)%s",
-        s.windowSeconds, 100.0 * static_cast<double>(s.cpuSmoothed), 100.0 * static_cast<double>(s.cpuMax),
+        "stats: window %.1f s, callback load %.1f %% (max %.1f %%%s), callbacks %llu, overruns %llu, largest %llu frames, "
+        "audio clock %.3fx real time, peak L %.3f R %.3f, dropped %llu, frames %llu (%.1f fps)%s%s",
+        s.windowSeconds, 100.0 * static_cast<double>(s.cpuSmoothed), 100.0 * static_cast<double>(s.cpuMax), hist,
         static_cast<unsigned long long>(s.callbacks), static_cast<unsigned long long>(s.overruns),
         static_cast<unsigned long long>(s.largestCallback), ratio,
         static_cast<double>(s.peakL), static_cast<double>(s.peakR), static_cast<unsigned long long>(s.dropped),
-        static_cast<unsigned long long>(s.framesDrawn), fps, tail);
+        static_cast<unsigned long long>(s.framesDrawn), fps, freq, tail);
     return n < 0 ? 0 : (static_cast<std::size_t>(n) < size ? static_cast<std::size_t>(n) : size - 1);
 }
 

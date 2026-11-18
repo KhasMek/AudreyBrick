@@ -7,7 +7,9 @@
 // docs/PLATFORM_NOTES.md section 10 ("What still needs the device"):
 //
 //   - which SDL button each physical press produced: "button first seen" lines,
-//     one per Button, naming the SDL event behind it;
+//     one per Button, naming the SDL event behind it (with --swap-ab, a
+//     controller button swapped by --swap-ab or --swap-xy is marked "[A/B swapped]"
+//     or "[X/Y swapped]", M3-B);
 //   - whether L2/R2 arrive as trigger axes or as buttons: "controller axis first
 //     moved" and "controller button first pressed" lines, one per SDL button or
 //     axis, mapped or not (a press of an unmapped button such as guide or misc1

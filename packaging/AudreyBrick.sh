@@ -20,10 +20,32 @@
 #     are deleted. Only files with exactly those name patterns in its own data/
 #     folder are ever renamed or deleted;
 #   - keeps the device awake while the app runs (see AUDREY_KEEP_AWAKE);
+#   - makes the A, B, X and Y buttons match their labels (see AUDREY_SWAP_AB and
+#     AUDREY_SWAP_XY);
+#   - optionally sets a CPU governor while the app runs (see AUDREY_GOVERNOR; off
+#     by default);
+#   - writes one line to stdout.log with the app's version and these settings as
+#     resolved ("launcher: settings: ...");
 #   - runs the app in the background, forwards TERM, INT and HUP to it, waits
 #     until it has really exited, and returns its exit status. The app is also
 #     started with --exit-with-parent, so it quits even if this script is killed
-#     with SIGKILL (KNULLI's launcher does that on SIGINT).
+#     with SIGKILL (KNULLI's launcher does that on SIGINT). In that case the app
+#     itself removes the keep-awake file and restores the governor
+#     (--remove-on-exit, --restore-on-exit); otherwise this script does it at exit
+#     as well (the second restore finds nothing to do).
+#
+# The only files this script ever deletes or writes, other than its own log files
+# in data/: the keep-awake file it created, and, only with AUDREY_GOVERNOR set, the
+# scaling_governor files of the CPU frequency policies whose governor it changed
+# (written back only while they still hold the governor this script set).
+#
+# Signals: before the app has started, TERM, INT and HUP only set a flag; the
+# script checks it at safe points and then stops through its normal exit (which
+# undoes whatever it had changed). The script's own shell never runs a command
+# substitution (see main() below: the device's bash 5.2.21 aborts if a trap runs
+# while it parses one). Nothing slow runs between the first change to the system
+# (the keep-awake file, a governor) and the app's start, so that window, after
+# which the app shares the duty to undo the changes, is a few milliseconds.
 #
 # Settings (environment variables, or edit the defaults below):
 #   AUDREY_BUFFER      audio buffer in frames, 16 to 32768 (default 256). Anything
@@ -33,9 +55,47 @@
 #                      idle watcher skips dimming, muting and suspend while any
 #                      *.pause file is there. 0: not done (the system may dim and
 #                      mute after its idle time).
+#   AUDREY_SWAP_AB     1 (default): the app is started with --swap-ab, so the
+#                      buttons labelled A and B do what the button table says.
+#                      KNULLI's default controller mapping for ports names buttons
+#                      by position, Xbox style, while the Brick is labelled
+#                      Nintendo style, so without this A and B arrive the other way
+#                      round (seen on the first device run). 0: SDL's own naming.
+#   AUDREY_SWAP_XY     1 (default): likewise for X and Y (--swap-xy). Expected from
+#                      the firmware's mapping (labelled X arrives as SDL 'y', Y as
+#                      'x'); the next run's log confirms it. 0: SDL's own naming.
+#                      For both: anything other than 0 or 1 counts as 1, with a
+#                      note in stdout.log.
+#                      KNULLI has its own per-port switch for this, in the port's
+#                      game options: "SWITCH A/B and X/Y". When it is on, KNULLI
+#                      creates /var/run/ports_xbox_layout.flag for the launch and
+#                      the buttons already arrive with their labels' names; this
+#                      script then turns BOTH of its swaps off for that run (so the
+#                      two can never swap twice) and says so in stdout.log. Only a
+#                      value set in the environment (AUDREY_SWAP_AB=... or
+#                      AUDREY_SWAP_XY=...) overrides that automatic choice.
+#   AUDREY_GOVERNOR    keep (default): the system's CPU governor is left alone.
+#                      To run the CPU at full speed while the app plays, the
+#                      recommended way is KNULLI's own option for the port: in its
+#                      game options, POWER MODE: High Performance (KNULLI sets and
+#                      restores the governor itself). The alternative is
+#                      AUDREY_GOVERNOR=performance (or another governor the device
+#                      offers): every CPU frequency policy
+#                      (/sys/devices/system/cpu/cpufreq/policy*) that offers it is
+#                      switched to it while the app runs, and the governor found
+#                      there is written back when the app ends, unless something
+#                      else has changed it meanwhile. A full-speed CPU costs
+#                      battery. Neither is required: the first device run had no
+#                      audio overruns at the default governor. A name a policy
+#                      does not offer is skipped with a note; a value that is not a
+#                      plain governor name counts as keep.
 #   AUDREY_ARGS        a testing aid: extra arguments appended to the app's command
 #                      line, split on spaces (e.g. "--selftest <script> --seconds 5
 #                      --no-video"). Normally unset.
+#   AUDREY_SYSFS_CPU   a testing aid only: the directory used in place of
+#                      /sys/devices/system/cpu, by this script and by the app (which
+#                      inherits it), so the governor handling can be tested against
+#                      a fake tree. Normally unset.
 #
 # Executable bit: FAT/exFAT cards, or copying through some tools, can lose it. If
 # audreybrick/audreybrick is executable it is started directly; otherwise through
@@ -43,8 +103,15 @@
 # the file. Both ways find libs.aarch64 (rpath $ORIGIN/libs.aarch64 and LD_LIBRARY_PATH).
 set -u
 
+# --- Defaults (edit here) --------------------------------------------------------------
+DEFAULT_SWAP_AB=1
+DEFAULT_SWAP_XY=1
 AUDREY_BUFFER="${AUDREY_BUFFER:-256}"
 AUDREY_KEEP_AWAKE="${AUDREY_KEEP_AWAKE:-1}"
+AUDREY_GOVERNOR="${AUDREY_GOVERNOR:-keep}"
+
+SYSFS_CPU="${AUDREY_SYSFS_CPU:-/sys/devices/system/cpu}"
+XBOX_LAYOUT_FLAG="/var/run/ports_xbox_layout.flag" # KNULLI's ports_hooks.sh
 KEEP_RUNS=8
 PAUSE_DIR="/var/run/battery-saver"
 PAUSE_FILE="$PAUSE_DIR/audreybrick.pause"
@@ -53,6 +120,10 @@ LOADER="/lib/ld-linux-aarch64.so.1"
 OUT=""          # stdout.log of this run, once known
 PAUSE_MADE=0    # 1 if this run created PAUSE_FILE
 child=""        # the app's process id while it runs
+STOP=""         # TERM, INT or HUP if one arrived before the app started
+GOV_FILES=()    # scaling_governor files whose governor this run changed
+GOV_PREV=()     # the governor each of them had before
+GOV_SET=()      # the governor this run set there (as read back)
 
 # A note for stdout.log (and stderr for problems).
 note() { [ -n "$OUT" ] && echo "launcher: $*" >> "$OUT" 2>/dev/null; }
@@ -62,7 +133,42 @@ problem() {
 }
 have() { command -v "$1" > /dev/null 2>&1; }
 
+# Writes back the governor remembered for each policy this run changed, only
+# while the policy still holds the governor this run set. The app may have done
+# it already (--restore-on-exit). Never creates a file.
+restore_governors() {
+    local i f prev set cur now
+    i=0
+    while [ "$i" -lt "${#GOV_FILES[@]}" ]; do
+        f="${GOV_FILES[$i]}"
+        prev="${GOV_PREV[$i]}"
+        set="${GOV_SET[$i]}"
+        i=$((i + 1))
+        cur=""
+        if [ ! -e "$f" ]; then
+            note "governor: $f no longer exists; nothing restored"
+            continue
+        fi
+        read -r cur 2>/dev/null < "$f"
+        if [ "$cur" = "$prev" ]; then
+            note "governor: ${f%/scaling_governor}: already back to '$prev' (the app restores it too); nothing to do"
+        elif [ "$cur" != "$set" ]; then
+            note "governor: ${f%/scaling_governor}: changed by someone else to '$cur'; not restoring '$prev'"
+        elif echo "$prev" 2>/dev/null > "$f"; then
+            now=""
+            read -r now 2>/dev/null < "$f"
+            note "governor: ${f%/scaling_governor}: restored '$cur' -> '$now'"
+        else
+            note "governor: ${f%/scaling_governor}: could not write back '$prev' (still '$cur'; not fatal)"
+        fi
+    done
+    GOV_FILES=()
+    GOV_PREV=()
+    GOV_SET=()
+}
+
 cleanup() {
+    restore_governors
     if [ "$PAUSE_MADE" -eq 1 ]; then
         if [ -e "$PAUSE_FILE" ]; then
             rm -f "$PAUSE_FILE" 2>/dev/null && note "keep-awake: removed $PAUSE_FILE"
@@ -72,197 +178,361 @@ cleanup() {
         PAUSE_MADE=0
     fi
 }
-forward() { # <signal> <exit status if the app has not started yet>
+# The signal traps never exit: before the app has started they only remember the
+# signal (stop_point acts on it); afterwards they pass it to the app.
+forward() { # <signal>
     if [ -z "$child" ]; then
-        note "received SIG$1 before the app started; stopping"
-        exit "$2" # the EXIT trap removes the pause file
+        [ -n "$STOP" ] || STOP="$1"
+        return
     fi
     note "received SIG$1; passing it to the app"
     kill "-$1" "$child" 2>/dev/null
 }
-trap cleanup EXIT
-trap 'forward TERM 143' TERM
-trap 'forward INT 130' INT
-trap 'forward HUP 129' HUP
+# Called at safe points before the app starts: if a signal arrived, stop through
+# the normal exit (the EXIT trap undoes whatever this run changed).
+stop_point() { # <where>
+    [ -n "$STOP" ] || return 0
+    note "received SIG$STOP before the app started ($1); stopping"
+    case "$STOP" in INT) exit 130 ;; HUP) exit 129 ;; *) exit 143 ;; esac
+}
+# Everything below runs inside main(), called on the last line. The device's bash
+# (5.2.21) aborts ("reader_loop: bad jump ... Aborting") if a trap runs while it
+# is parsing a command substitution, and it parses a $(...) in double quotes again
+# each time it expands it. So this shell itself never runs a command substitution:
+# values are read with `cmd | read -r var` (lastpipe) or printf -v, and the
+# device-state block, which needs many, runs in a subshell (the traps are not
+# inherited there, and this shell runs a trap only after the subshell has ended).
+main() {
+    shopt -s lastpipe # the last command of a pipeline runs in this shell (read ... results stay)
+    trap cleanup EXIT
+    trap 'forward TERM' TERM
+    trap 'forward INT' INT
+    trap 'forward HUP' HUP
 
-# --- Folders -----------------------------------------------------------------------
-script="${BASH_SOURCE[0]}"
-case "$script" in
-    /*) ;;
-    *) script="$PWD/$script" ;;
-esac
-PORT_DIR="$(cd "${script%/*}" && pwd -P)" || { problem "cannot find the launcher's folder"; exit 1; }
-APP_DIR="$PORT_DIR/audreybrick"
-BIN="$APP_DIR/audreybrick"
-LIBS="$APP_DIR/libs.aarch64"
-cd "$APP_DIR" 2>/dev/null || { problem "cannot enter $APP_DIR (copy the whole audreybrick folder next to AudreyBrick.sh)"; exit 1; }
+    # --- Folders -----------------------------------------------------------------------
+    script="${BASH_SOURCE[0]}"
+    case "$script" in
+        /*) ;;
+        *) script="$PWD/$script" ;;
+    esac
+    PORT_NAME="${script##*/}" # the name KNULLI's per-game settings use, e.g. AudreyBrick.sh
+    cd -P "${script%/*}" 2>/dev/null || { problem "cannot find the launcher's folder"; exit 1; }
+    PORT_DIR="$PWD"
+    APP_DIR="$PORT_DIR/audreybrick"
+    BIN="$APP_DIR/audreybrick"
+    LIBS="$APP_DIR/libs.aarch64"
+    cd "$APP_DIR" 2>/dev/null || { problem "cannot enter $APP_DIR (copy the whole audreybrick folder next to AudreyBrick.sh)"; exit 1; }
 
-# --- Logs: data/ (or /tmp/audreybrick-data if data/ cannot be written) ---------------
-DATA="data"
-fallback_reason=""
-if ! mkdir -p "$DATA" 2>/dev/null || [ ! -w "$DATA" ]; then
-    fallback_reason="$APP_DIR/data is not writable"
-    DATA="/tmp/audreybrick-data"
-    mkdir -p "$DATA" 2>/dev/null || { problem "cannot write logs to $APP_DIR/data or $DATA"; exit 1; }
-fi
-LOG="$DATA/audreybrick.log"
-
-# Run number (6 digits) and time stamp of this run.
-run=0
-if [ -r "$DATA/run-counter" ]; then read -r run < "$DATA/run-counter" 2>/dev/null || run=0; fi
-case "$run" in '' | *[!0-9]*) run=0 ;; esac
-run=$(( 10#$run + 1 ))
-echo "$run" > "$DATA/run-counter" 2>/dev/null
-stamp="$(date '+%Y%m%d-%H%M%S' 2>/dev/null)" || stamp=""
-[ -n "$stamp" ] || stamp="00000000-000000"
-id="$(printf '%06d-%s' "$run" "$stamp")"
-
-# Archive the previous run's pair under its own id (from data/latest-run), then prune.
-prev=""
-if [ -r "$DATA/latest-run" ]; then read -r prev < "$DATA/latest-run" 2>/dev/null || prev=""; fi
-case "$prev" in [0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]*) ;; *) prev="previous-$(printf '%06d' $((run - 1)))" ;; esac
-[ -f "$LOG" ] && mv -f "$LOG" "$DATA/audreybrick-$prev.log"
-[ -f "$DATA/stdout.log" ] && mv -f "$DATA/stdout.log" "$DATA/stdout-$prev.log"
-echo "$id" > "$DATA/latest-run" 2>/dev/null
-for kind in audreybrick stdout; do
-    files=( "$DATA/$kind"-[0-9][0-9][0-9][0-9][0-9][0-9]-*.log "$DATA/$kind"-previous-[0-9][0-9][0-9][0-9][0-9][0-9].log )
-    kept=()
-    for f in "${files[@]}"; do [ -f "$f" ] && kept+=( "$f" ); done
-    # Glob order is by run number (zero-padded); keep the newest KEEP_RUNS - 1.
-    excess=$(( ${#kept[@]} - (KEEP_RUNS - 1) ))
-    i=0
-    while [ "$i" -lt "$excess" ]; do rm -f "${kept[$i]}"; i=$((i + 1)); done
-done
-
-OUT="$DATA/stdout.log"
-: > "$OUT" 2>/dev/null || OUT=""
-note "AudreyBrick run $run, $(date '+%Y-%m-%d %H:%M:%S %z' 2>/dev/null || echo 'date unknown')"
-note "folder $APP_DIR"
-[ -n "$fallback_reason" ] && problem "$fallback_reason; logs for this run are in $DATA (lost on reboot)"
-
-# --- Checks ---------------------------------------------------------------------------
-if [ ! -f "$BIN" ]; then
-    problem "$BIN is missing; copy the whole audreybrick folder next to AudreyBrick.sh"
-    exit 1
-fi
-if [ -x "$BIN" ]; then
-    launch=("$BIN")
-    how="directly"
-elif [ -r "$LOADER" ]; then
-    launch=("$LOADER" "$BIN")
-    how="through $LOADER (the executable bit is missing)"
-else
-    problem "$BIN is not executable and $LOADER was not found"
-    exit 1
-fi
-
-buffer="$AUDREY_BUFFER"
-case "$buffer" in
-    '' | *[!0-9]* | ??????*) buffer_ok=0 ;;
-    *) if [ $((10#$buffer)) -ge 16 ] && [ $((10#$buffer)) -le 32768 ]; then buffer_ok=1; else buffer_ok=0; fi ;;
-esac
-if [ "$buffer_ok" -eq 1 ]; then
-    buffer=$((10#$buffer))
-else
-    note "AUDREY_BUFFER '$AUDREY_BUFFER' is not a whole number from 16 to 32768; using 256"
-    buffer=256
-fi
-
-export LD_LIBRARY_PATH="$LIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-extra=()
-if [ -n "${AUDREY_ARGS:-}" ]; then
-    read -r -a extra <<< "$AUDREY_ARGS"
-fi
-
-# --- Device state (each item guarded; about a second at most) ----------------------------
-TO=""
-have timeout && TO="timeout"
-t0="$(date +%s%N 2>/dev/null)"
-{
-    echo "launcher: --- device state ---"
-    echo "launcher: kernel $(uname -r 2>/dev/null || echo '(uname missing)')"
-    nice_now="$(nice 2>/dev/null)" || nice_now="(nice missing)"
-    echo "launcher: nice value $nice_now"
-    [ -z "$TO" ] && echo "launcher: 'timeout' not found: commands that could block are skipped"
-    if have knulli-settings-get; then
-        for k in system.batterysaver.mode system.batterysaver.mute system.batterysaver.aggressive \
-                 system.batterysaver.extendedmode system.idlewatcher.timer system.idlewatcher.extendedtimer; do
-            v="$(${TO:+$TO 0.3} knulli-settings-get "$k" 2>/dev/null)" || v="(not set)"
-            echo "launcher: setting $k=$v"
-        done
-    else
-        echo "launcher: knulli-settings-get not found"
+    # --- Logs: data/ (or /tmp/audreybrick-data if data/ cannot be written) ---------------
+    DATA="data"
+    fallback_reason=""
+    if ! mkdir -p "$DATA" 2>/dev/null || [ ! -w "$DATA" ]; then
+        fallback_reason="$APP_DIR/data is not writable"
+        DATA="/tmp/audreybrick-data"
+        mkdir -p "$DATA" 2>/dev/null || { problem "cannot write logs to $APP_DIR/data or $DATA"; exit 1; }
     fi
-    if compgen -G "$PAUSE_DIR/*.pause" > /dev/null 2>&1; then
-        echo "launcher: pause files present before start: $(cd "$PAUSE_DIR" && echo *.pause)"
-    else
-        echo "launcher: no $PAUSE_DIR/*.pause before start"
-    fi
-    cf=/sys/devices/system/cpu/cpu0/cpufreq
-    if [ -r "$cf/scaling_governor" ]; then
-        echo "launcher: cpu0 governor $(cat "$cf/scaling_governor" 2>/dev/null), cur $(cat "$cf/scaling_cur_freq" 2>/dev/null) kHz, min $(cat "$cf/scaling_min_freq" 2>/dev/null) kHz, max $(cat "$cf/scaling_max_freq" 2>/dev/null) kHz"
-    else
-        echo "launcher: $cf not readable"
-    fi
-    if have df; then echo "launcher: free space on the log folder: $(df -h "$DATA" 2>/dev/null | tail -n 1)"; else echo "launcher: df not found"; fi
-    if [ -z "$TO" ]; then
-        echo "launcher: audio server state skipped (no timeout)"
-    elif have pactl; then
-        $TO 0.4 pactl info 2>&1 | grep -E 'Server Name|Default Sink|Default Source|Default Sample|Connection failure' | head -n 5 | sed 's/^/launcher: pactl: /'
-    elif have wpctl; then
-        $TO 0.4 wpctl status 2>&1 | grep -E '\*|Error|error' | head -n 6 | sed 's/^/launcher: wpctl: /'
-    else
-        echo "launcher: pactl and wpctl not found"
-    fi
-    for tool in aplay arecord; do
-        if [ -z "$TO" ]; then echo "launcher: $tool skipped (no timeout)"
-        elif have "$tool"; then $TO 0.3 "$tool" -l 2>&1 | head -n 12 | sed "s/^/launcher: $tool -l: /"
-        else echo "launcher: $tool not found"; fi
+    LOG="$DATA/audreybrick.log"
+
+    # Run number (6 digits) and time stamp of this run.
+    run=0
+    if [ -r "$DATA/run-counter" ]; then read -r run < "$DATA/run-counter" 2>/dev/null || run=0; fi
+    case "$run" in '' | *[!0-9]*) run=0 ;; esac
+    run=$(( 10#$run + 1 ))
+    echo "$run" > "$DATA/run-counter" 2>/dev/null
+    stamp=""
+    date '+%Y%m%d-%H%M%S' 2>/dev/null | read -r stamp # lastpipe: read runs in this shell
+    case "$stamp" in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]) ;; *) stamp="00000000-000000" ;; esac
+    printf -v id '%06d-%s' "$run" "$stamp"
+
+    # Archive the previous run's pair under its own id (from data/latest-run), then prune.
+    prev=""
+    if [ -r "$DATA/latest-run" ]; then read -r prev < "$DATA/latest-run" 2>/dev/null || prev=""; fi
+    case "$prev" in [0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]*) ;; *) printf -v prev 'previous-%06d' $((run - 1)) ;; esac
+    [ -f "$LOG" ] && mv -f "$LOG" "$DATA/audreybrick-$prev.log"
+    [ -f "$DATA/stdout.log" ] && mv -f "$DATA/stdout.log" "$DATA/stdout-$prev.log"
+    echo "$id" > "$DATA/latest-run" 2>/dev/null
+    for kind in audreybrick stdout; do
+        files=( "$DATA/$kind"-[0-9][0-9][0-9][0-9][0-9][0-9]-*.log "$DATA/$kind"-previous-[0-9][0-9][0-9][0-9][0-9][0-9].log )
+        kept=()
+        for f in "${files[@]}"; do [ -f "$f" ] && kept+=( "$f" ); done
+        # Glob order is by run number (zero-padded); keep the newest KEEP_RUNS - 1.
+        excess=$(( ${#kept[@]} - (KEEP_RUNS - 1) ))
+        i=0
+        while [ "$i" -lt "$excess" ]; do rm -f "${kept[$i]}"; i=$((i + 1)); done
     done
-    t1="$(date +%s%N 2>/dev/null)"
-    case "$t0$t1" in *[!0-9]*) ;; ?*) echo "launcher: device state took $(( (t1 - t0) / 1000000 )) ms" ;; esac
-    echo "launcher: --- end of device state ---"
-} >> "${OUT:-/dev/null}" 2>&1
 
-# --- Keep awake ---------------------------------------------------------------------------
-if [ "$AUDREY_KEEP_AWAKE" = "0" ]; then
-    note "keep-awake: off (AUDREY_KEEP_AWAKE=0); the system may dim and mute after its idle time"
-elif mkdir -p "$PAUSE_DIR" 2>/dev/null && : > "$PAUSE_FILE" 2>/dev/null; then
-    PAUSE_MADE=1
-    note "keep-awake: created $PAUSE_FILE (the idle watcher skips dim, mute and suspend while it exists)"
-else
-    note "keep-awake: could not create $PAUSE_FILE; the system may dim and mute after its idle time"
-fi
+    OUT="$DATA/stdout.log"
+    : > "$OUT" 2>/dev/null || OUT=""
+    when="date unknown"
+    date '+%Y-%m-%d %H:%M:%S %z' 2>/dev/null | read -r when
+    note "AudreyBrick run $run, ${when:-date unknown}"
+    note "folder $APP_DIR"
+    [ -n "$fallback_reason" ] && problem "$fallback_reason; logs for this run are in $DATA (lost on reboot)"
+    stop_point "after setting up the logs"
 
-# --- Run ------------------------------------------------------------------------------------
-if [ -n "${SDL_GAMECONTROLLERCONFIG:-}" ]; then
-    note "SDL_GAMECONTROLLERCONFIG is set (${#SDL_GAMECONTROLLERCONFIG} characters)"
-else
-    note "SDL_GAMECONTROLLERCONFIG is not set"
-fi
-[ "${#extra[@]}" -gt 0 ] && note "extra arguments: ${extra[*]}"
-note "starting the app $how, buffer $buffer frames"
-
-# If this script is killed with SIGKILL its EXIT trap does not run; the app then
-# removes the pause file itself (--remove-on-exit).
-remove=()
-[ "$PAUSE_MADE" -eq 1 ] && remove=(--remove-on-exit "$PAUSE_FILE")
-"${launch[@]}" --fullscreen --exit-with-parent --buffer "$buffer" --log "$LOG" ${remove[@]+"${remove[@]}"} ${extra[@]+"${extra[@]}"} \
-    >> "${OUT:-/dev/null}" 2>&1 &
-child=$!
-# wait returns early (status > 128) when a trapped signal arrives; then, if the app
-# is still there (kill -0 also succeeds for an exited, not yet reaped app), wait
-# again until it has really exited; the last wait returns its status.
-while :; do
-    wait "$child"
-    status=$?
-    if [ "$status" -gt 128 ] && kill -0 "$child" 2>/dev/null; then
-        continue
+    # --- Checks ---------------------------------------------------------------------------
+    if [ ! -f "$BIN" ]; then
+        problem "$BIN is missing; copy the whole audreybrick folder next to AudreyBrick.sh"
+        exit 1
     fi
-    break
-done
-child=""
-note "the app exited with status $status"
-cleanup
-sync 2>/dev/null
-exit "$status"
+    if [ -x "$BIN" ]; then
+        launch=("$BIN")
+        how="directly"
+    elif [ -r "$LOADER" ]; then
+        launch=("$LOADER" "$BIN")
+        how="through $LOADER (the executable bit is missing)"
+    else
+        problem "$BIN is not executable and $LOADER was not found"
+        exit 1
+    fi
+
+    buffer="$AUDREY_BUFFER"
+    case "$buffer" in
+        '' | *[!0-9]* | ??????*) buffer_ok=0 ;;
+        *) if [ $((10#$buffer)) -ge 16 ] && [ $((10#$buffer)) -le 32768 ]; then buffer_ok=1; else buffer_ok=0; fi ;;
+    esac
+    if [ "$buffer_ok" -eq 1 ]; then
+        buffer=$((10#$buffer))
+    else
+        note "AUDREY_BUFFER '$AUDREY_BUFFER' is not a whole number from 16 to 32768; using 256"
+        buffer=256
+    fi
+
+    case "$AUDREY_KEEP_AWAKE" in 0) keep_awake=0 ;; *) keep_awake=1 ;; esac
+
+    # The swaps: an explicit environment value wins; otherwise KNULLI's own layout
+    # switch (the flag file) turns both off; otherwise the defaults above.
+    swap_value() { # <variable to set> <name> <value>: sets it to 0 or 1
+        case "$3" in
+            0 | 1) printf -v "$1" '%s' "$3" ;;
+            *) note "$2 '$3' is not 0 or 1; using 1"; printf -v "$1" '%s' 1 ;;
+        esac
+    }
+    xbox_flag=0
+    [ -e "$XBOX_LAYOUT_FLAG" ] && xbox_flag=1
+    if [ -n "${AUDREY_SWAP_AB:-}" ]; then
+        swap_value swap_ab AUDREY_SWAP_AB "$AUDREY_SWAP_AB"; swap_ab_rule="set in the environment"
+    elif [ "$xbox_flag" -eq 1 ]; then
+        swap_ab=0; swap_ab_rule="off: KNULLI's SWITCH A/B and X/Y is on for this port ($XBOX_LAYOUT_FLAG exists)"
+    else
+        swap_value swap_ab DEFAULT_SWAP_AB "$DEFAULT_SWAP_AB"; swap_ab_rule="default"
+    fi
+    if [ -n "${AUDREY_SWAP_XY:-}" ]; then
+        swap_value swap_xy AUDREY_SWAP_XY "$AUDREY_SWAP_XY"; swap_xy_rule="set in the environment"
+    elif [ "$xbox_flag" -eq 1 ]; then
+        swap_xy=0; swap_xy_rule="off: KNULLI's SWITCH A/B and X/Y is on for this port ($XBOX_LAYOUT_FLAG exists)"
+    else
+        swap_value swap_xy DEFAULT_SWAP_XY "$DEFAULT_SWAP_XY"; swap_xy_rule="default"
+    fi
+
+    governor="$AUDREY_GOVERNOR"
+    case "$governor" in
+        keep) ;;
+        *[!a-z0-9_]* | ?????????????????????????????????*)
+            note "AUDREY_GOVERNOR '$AUDREY_GOVERNOR' is not a governor name; using keep (the system's governor is left alone)"
+            governor=keep ;;
+    esac
+
+    export LD_LIBRARY_PATH="$LIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    extra=()
+    if [ -n "${AUDREY_ARGS:-}" ]; then
+        read -r -a extra <<< "$AUDREY_ARGS"
+    fi
+
+    TO=""
+    have timeout && TO="timeout"
+    appver=""
+    ${TO:+$TO 3} "${launch[@]}" --version 2>/dev/null | head -n 1 | read -r appver # lastpipe
+    [ -n "$appver" ] || appver="AudreyBrick (version unknown: --version printed nothing)"
+
+    # --- Device state (each item guarded; about a second at most) ----------------------------
+    # In a subshell: its command substitutions run in a child process, and a signal
+    # to this script is handled only after the child has finished.
+    (
+        t0="$(date +%s%N 2>/dev/null)"
+        echo "launcher: --- device state ---"
+        echo "launcher: kernel $(uname -r 2>/dev/null || echo '(uname missing)')"
+        nice_now="$(nice 2>/dev/null)" || nice_now="(nice missing)"
+        echo "launcher: nice value $nice_now"
+        [ -z "$TO" ] && echo "launcher: 'timeout' not found: commands that could block are skipped"
+        if have knulli-settings-get; then
+            for k in system.batterysaver.mode system.batterysaver.mute system.batterysaver.aggressive \
+                     system.batterysaver.extendedmode system.idlewatcher.timer system.idlewatcher.extendedtimer \
+                     "ports[\"$PORT_NAME\"].xbox_layout" ports.xbox_layout; do
+                v="$(${TO:+$TO 0.3} knulli-settings-get "$k" 2>/dev/null)" || v="(not set)"
+                echo "launcher: setting $k=${v:-(empty)}"
+            done
+        else
+            echo "launcher: knulli-settings-get not found"
+        fi
+        # The keys KNULLI's powermode_launch_hooks.sh and knulli-power-mode read.
+        if have knulli-settings-get-master; then
+            for k in global.powermode global.batterymode system.cpu.governor \
+                     "ports[\"$PORT_NAME\"].powermode" ports.powermode; do
+                v="$(${TO:+$TO 0.3} knulli-settings-get-master "$k" 2>/dev/null)" || v="(not set)"
+                echo "launcher: setting (master) $k=${v:-(empty)}"
+            done
+        else
+            echo "launcher: knulli-settings-get-master not found"
+        fi
+        if [ -e "$XBOX_LAYOUT_FLAG" ]; then
+            echo "launcher: $XBOX_LAYOUT_FLAG exists (KNULLI's SWITCH A/B and X/Y is on for this launch)"
+        else
+            echo "launcher: $XBOX_LAYOUT_FLAG does not exist (KNULLI's SWITCH A/B and X/Y is off)"
+        fi
+        if compgen -G "$PAUSE_DIR/*.pause" > /dev/null 2>&1; then
+            echo "launcher: pause files present before start: $(cd "$PAUSE_DIR" && echo *.pause)"
+        else
+            echo "launcher: no $PAUSE_DIR/*.pause before start"
+        fi
+        ps_found=0
+        for ps in /sys/class/power_supply/*; do
+            [ -d "$ps" ] || continue
+            ps_found=1
+            echo "launcher: power supply ${ps##*/}: type $(cat "$ps/type" 2>/dev/null), status $(cat "$ps/status" 2>/dev/null), capacity $(cat "$ps/capacity" 2>/dev/null), online $(cat "$ps/online" 2>/dev/null)"
+        done
+        [ "$ps_found" -eq 1 ] || echo "launcher: no /sys/class/power_supply entries"
+        n_pol=0
+        for cf in "$SYSFS_CPU"/cpufreq/policy*; do [ -d "$cf" ] && n_pol=$((n_pol + 1)); done
+        n_cpu=0
+        for cf in "$SYSFS_CPU"/cpu[0-9]*/cpufreq; do [ -d "$cf" ] && n_cpu=$((n_cpu + 1)); done
+        echo "launcher: cpufreq layout: $n_pol policy director(ies) under $SYSFS_CPU/cpufreq, $n_cpu cpu*/cpufreq director(ies)"
+        for cf in "$SYSFS_CPU"/cpufreq/policy*; do
+            [ -d "$cf" ] || continue
+            echo "launcher: ${cf##*/} governor $(cat "$cf/scaling_governor" 2>/dev/null), cur $(cat "$cf/scaling_cur_freq" 2>/dev/null) kHz, min $(cat "$cf/scaling_min_freq" 2>/dev/null) kHz, max $(cat "$cf/scaling_max_freq" 2>/dev/null) kHz, cpus $(cat "$cf/affected_cpus" 2>/dev/null), available governors: $(cat "$cf/scaling_available_governors" 2>/dev/null)"
+        done
+        if have df; then echo "launcher: free space on the log folder: $(df -h "$DATA" 2>/dev/null | tail -n 1)"; else echo "launcher: df not found"; fi
+        if [ -z "$TO" ]; then
+            echo "launcher: audio server state skipped (no timeout)"
+        elif have pactl; then
+            $TO 0.4 pactl info 2>&1 | grep -E 'Server Name|Default Sink|Default Source|Default Sample|Connection failure' | head -n 5 | sed 's/^/launcher: pactl: /'
+        elif have wpctl; then
+            $TO 0.4 wpctl status 2>&1 | grep -E '\*|Error|error' | head -n 6 | sed 's/^/launcher: wpctl: /'
+        else
+            echo "launcher: pactl and wpctl not found"
+        fi
+        for tool in aplay arecord; do
+            if [ -z "$TO" ]; then echo "launcher: $tool skipped (no timeout)"
+            elif have "$tool"; then $TO 0.3 "$tool" -l 2>&1 | head -n 12 | sed "s/^/launcher: $tool -l: /"
+            else echo "launcher: $tool not found"; fi
+        done
+        t1="$(date +%s%N 2>/dev/null)"
+        case "$t0$t1" in *[!0-9]*) ;; ?*) echo "launcher: device state took $(( (t1 - t0) / 1000000 )) ms" ;; esac
+        echo "launcher: --- end of device state ---"
+    ) >> "${OUT:-/dev/null}" 2>&1
+
+    if [ -n "${SDL_GAMECONTROLLERCONFIG:-}" ]; then
+        note "SDL_GAMECONTROLLERCONFIG is set (${#SDL_GAMECONTROLLERCONFIG} characters)"
+    else
+        note "SDL_GAMECONTROLLERCONFIG is not set"
+    fi
+    [ "${#extra[@]}" -gt 0 ] && note "extra arguments: ${extra[*]}"
+    note "buttons: A/B swap $swap_ab ($swap_ab_rule); X/Y swap $swap_xy ($swap_xy_rule)"
+    note "settings: $appver; AUDREY_BUFFER=$buffer AUDREY_KEEP_AWAKE=$keep_awake AUDREY_SWAP_AB=$swap_ab AUDREY_SWAP_XY=$swap_xy AUDREY_GOVERNOR=$governor${AUDREY_SYSFS_CPU:+ AUDREY_SYSFS_CPU=$AUDREY_SYSFS_CPU (testing aid)}"
+    stop_point "after the device-state block"
+
+    # =====================================================================================
+    # From here until the app has started: no command substitution, no slow command.
+    # =====================================================================================
+    stop_point "before changing the system"
+
+    # --- Keep awake ---------------------------------------------------------------------------
+    if [ "$keep_awake" -eq 0 ]; then
+        note "keep-awake: off (AUDREY_KEEP_AWAKE=0); the system may dim and mute after its idle time"
+    elif mkdir -p "$PAUSE_DIR" 2>/dev/null && : > "$PAUSE_FILE" 2>/dev/null; then
+        PAUSE_MADE=1
+        note "keep-awake: created $PAUSE_FILE (the idle watcher skips dim, mute and suspend while it exists)"
+    else
+        note "keep-awake: could not create $PAUSE_FILE; the system may dim and mute after its idle time"
+    fi
+
+    # --- CPU governor (only with AUDREY_GOVERNOR set) -----------------------------------------
+    # As KNULLI's own scripts do (/usr/bin/knulli-power-mode, /etc/init.d/S18governor):
+    # every policy*/scaling_governor, only to a governor listed in
+    # scaling_available_governors. Each file is remembered BEFORE it is written, so a
+    # signal arriving in between still restores it.
+    if [ "$governor" = keep ]; then
+        note "governor: left alone (AUDREY_GOVERNOR=keep)"
+    else
+        gov_found=0
+        for p in "$SYSFS_CPU"/cpufreq/policy*; do
+            [ -e "$p/scaling_governor" ] || continue
+            gov_found=1
+            name="${p##*/}"
+            cur=""
+            read -r cur 2>/dev/null < "$p/scaling_governor"
+            avail=""
+            read -r avail 2>/dev/null < "$p/scaling_available_governors"
+            case "$cur" in
+                '' | *[!a-z0-9_]* | ?????????????????????????????????*)
+                    note "governor: $name: current governor '$cur' cannot be read as a governor name; left alone (it could not be restored)"
+                    continue ;;
+            esac
+            case " $avail " in
+                *" $governor "*) ;;
+                *) note "governor: $name: '$governor' is not in scaling_available_governors ('$avail'); skipped, left at '$cur'"
+                   continue ;;
+            esac
+            if [ "$cur" = "$governor" ]; then
+                note "governor: $name: already '$governor'; nothing changed (nothing to restore)"
+                continue
+            fi
+            GOV_FILES+=("$p/scaling_governor")
+            GOV_PREV+=("$cur")
+            GOV_SET+=("$governor")
+            last=$(( ${#GOV_FILES[@]} - 1 ))
+            if echo "$governor" 2>/dev/null > "$p/scaling_governor"; then
+                now=""
+                read -r now 2>/dev/null < "$p/scaling_governor"
+                [ -n "$now" ] && GOV_SET[$last]="$now"
+                note "governor: $name: '$cur' -> '$now' (restored when the app ends)"
+            else
+                note "governor: $name: could not write '$governor' (no permission or read-only); left at '$cur'"
+                unset "GOV_FILES[$last]" "GOV_PREV[$last]" "GOV_SET[$last]"
+            fi
+        done
+        [ "$gov_found" -eq 1 ] || note "governor: no cpufreq policy under $SYSFS_CPU/cpufreq; nothing changed"
+    fi
+
+    stop_point "before starting the app"
+
+    # --- Run ------------------------------------------------------------------------------------
+    # If this script is killed with SIGKILL its EXIT trap does not run; the app then
+    # removes the pause file itself (--remove-on-exit) and restores the governors
+    # (--restore-on-exit <file> <found> <set>, one per policy).
+    args=(--fullscreen --exit-with-parent --buffer "$buffer" --log "$LOG")
+    [ "$swap_ab" -eq 1 ] && args+=(--swap-ab)
+    [ "$swap_xy" -eq 1 ] && args+=(--swap-xy)
+    [ "$PAUSE_MADE" -eq 1 ] && args+=(--remove-on-exit "$PAUSE_FILE")
+    i=0
+    while [ "$i" -lt "${#GOV_FILES[@]}" ]; do
+        args+=(--restore-on-exit "${GOV_FILES[$i]}" "${GOV_PREV[$i]}" "${GOV_SET[$i]}")
+        i=$((i + 1))
+    done
+    note "starting the app $how, buffer $buffer frames"
+    "${launch[@]}" "${args[@]}" ${extra[@]+"${extra[@]}"} >> "${OUT:-/dev/null}" 2>&1 &
+    child=$!
+    # A signal that arrived while the app was being started: pass it on now.
+    if [ -n "$STOP" ]; then
+        note "received SIG$STOP while starting the app; passing it to the app"
+        kill "-$STOP" "$child" 2>/dev/null
+    fi
+    # wait returns early (status > 128) when a trapped signal arrives; then, if the app
+    # is still there (kill -0 also succeeds for an exited, not yet reaped app), wait
+    # again until it has really exited; the last wait returns its status.
+    while :; do
+        wait "$child"
+        status=$?
+        if [ "$status" -gt 128 ] && kill -0 "$child" 2>/dev/null; then
+            continue
+        fi
+        break
+    done
+    child=""
+    note "the app exited with status $status"
+    cleanup
+    sync 2>/dev/null
+    exit "$status"
+}
+
+main "$@"

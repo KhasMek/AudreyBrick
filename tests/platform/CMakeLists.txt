@@ -17,6 +17,9 @@ set(AB_PLATFORM_TESTS
     platform_diaglog_test
     platform_cmath_compat_test
     platform_display_test
+    platform_cpufreq_test
+    platform_restore_test
+    platform_signals_test
 )
 # With SDL: the input map, option parsing and snapshot filling, the event log (M3-A).
 if(AB_HAVE_SDL)
@@ -30,7 +33,9 @@ foreach(_t ${AB_PLATFORM_TESTS})
     elseif(_t STREQUAL "platform_app_test" OR _t STREQUAL "platform_diag_events_test")
         # audrey_app_sdl brings audrey_platform_sdl and audrey_app_core (M3-A).
         target_link_libraries(${_t} PRIVATE audrey_app_sdl Threads::Threads)
-    elseif(_t STREQUAL "platform_quit_test" OR _t STREQUAL "platform_diaglog_test" OR _t STREQUAL "platform_display_test")
+    elseif(_t STREQUAL "platform_quit_test" OR _t STREQUAL "platform_diaglog_test" OR _t STREQUAL "platform_display_test"
+           OR _t STREQUAL "platform_cpufreq_test" OR _t STREQUAL "platform_restore_test"
+           OR _t STREQUAL "platform_signals_test")
         target_link_libraries(${_t} PRIVATE audrey_app_core audrey_control Threads::Threads)
     elseif(_t STREQUAL "platform_cmath_compat_test")
         # Only the DSP include paths (the shim first), like the upstream sources.
@@ -102,5 +107,18 @@ if(AB_HAVE_SDL)
     set_tests_properties(platform_selftest_novideo PROPERTIES
         ENVIRONMENT "SDL_AUDIODRIVER=dummy;SDL_VIDEODRIVER=dummy;${AB_PLATFORM_ENV}"
         FAIL_REGULAR_EXPRESSION "ThreadSanitizer|AddressSanitizer|LeakSanitizer|runtime error"
+        TIMEOUT 90)
+
+    # M3-B: --version, --swap-ab, --restore-on-exit and the CPU frequency lines,
+    # with a fake sysfs tree (AUDREY_SYSFS_CPU). See selftest_sysfs_check.cmake.
+    add_test(NAME platform_selftest_sysfs
+             COMMAND ${CMAKE_COMMAND}
+                     -DAPP=$<TARGET_FILE:audreybrick>
+                     -DSCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/rise.txt
+                     -DLOG_DIR=${CMAKE_CURRENT_BINARY_DIR}/selftest_sysfs
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/selftest_sysfs_check.cmake)
+    set_tests_properties(platform_selftest_sysfs PROPERTIES
+        ENVIRONMENT "SDL_AUDIODRIVER=dummy;SDL_VIDEODRIVER=dummy;${AB_PLATFORM_ENV}"
+        FAIL_REGULAR_EXPRESSION "ThreadSanitizer|AddressSanitizer|LeakSanitizer|runtime error|\\[FAIL\\]"
         TIMEOUT 90)
 endif()
