@@ -158,6 +158,7 @@ const char* kindName(PanelKind k)
         case PanelKind::CpuCell: return "cpu cell";
         case PanelKind::StatusLine: return "status line";
         case PanelKind::FooterCell: return "footer cell";
+        case PanelKind::QuitBanner: return "quit banner";
     }
     return "?";
 }
@@ -496,12 +497,53 @@ void checkStrings(const std::string& n, const UiSnapshot& s, const DrawList& d)
     check(missing == 0, n + "all " + std::to_string(want.size()) + " expected strings drawn");
 }
 
+// --- Quit banner (M3) ----------------------------------------------------------------------
+// While the hold is active: one QuitBanner panel exactly where the current tab's
+// rows go (no Row panels), "HOLD TO QUIT" at scale 6 or more, SELECT and START key
+// caps, "RELEASE TO CANCEL", a progress bar filled to the hold's progress; the
+// structure checks (no overlap, everything inside its panel) apply as for any frame.
+// Without the hold: no banner and none of its texts.
+void checkQuitBanner(const std::string& n, const UiSnapshot& s, const DrawList& d)
+{
+    const int p = findPanel(d, PanelKind::QuitBanner);
+    if(!s.quitHoldActive)
+    {
+        check(p < 0 && !hasText(d, "HOLD TO QUIT"), n + "no quit banner without the hold");
+        return;
+    }
+    int rows = 0;
+    for(std::size_t i = 0; i < d.panelCount; ++i)
+        rows += d.panels[i].kind == PanelKind::Row ? 1 : 0;
+    check(p >= 0 && rows == 0, n + "the quit banner replaces the rows");
+    if(p < 0)
+        return;
+    const PanelItem& bp = d.panels[static_cast<std::size_t>(p)];
+    check(bp.x == 8 && bp.y == 184 && bp.w == 864 && bp.h == 288, n + "the banner covers the current tab's area");
+    const TextItem* title = nullptr;
+    for(std::size_t i = 0; i < d.textCount; ++i)
+        if(std::strcmp(d.texts[i].text, "HOLD TO QUIT") == 0)
+            title = &d.texts[i];
+    check(title != nullptr && title->scale >= 6 && title->panel == p && title->role == TextRole::QuitBanner,
+          n + "\"HOLD TO QUIT\" in the banner at 48 px or more");
+    const std::vector<std::string> keys = keysIn(d, p);
+    check(keys == std::vector<std::string>({"SELECT", "START"}), n + "the banner shows the SELECT and START caps");
+    check(hasText(d, "RELEASE TO CANCEL"), n + "\"RELEASE TO CANCEL\" shown");
+    std::vector<const RectItem*> bars;
+    for(std::size_t r = 0; r < d.rectCount; ++r)
+        if(d.rects[r].panel == p && d.rects[r].tag == RectTag::Bar)
+            bars.push_back(&d.rects[r]);
+    check(bars.size() == 2 && std::abs(bars[1]->w - static_cast<int>(std::lround(bars[0]->w * s.quitHoldProgress))) <= 1,
+          n + "the progress bar is filled to " + std::to_string(s.quitHoldProgress));
+}
+
 void checkSnapshot(const char* name, const UiSnapshot& s, DrawList& d)
 {
     buildLayout(s, uitest::firstFrameMeters(s), d);
     const std::string n = std::string(name) + ": ";
     checkStructure(n, d);
-    checkRows(n, s, d);
+    if(!s.quitHoldActive)
+        checkRows(n, s, d); // with the hold, the banner replaces the rows
+    checkQuitBanner(n, s, d);
     checkStrip(n, s, d);
     checkStrings(n, s, d);
 }
@@ -805,6 +847,21 @@ int main()
     }
 
     checkFeedbackBand(*d);
+
+    // The quit banner on every tab and at the ends of the hold; the rest of the
+    // screen (strip, footer with SELECT lit as FINE) is unchanged.
+    for(std::size_t t = 0; t < kTabCount; ++t)
+        for(float progress : {0.0f, 0.5f, 1.0f})
+        {
+            UiSnapshot s       = uitest::quitHoldSnapshot();
+            s.tab              = static_cast<Tab>(t);
+            s.quitHoldProgress = progress;
+            checkSnapshot((std::string("quit hold on ") + tabSpec(s.tab).name + " at " + std::to_string(progress)).c_str(),
+                          s, *d);
+            const int fine = findPanel(*d, PanelKind::FooterCell, kNoKnobIndex, 4);
+            check(fine >= 0 && d->panels[static_cast<std::size_t>(fine)].active,
+                  std::string("quit hold on ") + tabSpec(s.tab).name + ": the SELECT / FINE footer cell is lit");
+        }
 
     // Switch box wording in all four states, inside the box at scale 3.
     for(int st = 0; st < 4; ++st)

@@ -13,16 +13,28 @@ set(AB_PLATFORM_TESTS
     platform_render_test
     platform_alloc_test
     platform_threads_test
+    platform_quit_test
+    platform_diaglog_test
+    platform_cmath_compat_test
+    platform_display_test
 )
-# With SDL: the input map, option parsing and snapshot filling.
+# With SDL: the input map, option parsing and snapshot filling, the event log (M3-A).
 if(AB_HAVE_SDL)
-    list(APPEND AB_PLATFORM_TESTS platform_input_test platform_app_test)
+    list(APPEND AB_PLATFORM_TESTS platform_input_test platform_app_test platform_diag_events_test)
 endif()
 
 foreach(_t ${AB_PLATFORM_TESTS})
     add_executable(${_t} ${_t}.cpp)
-    if(_t STREQUAL "platform_input_test" OR _t STREQUAL "platform_app_test")
+    if(_t STREQUAL "platform_input_test")
         target_link_libraries(${_t} PRIVATE audrey_platform_sdl Threads::Threads)
+    elseif(_t STREQUAL "platform_app_test" OR _t STREQUAL "platform_diag_events_test")
+        # audrey_app_sdl brings audrey_platform_sdl and audrey_app_core (M3-A).
+        target_link_libraries(${_t} PRIVATE audrey_app_sdl Threads::Threads)
+    elseif(_t STREQUAL "platform_quit_test" OR _t STREQUAL "platform_diaglog_test" OR _t STREQUAL "platform_display_test")
+        target_link_libraries(${_t} PRIVATE audrey_app_core audrey_control Threads::Threads)
+    elseif(_t STREQUAL "platform_cmath_compat_test")
+        # Only the DSP include paths (the shim first), like the upstream sources.
+        target_link_libraries(${_t} PRIVATE audrey_dsp_includes)
     else()
         target_link_libraries(${_t} PRIVATE audrey_platform audrey_control Threads::Threads)
     endif()
@@ -61,4 +73,34 @@ if(AB_HAVE_SDL)
         ENVIRONMENT "SDL_AUDIODRIVER=dummy;SDL_VIDEODRIVER=dummy;${AB_PLATFORM_ENV}"
         FAIL_REGULAR_EXPRESSION "ThreadSanitizer|AddressSanitizer|LeakSanitizer|runtime error"
         TIMEOUT 60)
+
+    # M3-A, acceptance criterion 5: the same self-test with --fullscreen and --log
+    # into a directory that does not exist yet; selftest_log_check.cmake runs it
+    # and checks that the log holds every C.3 item that applies under the dummy
+    # drivers (see that file).
+    add_test(NAME platform_selftest_log
+             COMMAND ${CMAKE_COMMAND}
+                     -DAPP=$<TARGET_FILE:audreybrick>
+                     -DSCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/rise.txt
+                     -DLOG_DIR=${CMAKE_CURRENT_BINARY_DIR}/selftest_log
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/selftest_log_check.cmake)
+    set_tests_properties(platform_selftest_log PROPERTIES
+        ENVIRONMENT "SDL_AUDIODRIVER=dummy;SDL_VIDEODRIVER=dummy;${AB_PLATFORM_ENV}"
+        FAIL_REGULAR_EXPRESSION "ThreadSanitizer|AddressSanitizer|LeakSanitizer|runtime error"
+        TIMEOUT 90)
+
+    # M3-A: the self-test with --no-video (as in the device-root container, whose
+    # SDL has no dummy video driver): passes with the same expectations, and the
+    # log says "video: none (--no-video)".
+    add_test(NAME platform_selftest_novideo
+             COMMAND ${CMAKE_COMMAND}
+                     -DAPP=$<TARGET_FILE:audreybrick>
+                     -DSCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/rise.txt
+                     -DLOG_DIR=${CMAKE_CURRENT_BINARY_DIR}/selftest_novideo
+                     -DNO_VIDEO=ON
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/selftest_log_check.cmake)
+    set_tests_properties(platform_selftest_novideo PROPERTIES
+        ENVIRONMENT "SDL_AUDIODRIVER=dummy;SDL_VIDEODRIVER=dummy;${AB_PLATFORM_ENV}"
+        FAIL_REGULAR_EXPRESSION "ThreadSanitizer|AddressSanitizer|LeakSanitizer|runtime error"
+        TIMEOUT 90)
 endif()

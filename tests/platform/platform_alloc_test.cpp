@@ -58,6 +58,15 @@ std::uint64_t steadyTicks()
 {
     return static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
 }
+
+// A clock that advances one second per read: every callback "takes" a second, far
+// longer than its buffer, so the overrun counter path runs on every call.
+std::uint64_t slowTicks()
+{
+    static std::uint64_t t = 0;
+    t += 1000000000u;
+    return t;
+}
 } // namespace
 
 void* operator new(std::size_t size) { return countedAlloc(size); }
@@ -125,6 +134,28 @@ int main()
                     static_cast<unsigned long long>(rig.src->commandsProcessed()), allocs);
         check(rig.src->commandsProcessed() > 0, "commands arrived during the run");
         check(allocs == 0, "AudioRender::render performs no operator new (" + std::to_string(frames) + "-frame calls)");
+        std::printf("  overruns with the real clock: %llu\n", static_cast<unsigned long long>(render.overruns()));
+    }
+
+    // The overrun path (a callback slower than its buffer): counted on every call,
+    // still no operator new.
+    {
+        ptest::Rig  rig;
+        AudioRender render(*rig.voice, *rig.src, AudioRender::FlushToZero::Enable, &slowTicks, 1e9);
+        render.prepare(256);
+        std::vector<float> out(2 * 256);
+        long               allocs = 0;
+        for(int i = 0; i < 200; ++i)
+        {
+            g_counting = true;
+            render.render(out.data(), 256);
+            g_counting = false;
+            allocs += g_whileCounting.exchange(0);
+        }
+        setFlushToZero(false);
+        check(render.overruns() == 200 && render.callbacks() == 200,
+              "every slow callback counted as an overrun (" + std::to_string(render.overruns()) + " of 200)");
+        check(allocs == 0, "the overrun path performs no operator new");
     }
     return ptest::finish();
 }

@@ -27,6 +27,7 @@ if(AB_HAVE_SDL)
     set(AB_UI_SDL_TESTS
         ui_screenshot_test
         ui_render_alloc_test
+        ui_renderer_reset_test
     )
     set(AB_UI_SCREENS_DIR ${CMAKE_CURRENT_BINARY_DIR}/screens)
     file(MAKE_DIRECTORY ${AB_UI_SCREENS_DIR})
@@ -40,7 +41,8 @@ if(AB_HAVE_SDL)
     set_tests_properties(${AB_UI_SDL_TESTS} PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;${AB_UI_ENV}")
 
     # tests/platform/platform_app_test compiles src/app/App.cpp, which now owns a
-    # ui::Renderer (the M2-C call site), so it needs the UI library too.
+    # ui::Renderer (the M2-C call site), so it needs the UI library too. (M3-A:
+    # ui_renderer_reset_test checks the atlas after a render reset.)
     if(TARGET platform_app_test)
         target_link_libraries(platform_app_test PRIVATE audrey_ui)
     endif()

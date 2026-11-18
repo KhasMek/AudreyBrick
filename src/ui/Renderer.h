@@ -22,6 +22,12 @@
 // Lifetime: call release() before destroying the SDL_Renderer the atlas belongs
 // to. The destructor calls release(), which is only safe while that SDL_Renderer
 // still exists.
+//
+// Render resets (M3): on SDL_RENDER_TARGETS_RESET or SDL_RENDER_DEVICE_RESET the
+// caller calls onRenderReset(); the atlas is destroyed and rebuilt on the next
+// draw (once; if that fails, text stays off until the next reset). A failure to
+// create the atlas never stops drawing: atlasFailures() counts them and
+// lastAtlasError() keeps SDL's message, for the app's log.
 
 #pragma once
 
@@ -57,6 +63,16 @@ class Renderer
     // Destroys the atlas texture. Call before destroying its SDL_Renderer.
     void release() noexcept;
 
+    // After SDL_RENDER_TARGETS_RESET or SDL_RENDER_DEVICE_RESET: drops the atlas
+    // so that the next draw() builds it again.
+    void onRenderReset() noexcept { release(); }
+
+    // Atlases built and atlas creations that failed, since construction.
+    unsigned    atlasBuilds() const noexcept { return atlasBuilds_; }
+    unsigned    atlasFailures() const noexcept { return atlasFailures_; }
+    // SDL's message for the last failure ("" if none).
+    const char* lastAtlasError() const noexcept { return atlasError_; }
+
     // The draw list of the last draw() (for tests and screenshots).
     const DrawList&  lastDrawList() const noexcept { return list_; }
     const MeterView& lastMeters() const noexcept { return meterView_; }
@@ -71,6 +87,9 @@ class Renderer
     SDL_Renderer* owner_ = nullptr;
     SDL_Texture*  atlas_ = nullptr;
     bool          atlasFailed_ = false; // creating the atlas for owner_ failed (logged once, not retried)
+    unsigned      atlasBuilds_   = 0;
+    unsigned      atlasFailures_ = 0;
+    char          atlasError_[160] = {};
     PeakMeter     meter_[2];
     MeterView     meterView_;
     DrawList      list_;

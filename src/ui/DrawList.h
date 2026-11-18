@@ -51,6 +51,7 @@ enum class PanelKind : std::uint8_t
     CpuCell,
     StatusLine,
     FooterCell, // index = footer entry 0..7
+    QuitBanner, // "HOLD TO QUIT", in place of the current tab's rows (M3)
 };
 
 struct PanelItem
@@ -90,6 +91,7 @@ enum class TextRole : std::uint8_t
     Status,         // audio spec, controller, dropped commands
     KeyLabel,       // a button name inside a key cap (L1, R1, A, SELECT, ...)
     Footer,         // footer descriptions
+    QuitBanner,     // the quit banner's texts ("HOLD TO QUIT", ...)
 };
 
 struct TextItem

@@ -76,6 +76,11 @@ const Binding* find(Source s, int code) noexcept
 constexpr float kAxisFullScale = 32767.0f;
 } // namespace
 
+bool InputMap::mapsScancode(int scancode) noexcept
+{
+    return find(Source::Key, scancode) != nullptr;
+}
+
 float InputMap::triggerPressThreshold() noexcept
 {
     return kTriggerPressFraction * kAxisFullScale; // 16383.5: pressed from 16384 up
@@ -164,6 +169,9 @@ InputMap::Action InputMap::handle(const SDL_Event& e, ButtonEvent& out)
         {
             if(e.key.repeat != 0)
                 return Action::None;
+            // Alt+F4: KNULLI's exit hotkey for shell ports (Left Alt, then F4).
+            if(e.key.keysym.scancode == SDL_SCANCODE_F4)
+                return e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_ALT) != 0 ? Action::Quit : Action::None;
             const Binding* b = find(Source::Key, e.key.keysym.scancode);
             if(b == nullptr)
                 return Action::None;

@@ -10,7 +10,9 @@
 //     full scale and released when it falls below 0.3 (hysteresis).
 //   - The keyboard, for development: arrows = d-pad; Q / W = L1 / R1; A / S = L2 /
 //     R2; Space = A; B, X, Y = B, X, Y; Left Shift = Select; Return = Start;
-//     Escape = quit. Keys are matched by SDL scancode (physical key position), so
+//     Escape = quit; Alt+F4 = quit (M3: KNULLI's exit hotkey for shell ports sends
+//     Left Alt + F4 as key events; F4 without Alt does nothing). Keys are matched
+//     by SDL scancode (physical key position), so
 //     the binding does not depend on the keyboard layout or language: on a French
 //     AZERTY keyboard "Q" (L1) is the key labelled A, and so on. Key repeat is
 //     ignored.
@@ -20,7 +22,8 @@
 // next available one is opened, and the caller is told to release all buttons.
 //
 // Other events that matter to the app are reported too: quit (window close,
-// SDL_QUIT, Escape) and release-all (window focus lost, active controller removed).
+// SDL_QUIT, Escape, Alt+F4) and release-all (window focus lost, active controller
+// removed).
 // Whenever release-all is returned, the trigger pressed states are cleared as
 // well, so the next trigger press above the threshold is reported as a press.
 
@@ -46,7 +49,7 @@ class InputMap
     {
         None,       // nothing for the app (unknown or ignored event)
         Button,     // `out` holds a button event
-        Quit,       // window close, SDL_QUIT or Escape
+        Quit,       // window close, SDL_QUIT, Escape or Alt+F4
         ReleaseAll, // focus lost or the active controller was removed: release every button
     };
 
@@ -72,6 +75,11 @@ class InputMap
     // value is above the first, released when it is below the second.
     static float triggerPressThreshold() noexcept;
     static float triggerReleaseThreshold() noexcept;
+
+    // True if the keyboard binding uses this scancode (a button or Escape). F4 is
+    // not: only Alt+F4 quits, so F4 alone (or its release) is reported by the
+    // diagnostic log like any other unmapped key.
+    static bool mapsScancode(int scancode) noexcept;
 
   private:
     Action onAxis(const SDL_ControllerAxisEvent& a, ButtonEvent& out) noexcept;

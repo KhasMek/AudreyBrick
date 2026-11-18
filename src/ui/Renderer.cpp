@@ -31,9 +31,8 @@ void Renderer::release() noexcept
     atlasFailed_ = false;
 }
 
-// Not handled here (M3): SDL_RENDER_TARGETS_RESET and SDL_RENDER_DEVICE_RESET.
-// After a device reset the atlas texture would have to be recreated; the app
-// does not watch for these events yet.
+// Render resets: the app calls onRenderReset() (release()), so the next call
+// builds the atlas again.
 bool Renderer::ensureAtlas(SDL_Renderer* r) noexcept
 {
     if(owner_ == r && (atlas_ != nullptr || atlasFailed_))
@@ -50,6 +49,8 @@ bool Renderer::ensureAtlas(SDL_Renderer* r) noexcept
     SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, kAtlasWidth, kAtlasHeight, 32, SDL_PIXELFORMAT_ARGB8888);
     if(surf == nullptr)
     {
+        ++atlasFailures_;
+        SDL_snprintf(atlasError_, sizeof atlasError_, "surface: %s", SDL_GetError());
         SDL_Log("audreybrick: cannot create the glyph atlas surface (%s); drawing without text", SDL_GetError());
         return false;
     }
@@ -70,12 +71,15 @@ bool Renderer::ensureAtlas(SDL_Renderer* r) noexcept
     SDL_FreeSurface(surf);
     if(atlas_ == nullptr)
     {
+        ++atlasFailures_;
+        SDL_snprintf(atlasError_, sizeof atlasError_, "texture: %s", SDL_GetError());
         SDL_Log("audreybrick: cannot create the glyph atlas texture (%s); drawing without text", SDL_GetError());
         return false;
     }
     SDL_SetTextureBlendMode(atlas_, SDL_BLENDMODE_BLEND);
     SDL_SetTextureScaleMode(atlas_, SDL_ScaleModeNearest);
     atlasFailed_ = false;
+    ++atlasBuilds_;
     return true;
 }
 

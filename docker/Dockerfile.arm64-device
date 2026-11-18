@@ -1,0 +1,38 @@
+# Copyright (c) 2026 KhasMek
+# SPDX-License-Identifier: MIT
+#
+# AudreyBrick: the device build image (task M3-A, docs/briefs/M3.md).
+#
+# Builds the binaries that run on the TrimUI Brick under KNULLI Scarab, whose
+# system has glibc 2.39, libstdc++ from GCC 13 (GLIBCXX_3.4.32, CXXABI_1.3.14) and
+# SDL 2.32.8 (docs/PLATFORM_NOTES.md section 10). Debian 12 has glibc 2.36 and
+# GCC 12, both older, so what is built here only needs symbol versions the device
+# has. scripts/build_device.sh checks that after every build.
+#
+# Used by scripts/build_device.sh (build, test, symbol check) and by
+# scripts/test_on_knulli_rootfs.sh (unsquashfs, to extract part of the device's
+# system image); build context is docker/.
+#
+# Base: official Debian 12 (bookworm) slim, pinned by the digest of its
+# linux/arm64/v8 manifest (not the multi-arch index). Looked up on 2026-11-17 with
+#   docker buildx imagetools inspect debian:bookworm-slim
+# index   sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
+# arm64   sha256:ec8534cda2cb30f29f44f23e135297af7a1496f2990fd8e4e84aa36b081a757a
+# image created 2026-11-04.
+#
+# Packages:
+#   g++             gcc 12 and libstdc++ (dynamic, as on the device)
+#   cmake, ninja    build (the project needs CMake 3.20 or newer; bookworm has 3.25)
+#   libsdl2-dev     SDL 2.26 headers and libSDL2-2.0.so.0 to link against by soname.
+#                   The app is linked dynamically and uses the device's own SDL at
+#                   run time; nothing from this image is shipped
+#   binutils        readelf and objdump for the symbol-version check (also pulled in by g++)
+#   squashfs-tools  unsquashfs, to extract part of the device image (zstd support)
+#   file            reports the architecture and type of the built binaries
+# Package versions are not pinned; the scripts print the versions they used.
+FROM debian:bookworm-slim@sha256:ec8534cda2cb30f29f44f23e135297af7a1496f2990fd8e4e84aa36b081a757a
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        g++ cmake ninja-build libsdl2-dev binutils squashfs-tools file \
+ && rm -rf /var/lib/apt/lists/*

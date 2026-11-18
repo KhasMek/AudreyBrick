@@ -12,7 +12,7 @@ Maintained by the orchestrator. Last updated: 2026-11-17.
 | M1 host DSP | **Done and reviewed (M1-A to M1-D).** Awaiting the human's sign-off of the milestone |
 | M2 host app | **Done and reviewed (M2-A, M2-B, M2-C): the app plays on the Mac with the full screen.** Awaiting the human's play test and sign-off of the milestone |
 | M2b input path | Not started |
-| M3 device build | Not started. Blocked on device checklist items 1 to 9 |
+| M3 device build | **M3-A done and reviewed: a Port package exists in `dist/` and passes every off-device test.** Waiting for the human's first run on the Brick (`docs/FIRST_RUN_BRICK.md`). The screen and ALSA output are untested until then |
 | M4 tuning | Not started |
 | M5 presets, polish, release decision | Not started |
 
@@ -58,7 +58,8 @@ The human commits. The orchestrator stops at each point and proposes a message.
 | 7 | M2-A button control logic, reviewed | Committed |
 | 8 | M2-B audio host and app shell, reviewed (first point where the human can play it on the Mac; blank window) | Committed |
 | 9 | M2-C the screen, reviewed | Committed |
-| 10 | Screen: plain engine values for the five unitless parameters | Ready to commit |
+| 10 | Screen: plain engine values for the five unitless parameters | Committed |
+| 11 | M3-A device build, device behaviour and the Port package, reviewed; firmware findings and the first-run checklist | Ready to commit |
 
 ## What was verified and how
 
@@ -210,6 +211,25 @@ Open after M2-C:
 - The footer, strip names and several status words are 16 px, about 1 mm on the Brick's screen. Legibility must be checked on the device (M3).
 - Renderer device-reset events are not handled (M3). A resized Mac window scales glyphs non-integrally; the Brick runs at exactly 1024x768.
 
+## M3-A result (2026-11-18)
+
+- **Firmware facts** were read from the image the human runs (KNULLI Scarab 20260511): `docs/PLATFORM_NOTES.md` section 10. Build limit: symbol versions up to GLIBC_2.39 and GLIBCXX_3.4.32. SDL 2.32.8 with ALSA audio and only the Mali video driver.
+- **Device build:** Debian 12 arm64 container (`scripts/build_device.sh`), GCC 12.2. The binary needs at most GLIBC 2.34, GLIBCXX 3.4.29, CXXABI 1.3.11; the script fails if a limit is exceeded. SDL is linked by soname and not bundled. `libaudrey_lgpl.so` ships separately in `libs.aarch64/`.
+- **`std::tanf`:** GCC 12's library does not declare it and the unmodified upstream `DSPUtils.h` calls it. `src/shim/std_cmath_compat.h` supplies it for libstdc++ older than 14 (orchestrator's decision). Arithmetic is unchanged: parity passes on Debian 12, whose renders match the same 17 of 25 macOS reference files as Debian 13.
+- **Tested against the device's own libraries** (`scripts/test_on_knulli_rootfs.sh`, a container whose root is extracted from the firmware image): the device's loader resolves everything; the app logs "linked 2.32.8"; the audio, controls and logging self-test passes with the test-only `--no-video` option; the launcher works from any directory, with spaces in the path and without the executable bit; SIGTERM, SIGINT, SIGHUP and a killed launcher all end the app cleanly.
+- **Not testable off the device:** the display path (Mali driver, EGL, renderer) and ALSA output. Without a framebuffer the app exits in milliseconds with SDL's error in both logs.
+- **Device behaviour added to the app:** `--fullscreen`; quit on SDL_QUIT, Alt+F4, Escape, and Start + Select held one second (with a "HOLD TO QUIT" banner); a diagnostic log (`--log`); renderer reset handling; integer scaling only when the output is at least 1024x768; an overrun counter (one atomic increment on the audio thread, nothing else new there).
+- **Launcher** (`packaging/AudreyBrick.sh`): self-contained bash, no PortMaster. Keeps the last 8 runs' logs, records device state at start (battery-saver settings, CPU governor, sound cards, capture devices), forwards signals, and keeps the device awake by creating `/var/run/battery-saver/audreybrick.pause` while the app runs (the idle watcher's hooks skip dim, mute and suspend while any `*.pause` file exists; read from the firmware's scripts, untested on the device). `AUDREY_KEEP_AWAKE=0` turns that off.
+- **Package:** `scripts/make_port.sh <image>` builds, tests the build in the device root, packages, and tests the package itself; it prints hashes so the packaged binary is the tested one. Output in `dist/` (git-ignored).
+- Tests: 39 in Release and ASan/UBSan, 30 under ThreadSanitizer and without SDL, 30 in each Debian 13 container, 39 in the Debian 12 device build. Vendor check and reference hashes pass. Re-verified by the orchestrator from clean builds, including `make_port.sh` (exit 0).
+- Review: no blocking findings. The reviewer checked the packaged binary's symbols against the device's own library files, ran the launcher in 14 situations of its own, and read the firmware's launch, hotkey and idle scripts. Its six should-fix items (package the tested binary, keep more logs, forward signals, avoid cropping on an unexpected screen size, write launcher failures into the log folder, log more device state) were applied; the follow-up round was verified by the orchestrator, not re-reviewed.
+
+Open after M3-A:
+- Everything in `docs/FIRST_RUN_BRICK.md` is untested until the human runs it.
+- `README.txt` in the package says "source repository: to be published"; resolve before any public distribution.
+- Start + Select is the quit chord; the control scheme reserves Start for the freeze slot (M5). Revisit then.
+- The device's SDL also has an OSS `dsp` audio driver, not listed in the platform notes' table.
+
 ## Pitch range finding (2026-11-17, from the human's first play test)
 
 The human played M2-B on the Mac: generally working as expected, but the pitch range seemed limited to about an octave, unlike the hardware.
@@ -226,4 +246,5 @@ Decision: choose a playable init patch by ear after the presets work (M5). Until
 - 2026-11-17: Human answered D1 to D7, asked for stereo-summed input with a gain control, and for tabs on L1/R1. M1 approved. Stopped at commit point 1.
 - 2026-11-17: M1-A to M1-D implemented, reviewed and committed. The human listened to the renders and reports they sound great.
 - 2026-11-17: M2 (A, B, C) implemented, reviewed, played by the human and committed. The human chose to get it running on the Brick before the input path; the firmware image (Scarab 20260511) was downloaded and inspected, findings in `docs/PLATFORM_NOTES.md` section 10.
+- 2026-11-18: M3-A implemented, reviewed and verified. Package in `dist/`. Stopped at commit point 11 for the human's first run on the Brick.
 - 2026-11-17: Human approved the button mapping as a first version, named the input sources (mic, USB, file) and asked for a modulation tab after the plain port works on the Brick. M2 briefs written. Stopped at commit point 6.

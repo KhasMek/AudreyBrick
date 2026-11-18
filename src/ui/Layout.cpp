@@ -608,7 +608,44 @@ void currentTab(Builder& b, const UiSnapshot& s) noexcept
     const int      step  = tall ? kTallStep : kSmallStep;
     for(int i = 0; i < shown; ++i)
         tabRow(b, s, rows[i], kAreaY + i * step, g, i);
+}
 
+// --- Quit banner (M3) ------------------------------------------------------------------------
+// While Start + Select are held, the current tab's area shows the banner instead of
+// the rows: "HOLD TO QUIT" at 48 px, a bar filling over the one-second hold, and
+// "SELECT + START  RELEASE TO CANCEL". The rest of the screen is unchanged, so no
+// text overlaps.
+void quitBanner(Builder& b, const UiSnapshot& s) noexcept
+{
+    b.panel(PanelKind::QuitBanner, kRowX, kAreaY, kRowW, kAreaH);
+    b.fill(kRowX, kAreaY, kRowW, kAreaH, pal::panelDark);
+    b.frame(kRowX, kAreaY, kRowW, kAreaH, pal::clip, 6);
+    const int cx = kRowX + kRowW / 2;
+    b.textCentered(cx, kAreaY + 34, 6, pal::text, TextRole::QuitBanner, "HOLD TO QUIT");
+
+    constexpr int kBarX = kRowX + 64;
+    constexpr int kBarW = kRowW - 128;
+    constexpr int kBarY = kAreaY + 106;
+    constexpr int kBarH = 32;
+    b.fill(kBarX, kBarY, kBarW, kBarH, pal::panel, RectTag::Bar);
+    b.fill(kBarX, kBarY, fraction(kBarW, s.quitHoldProgress), kBarH, pal::clip, RectTag::Bar);
+
+    constexpr int  kLineY   = kAreaY + 160;
+    constexpr int  kScale   = 3;
+    const char*    release  = "RELEASE TO CANCEL";
+    const int      capSel   = textWidth("SELECT", kScale) + 8;
+    const int      capStart = textWidth("START", kScale) + 8;
+    const int      plusW    = glyphPx(kScale);
+    const int      total    = capSel + 8 + plusW + 8 + capStart + 24 + textWidth(release, kScale);
+    int            x        = cx - total / 2;
+    const int      textY    = kLineY + 4; // cap height 32, glyphs 24
+    x += b.keyCap(x, kLineY, "SELECT", kScale, pal::text, pal::panelDark, false);
+    x += 8;
+    b.text(x, textY, kScale, pal::text, TextRole::QuitBanner, "+");
+    x += plusW + 8;
+    x += b.keyCap(x, kLineY, "START", kScale, pal::text, pal::panelDark, false);
+    x += 24;
+    b.text(x, textY, kScale, pal::dim, TextRole::QuitBanner, release);
 }
 
 // --- Output meters ------------------------------------------------------------------------
@@ -951,7 +988,10 @@ void buildLayout(const UiSnapshot& s, const MeterView& m, DrawList& out) noexcep
     tabBar(b, s);
     feedbackBand(b, s);
     switchBox(b, s);
-    currentTab(b, s);
+    if(s.quitHoldActive)
+        quitBanner(b, s);
+    else
+        currentTab(b, s);
     meters(b, m);
     strip(b, s);
     statusLine(b, s);

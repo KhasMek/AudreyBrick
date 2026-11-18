@@ -35,11 +35,45 @@
 //   - The run ends when n seconds of audio have been rendered, plus at most two
 //     buffers so the commands sent last are processed. A wall-clock timeout of
 //     max(3 n, n + 10) seconds stops a run whose audio does not advance.
-//   - Keyboard and controller input are ignored (only quit is honoured).
+//   - Keyboard and controller input are ignored (only quit is honoured; the
+//     Start + Select hold is not watched).
 //   - The final state is printed. The exit code is 0 only if the run reached n
 //     seconds of audio before the timeout, delivered every scripted event at or
 //     before n seconds, every reported value is finite, and every --expect-*
 //     expectation holds; otherwise 3, with the reasons printed.
+//
+// Device behaviour (docs/briefs/M3.md, M3-A):
+//   - --fullscreen: an SDL_WINDOW_FULLSCREEN_DESKTOP window (on the Brick's Mali
+//     framebuffer driver the window is the whole screen anyway), cursor hidden,
+//     logical size 1024 x 768 with integer scaling, controller events also while
+//     the window has no focus. Without it the window is as in M2.
+//   - The renderer: accelerated with vsync (not in self-test mode), then
+//     accelerated without vsync, then the software renderer; every attempt is
+//     logged. Without vsync the frame rate is capped at 60 (FramePacer).
+//   - Quit paths: SDL_QUIT, window close, Escape, Alt+F4 (InputMap) and Start +
+//     Select held together for one second (QuitHold, fed the same ButtonEvents as
+//     the model, which still gets them: Select stays the fine modifier). While the
+//     hold is in progress the screen shows "HOLD TO QUIT".
+//   - SDL_RENDER_TARGETS_RESET / SDL_RENDER_DEVICE_RESET rebuild the glyph atlas.
+//   - --exit-with-parent (Linux; the launcher passes it): PR_SET_PDEATHSIG, so the
+//     app gets SIGTERM (SDL turns it into SDL_QUIT, a clean exit) if the process
+//     that started it dies, even by SIGKILL. Elsewhere it is accepted and logged
+//     as unsupported.
+//   - --remove-on-exit <file>: that one file is deleted when the app exits, on
+//     every exit path that runs (the launcher passes its keep-awake pause file, so
+//     it goes away even when the launcher was killed with SIGKILL).
+//   - --no-video (self-test only): SDL_INIT_VIDEO, the window, the renderer and all
+//     drawing are skipped; audio, events, controllers, the model, the quit logic,
+//     the loop (paced by SDL_Delay(1) as in any self-test) and the log run as usual.
+//     For the device's own libraries in a container, whose SDL has only the Mali
+//     video driver. A video failure without it is fatal (no automatic fallback),
+//     with every attempt's SDL error in the log and on stderr.
+//   - --log <file>: the diagnostic log (app/DiagLog.h, app/SdlDiagnostics.h),
+//     written on this (the UI) thread only, from values the audio thread already
+//     publishes through atomics. Start-up facts, controllers, first-seen inputs,
+//     unmapped keys, focus changes, a statistics line every 10 seconds and the
+//     reason for exit. A log that cannot be opened is reported once on stderr and
+//     the app runs without it.
 
 #pragma once
 
@@ -53,6 +87,10 @@
 
 #include "app/ButtonScript.h"
 #include "app/ControlModel.h"
+#include "app/DiagLog.h"
+#include "app/FramePacer.h"
+#include "app/QuitHold.h"
+#include "app/SdlDiagnostics.h"
 #include "app/UiSnapshot.h"
 #include "control/ButtonControlSource.h"
 #include "core/AudreyVoice.h"
@@ -78,6 +116,11 @@ struct AppOptions
     std::string audioDriver;         // --audio-driver (sets SDL_AUDIODRIVER); empty = SDL's choice
     bool        listAudio = false;   // --list-audio (with --audio-driver: that driver only)
     bool        help      = false;   // --help
+    bool        fullscreen = false;  // --fullscreen (the device)
+    std::string logPath;             // --log <file>; empty = no diagnostic log
+    bool        noVideo   = false;   // --no-video (self-test only): no window, renderer or drawing
+    bool        exitWithParent = false; // --exit-with-parent (Linux): SIGTERM when the parent dies
+    std::string removeOnExit;        // --remove-on-exit <file>: deleted when the app exits
     std::string selftestScript;      // --selftest; empty = normal mode
     double      selftestSeconds = 0; // --seconds (required with --selftest), seconds of audio
 
@@ -129,6 +172,14 @@ class App
     double audioSeconds() const noexcept; // audio rendered so far, seconds
     void   fillSnapshot(double t);
     void   render(const UiSnapshot& s);
+    bool   createWindowAndRenderer(std::string& error);
+    double logTime() const noexcept; // seconds since run() started (the log's clock)
+    void   logStats(double wall, const char* label);
+    void   logAtlasState();
+    void   removeOnExit(); // --remove-on-exit
+    // A video start-up failure (fatal) or a failed attempt with a fallback (not
+    // fatal): to the log and to stderr (so to stdout.log on the device).
+    void videoFailure(double t, bool fatal, const char* fmt, ...) AB_PRINTF_FORMAT(4, 5);
     // Prints the self-test report, checks it and returns the exit code.
     int finishSelftest(double wallSeconds, bool timedOut);
 
@@ -156,6 +207,23 @@ class App
     std::size_t                   nextEvent_        = 0;
     double                        maxEventLateness_ = 0.0; // seconds (audio clock)
     double                        longestFrame_     = 0.0; // seconds of work in one loop iteration
+
+    // Device behaviour (M3).
+    QuitHold      quit_;
+    DiagLog       log_;
+    EventLogger   events_{log_};
+    FrameRate     fps_;
+    double        runStart_            = 0.0; // steady clock at the start of run(), seconds
+    long          parentPid_           = 0;   // getppid() at start (to explain an SDL_QUIT)
+    std::string   exitReason_          = "unknown";
+    double        statsStart_          = 0.0; // wall clock (now()) at the start of the statistics window
+    float         statsCpuMax_         = 0.0f;
+    float         statsPeak_[2]        = {0.0f, 0.0f};
+    std::uint64_t statsCallbacks_      = 0; // callbacks at the start of the window
+    std::uint64_t statsOverruns_       = 0; // overruns at the start of the window
+    std::uint64_t statsAudioFrames_    = 0; // audio frames rendered at the start of the window
+    unsigned      atlasBuildsLogged_   = 0;
+    unsigned      atlasFailuresLogged_ = 0;
 
     // UI-side meter bookkeeping.
     UiSnapshot snap_;

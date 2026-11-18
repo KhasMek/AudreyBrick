@@ -13,6 +13,8 @@
 #ifndef AUDREYBRICK_SHIM_DAISYSP_H
 #define AUDREYBRICK_SHIM_DAISYSP_H
 
+#include "std_cmath_compat.h"
+
 // MIT modules (DaisySP 7f67768)
 #include "Utility/dsp.h"
 #include "Utility/delayline.h"

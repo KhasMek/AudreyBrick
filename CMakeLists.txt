@@ -17,6 +17,19 @@ foreach(_flags_var CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE
     endif()
 endforeach()
 
+# The app's version and build date (M3-A), shown in the diagnostic log. The build
+# scripts pass `git describe --always --dirty` and the date; a plain build says
+# "unknown" and uses the compiler's date.
+set(AUDREY_VERSION "unknown" CACHE STRING "App version shown in the log (git describe output)")
+set(AUDREY_BUILD_DATE "" CACHE STRING "Build date shown in the log (empty: the compiler's __DATE__)")
+if(NOT AUDREY_VERSION MATCHES "^[A-Za-z0-9._+-]+$")
+    message(FATAL_ERROR "AUDREY_VERSION '${AUDREY_VERSION}' may only hold letters, digits and . _ + -")
+endif()
+if(NOT AUDREY_BUILD_DATE MATCHES "^[A-Za-z0-9 :._+-]*$")
+    message(FATAL_ERROR "AUDREY_BUILD_DATE '${AUDREY_BUILD_DATE}' may only hold letters, digits, spaces and : . _ + -")
+endif()
+option(AUDREY_PORT_INSTALL "cmake --install lays out the Port's binaries (scripts/build_device.sh)" OFF)
+
 set(AB_THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 set(AB_SHIM        ${CMAKE_CURRENT_SOURCE_DIR}/src/shim)
 

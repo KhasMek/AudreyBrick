@@ -6,6 +6,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 
+#include <csignal>
 #include <cstdio>
 #include <string>
 #include <utility>
@@ -13,10 +14,27 @@
 #include "app/App.h"
 #include "platform/AudioHost.h"
 
+namespace
+{
+// SIGHUP: quit cleanly as on SIGTERM (SDL turns SIGTERM into SDL_QUIT once
+// SDL_Init has run). raise() is async-signal-safe.
+extern "C" void onHangup(int)
+{
+    std::raise(SIGTERM);
+}
+} // namespace
+
 int main(int argc, char** argv)
 {
     using namespace audreybrick;
     SDL_SetMainReady();
+    // Signals (M3-A review): the launcher runs the app as a background job, and a
+    // non-interactive shell starts background jobs with SIGINT ignored; SDL only
+    // installs its SIGINT handler (SIGINT -> SDL_QUIT) when SIGINT is not ignored.
+    // So SIGINT is reset to the default here, and SIGHUP, which SDL does not
+    // handle, is turned into SIGTERM. TERM, INT and HUP all end the app cleanly.
+    std::signal(SIGINT, SIG_DFL);
+    std::signal(SIGHUP, onHangup);
 
     AppOptions  opts;
     std::string error;

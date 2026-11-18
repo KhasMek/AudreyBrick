@@ -207,6 +207,19 @@ struct NamedSnapshot
     UiSnapshot  snap;
 };
 
+// M3: Start + Select held, 0.4 s into the one-second quit hold (Select is also
+// FINE). The current tab's area shows the quit banner.
+inline UiSnapshot quitHoldSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Filter);
+    s.fine       = true;
+    setButton(s, Button::Select, true);
+    setButton(s, Button::Start, true);
+    s.quitHoldActive   = true;
+    s.quitHoldProgress = 0.4f;
+    return s;
+}
+
 inline std::vector<NamedSnapshot> allSnapshots()
 {
     return {
@@ -220,6 +233,7 @@ inline std::vector<NamedSnapshot> allSnapshots()
         {"startup", startupSnapshot()},
         {"delay_switch_held", delaySwitchHeldSnapshot()},
         {"long_status", longStatusSnapshot()},
+        {"quit_hold", quitHoldSnapshot()},
     };
 }
 

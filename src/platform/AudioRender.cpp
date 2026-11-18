@@ -76,6 +76,8 @@ void AudioRender::render(float* out, std::size_t frames) noexcept
         const double        seconds        = static_cast<double>(t1 - t0) / ticksPerSecond_;
         const double        bufferDuration = static_cast<double>(frames) / AudreyVoice::kSampleRate;
         cpu_.record(seconds / bufferDuration, bufferDuration);
+        if(seconds > bufferDuration)
+            overruns_.fetch_add(1, std::memory_order_relaxed); // took longer than the buffer lasts
     }
 
     frames_.fetch_add(frames, std::memory_order_relaxed);

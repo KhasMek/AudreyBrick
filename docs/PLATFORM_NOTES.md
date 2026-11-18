@@ -113,11 +113,11 @@ The human's Brick runs `knulli-a133-trimui-brick-scarab-20260511.img.gz` (stable
 | Item | Finding |
 |---|---|
 | Base | Batocera 42, Buildroot 2024.11, `OS_NAME=knulli` |
-| **glibc** | **2.39** (highest symbol version `GLIBC_2.39`). This is the build floor: a device binary must not need anything newer |
+| **glibc** | The loader reports glibc **2.40** (Buildroot); the highest symbol version it exports is **`GLIBC_2.39`**. That symbol version is the build limit: a device binary must not need anything newer |
 | **libstdc++** | `libstdc++.so.6.0.32`, highest `GLIBCXX_3.4.32` (GCC 13). A build with a newer GCC must link libstdc++ statically or avoid newer symbols |
 | **SDL2** | **2.32.8** (`libSDL2-2.0.so.0.3200.8`), plus SDL2_ttf 2.24, SDL2_image 2.8, SDL2_mixer, SDL2_gfx, SDL2_net |
-| SDL2 audio drivers built in | **`alsa`**, `disk`, `dummy`. **No `pipewire` and no `pulseaudio` driver.** So there is nothing to choose between: SDL uses ALSA |
-| SDL2 video drivers built in | **`mali`** (Mali framebuffer), plus dummy/offscreen. No KMSDRM, Wayland or X11. Expect a fullscreen 1024x768 GLES surface; windowing and resizing do not apply |
+| SDL2 audio drivers built in | **`alsa`**, `dsp` (OSS), `disk`, `dummy`. **No `pipewire` and no `pulseaudio` driver.** So there is nothing to choose between: SDL uses ALSA |
+| SDL2 video drivers built in | **`mali` only** ("Mali EGL Video Driver", a patched build that reads `/dev/fb0` and `/sys/class/graphics/fb0/modes`). **No dummy or offscreen video driver**, and no KMSDRM, Wayland or X11. (An earlier version of this table wrongly listed dummy/offscreen video; `dummy` exists only as an audio driver. Corrected 2026-11-17 after running the app against the device's libraries.) Expect a fullscreen 1024x768 GLES surface; windowing and resizing do not apply. The display path cannot be tested off the device |
 | Audio server | PipeWire 1.4.6 with WirePlumber and `pipewire-pulse`, started by `/etc/init.d/S06audio`. ALSA's default PCM is the PipeWire plugin (`99-pipewire-default.conf`), for playback **and capture**. So SDL (ALSA) goes through PipeWire |
 | Built-in sound card | WirePlumber rule `51-builtinspeaker.conf` forces the card to **S16LE, 48000 Hz, 2 channels, no mmap, software mixer**, with a comment that the driver does not publish its capabilities. 48 kHz is therefore the native rate; our float output is converted to 16-bit by the audio stack |
 | Kernel | Module trees for `4.9.191`, `4.9.191_v90s` and `6.11.11` are present. The 4.9.191 tree has the A133 codec drivers (`sun50iw10-codec`, `snd-soc-ac107`) built in, so that is the Brick's kernel [inferred from the driver names] |
@@ -131,8 +131,8 @@ The human's Brick runs `knulli-a133-trimui-brick-scarab-20260511.img.gz` (stable
 
 ### What this settles
 
-- Open questions 1 and 2 of section 3: glibc is 2.39; the audio server is PipeWire and SDL reaches it through ALSA only.
-- The device build must target **glibc 2.39 or older and libstdc++ from GCC 13 or older**. The Debian 13 test image used in M1-D has glibc 2.41 and is too new for device binaries. Debian 12 (glibc 2.36, GCC 12) is a safe build base.
+- Open questions 1 and 2 of section 3: glibc exports symbols up to 2.39; the audio server is PipeWire and SDL reaches it through ALSA only.
+- The device build must target **glibc 2.39 or older and libstdc++ from GCC 13 or older**. The Debian 13 test image used in M1-D has glibc 2.41 and is too new for device binaries. Debian 12 (glibc 2.36, GCC 12) is a safe build base. GCC 12's library lacks `std::tanf`, which the upstream `DSPUtils.h` calls; `src/shim/std_cmath_compat.h` supplies it for libstdc++ older than 14 (same C library function, arithmetic unchanged: the Debian 12 build matches the same 17 of 25 macOS reference renders as Debian 13).
 - The app is built against SDL 2.0.18-level API and runs against 2.32.8, the same minor line as the development Mac.
 - The `--audio-driver` option is of little use on the device (only `alsa`), but buffer size still matters.
 - The app must handle a fullscreen Mali surface: no window manager, no vsync guarantee, and the logical size should equal the screen.

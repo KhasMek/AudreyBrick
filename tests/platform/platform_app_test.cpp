@@ -72,6 +72,33 @@ int main()
                   o.hasPeakMax && o.peakMax == 1.0,
               "--expect-knob (repeatable, case-insensitive name) and --expect-peak-min/max");
     }
+    {
+        AppOptions  o;
+        std::string err;
+        check(parse({"--fullscreen", "--log", "data/a b.log"}, o, err) && o.fullscreen && o.logPath == "data/a b.log" &&
+                  !o.noVideo,
+              "--fullscreen and --log (M3-A)");
+        check(parse({"--selftest", "x.txt", "--seconds", "1", "--no-video"}, o, err) && o.noVideo && o.selftest(),
+              "--no-video with --selftest");
+        check(parse({}, o, err) && !o.fullscreen && o.logPath.empty() && !o.noVideo, "defaults: windowed, no log, video");
+        check(usageText("audreybrick").find("--no-video") != std::string::npos &&
+                  usageText("audreybrick").find("--fullscreen") != std::string::npos,
+              "usage lists --fullscreen, --log and --no-video");
+    }
+    check(fails({"--no-video"}), "--no-video without --selftest is an error");
+    {
+        AppOptions  o;
+        std::string err;
+        check(parse({"--fullscreen", "--exit-with-parent"}, o, err) && o.exitWithParent && o.fullscreen,
+              "--exit-with-parent (what the launcher passes)");
+        check(parse({}, o, err) && !o.exitWithParent && o.removeOnExit.empty(), "--exit-with-parent is off by default");
+        check(parse({"--remove-on-exit", "/var/run/battery-saver/audreybrick.pause"}, o, err) &&
+                  o.removeOnExit == "/var/run/battery-saver/audreybrick.pause",
+              "--remove-on-exit <file>");
+        check(fails({"--remove-on-exit"}) && fails({"--remove-on-exit", ""}), "--remove-on-exit needs a file name");
+    }
+    check(fails({"--log"}), "--log without a value");
+    check(fails({"--log", ""}), "--log with an empty name");
     check(fails({"--bogus"}), "unknown option is an error");
     check(fails({"-x"}), "unknown short option is an error");
     check(fails({"extra"}), "a stray argument is an error");

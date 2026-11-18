@@ -15,7 +15,9 @@
 //   3. In chunks of at most capacity() frames: AudreyVoice::process with the
 //      control source and no input into the two preallocated channel buffers,
 //      then interleaves them into the output and takes the per-channel peaks.
-//   4. Reads the clock again and records the load (time / buffer duration).
+//   4. Reads the clock again and records the load (time / buffer duration); a
+//      callback that took longer than its buffer lasts (load above 1, a likely
+//      underrun) also increments the overrun counter (one relaxed atomic add).
 //   5. Publishes peaks, load and counters through atomics.
 // No allocation, lock, I/O, logging, exception or wait.
 //
@@ -85,6 +87,9 @@ class AudioRender
     std::uint64_t  callbacks() const noexcept { return callbacks_.load(std::memory_order_relaxed); }
     // The largest frame count one render() call has been given.
     std::uint64_t  largestCallback() const noexcept { return largest_.load(std::memory_order_relaxed); }
+    // Callbacks whose wall time exceeded their buffer's duration (likely underruns).
+    // Counted only with a clock.
+    std::uint64_t  overruns() const noexcept { return overruns_.load(std::memory_order_relaxed); }
 
   private:
     AudreyVoice&   voice_;
@@ -103,6 +108,7 @@ class AudioRender
     std::atomic<std::uint64_t> frames_{0};
     std::atomic<std::uint64_t> callbacks_{0};
     std::atomic<std::uint64_t> largest_{0};
+    std::atomic<std::uint64_t> overruns_{0};
 
     static_assert(std::atomic<int>::is_always_lock_free, "the FTZ state must be lock-free");
     static_assert(std::atomic<std::uint64_t>::is_always_lock_free, "counters must be lock-free");
