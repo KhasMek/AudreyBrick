@@ -10,7 +10,7 @@ Maintained by the orchestrator. Last updated: 2026-11-17.
 |---|---|
 | M0 source study | Done, pending human review |
 | M1 host DSP | **Done and reviewed (M1-A to M1-D).** Awaiting the human's sign-off of the milestone |
-| M2 host app | **M2-A (button control logic) done and reviewed.** M2-B (audio host and app shell) and M2-C (the screen) not started |
+| M2 host app | **M2-A and M2-B done and reviewed; the app plays on the Mac with a blank window.** M2-C (the screen) not started |
 | M2b input path | Not started |
 | M3 device build | Not started. Blocked on device checklist items 1 to 9 |
 | M4 tuning | Not started |
@@ -55,8 +55,8 @@ The human commits. The orchestrator stops at each point and proposes a message.
 | 4 | M1-C render tool, parity test, reference set, reviewed | Committed |
 | 5 | M1-D aarch64 build check, reviewed | Committed |
 | 6 | M2 plan and briefs | Committed |
-| 7 | M2-A button control logic, reviewed | Ready to commit |
-| 8 | M2-B audio host and app shell, reviewed (first point where the human can play it on the Mac; blank window) | |
+| 7 | M2-A button control logic, reviewed | Committed |
+| 8 | M2-B audio host and app shell, reviewed (first point where the human can play it on the Mac; blank window) | Ready to commit |
 | 9 | M2-C the screen, reviewed | |
 
 ## What was verified and how
@@ -172,6 +172,22 @@ Decisions the implementer made where the scheme was silent (all tested; for the 
 - Full travel on a held d-pad takes about 2.9 s.
 
 Notes for later tasks: M2-B must call `ControlModel::releaseAll` on focus loss and controller removal. Presets (M5) must save the stored feedback, not the frame value.
+
+## M2-B result (2026-11-17)
+
+- Added `src/platform` (`AudioRender`: the SDL-free callback body; `AudioHost`: the SDL audio device; `InputMap`: gamepad and keyboard to buttons; flush-to-zero; meters) and the app shell (`src/app/App`, `main`, `UiSnapshot`). The executable is `build/<dir>/audreybrick`. SDL is optional at configure time (`AUDREY_WITH_SDL`).
+- On this Mac the device opens as requested: CoreAudio, 48 kHz, stereo, float32, 256 frames.
+- Tests: 25 pass in Release and ASan/UBSan, 16 under ThreadSanitizer, 22 without SDL, and 22 in each Linux container (no SDL there). Reference hashes unchanged. Re-verified by the orchestrator from clean builds, including the Linux script (exit 0) and a silent self-test.
+- The render path is bit-identical to `AudreyVoice` for buffers of 64, 256, 1024 and 5000 frames, and makes zero allocations. Flush-to-zero changed no sample over 20 s.
+- Review: no blocking findings. The callback, shutdown order and thread sharing were read line by line; three injected bugs in the render path were all caught. Follow-ups applied: the self-test now ends on audio time, fails on undelivered events or unmet expectations, and its ctest asserts the expected feedback and volume values and output level (shown to fail when the feedback ramp rate is halved); no non-test code needs SDL newer than 2.0.18; trigger state is cleared on focus loss; flush-to-zero is checked every callback.
+- **Callback CPU on the Mac:** a steady 0.75% of a 256-frame buffer when measured as thread CPU time. Wall-clock spikes of 10 to 60% occur and were shown to be the OS descheduling the thread, not our code. Audio-thread priority on the Brick is a question for the device measurements.
+- SDL's dummy audio driver does not run at real-time pace (0.65 to 1.12 measured), so the self-test's scripted events follow audio time.
+
+Open after M2-B:
+- The human has a play-by-ear checklist; the window is blank until M2-C.
+- Two self-test failure paths (timeout, undelivered event) are checked by reading only.
+- If a keyboard key and the matching pad button are held together, the first release releases the button. Left as is.
+- Not tested with a physical gamepad, only SDL's virtual controller.
 
 ## Log
 

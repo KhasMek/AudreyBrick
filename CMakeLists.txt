@@ -92,9 +92,67 @@ target_compile_options(audrey_dsp PRIVATE ${AB_DSP_OPT_OPTIONS})
 # Warnings for our own code.
 set(AB_WARNING_OPTIONS -Wall -Wextra -Wpedantic)
 
+# ---------------------------------------------------------------------------
+# SDL2 (M2-B): the app and the tests that need SDL headers. Optional: without
+# SDL2 everything else builds and tests as before.
+#   AUDREY_WITH_SDL=ON (default): find SDL2 through its CMake package, then
+#     pkg-config, then sdl2-config. If none finds it, a warning says so and the
+#     SDL targets are skipped.
+#   AUDREY_WITH_SDL=OFF: the SDL targets are skipped without looking (one status line says so).
+# Result: AB_HAVE_SDL (ON/OFF) and AB_SDL_TARGET (the target to link).
+# ---------------------------------------------------------------------------
+option(AUDREY_WITH_SDL "Build the SDL2 app (audreybrick) and its SDL tests" ON)
+set(AB_HAVE_SDL OFF)
+set(AB_SDL_TARGET "")
+if(AUDREY_WITH_SDL)
+    find_package(SDL2 CONFIG QUIET)
+    if(TARGET SDL2::SDL2)
+        set(AB_SDL_TARGET SDL2::SDL2)
+        set(AB_SDL_FOUND_BY "CMake package (${SDL2_DIR})")
+    else()
+        find_package(PkgConfig QUIET)
+        if(PKG_CONFIG_FOUND)
+            pkg_check_modules(AB_SDL2_PC QUIET IMPORTED_TARGET sdl2)
+        endif()
+        if(AB_SDL2_PC_FOUND)
+            set(AB_SDL_TARGET PkgConfig::AB_SDL2_PC)
+            set(AB_SDL_FOUND_BY "pkg-config")
+        else()
+            find_program(AB_SDL2_CONFIG sdl2-config)
+            if(AB_SDL2_CONFIG)
+                execute_process(COMMAND ${AB_SDL2_CONFIG} --cflags OUTPUT_VARIABLE _sdl_cflags
+                                OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE _sdl_rc1)
+                execute_process(COMMAND ${AB_SDL2_CONFIG} --libs OUTPUT_VARIABLE _sdl_libs
+                                OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE _sdl_rc2)
+                if(_sdl_rc1 EQUAL 0 AND _sdl_rc2 EQUAL 0)
+                    separate_arguments(_sdl_cflags UNIX_COMMAND "${_sdl_cflags}")
+                    separate_arguments(_sdl_libs UNIX_COMMAND "${_sdl_libs}")
+                    add_library(ab_sdl2 INTERFACE)
+                    target_compile_options(ab_sdl2 INTERFACE ${_sdl_cflags})
+                    target_link_libraries(ab_sdl2 INTERFACE ${_sdl_libs})
+                    set(AB_SDL_TARGET ab_sdl2)
+                    set(AB_SDL_FOUND_BY "sdl2-config (${AB_SDL2_CONFIG})")
+                endif()
+            endif()
+        endif()
+    endif()
+    if(AB_SDL_TARGET)
+        set(AB_HAVE_SDL ON)
+        message(STATUS "SDL2 found via ${AB_SDL_FOUND_BY}: building audreybrick and the SDL tests")
+    else()
+        message(WARNING "SDL2 was not found (tried the SDL2 CMake package, pkg-config and sdl2-config). "
+                        "The app 'audreybrick' and the SDL tests are skipped; everything else builds. "
+                        "Install SDL2 development files, or configure with -DAUDREY_WITH_SDL=OFF to silence this.")
+    endif()
+else()
+    message(STATUS "AUDREY_WITH_SDL=OFF: the app 'audreybrick' and the SDL tests are skipped")
+endif()
+
 add_subdirectory(src/core)
 add_subdirectory(src/control)
 add_subdirectory(src/tools)
+add_subdirectory(src/platform)
+add_subdirectory(src/app)
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -105,3 +163,4 @@ add_subdirectory(tests/core)
 add_subdirectory(tests/ref)
 add_subdirectory(tests/parity)
 add_subdirectory(tests/control)
+add_subdirectory(tests/platform)

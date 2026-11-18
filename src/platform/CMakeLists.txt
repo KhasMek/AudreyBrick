@@ -1,0 +1,20 @@
+# audrey_platform (static, no SDL): the body of the audio callback (AudioRender),
+# the meters and flush-to-zero. Built with or without SDL so the render path is
+# tested everywhere. It includes AudreyVoice.h (upstream DSP headers), so it
+# applies AB_DSP_OPT_OPTIONS like any DSP target.
+add_library(audrey_platform STATIC
+    AudioRender.cpp
+)
+target_include_directories(audrey_platform PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(audrey_platform PUBLIC audrey_core)
+target_compile_options(audrey_platform PRIVATE ${AB_DSP_OPT_OPTIONS} ${AB_WARNING_OPTIONS})
+
+# audrey_platform_sdl (static, SDL2): the audio device and the input map.
+if(AB_HAVE_SDL)
+    add_library(audrey_platform_sdl STATIC
+        AudioHost.cpp
+        InputMap.cpp
+    )
+    target_link_libraries(audrey_platform_sdl PUBLIC audrey_platform audrey_control ${AB_SDL_TARGET})
+    target_compile_options(audrey_platform_sdl PRIVATE ${AB_DSP_OPT_OPTIONS} ${AB_WARNING_OPTIONS})
+endif()
