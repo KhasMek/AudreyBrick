@@ -10,7 +10,7 @@ Maintained by the orchestrator. Last updated: 2026-11-17.
 |---|---|
 | M0 source study | Done, pending human review |
 | M1 host DSP | **Done and reviewed (M1-A to M1-D).** Awaiting the human's sign-off of the milestone |
-| M2 host app | **M2-A and M2-B done and reviewed; the app plays on the Mac with a blank window.** M2-C (the screen) not started |
+| M2 host app | **Done and reviewed (M2-A, M2-B, M2-C): the app plays on the Mac with the full screen.** Awaiting the human's play test and sign-off of the milestone |
 | M2b input path | Not started |
 | M3 device build | Not started. Blocked on device checklist items 1 to 9 |
 | M4 tuning | Not started |
@@ -56,8 +56,8 @@ The human commits. The orchestrator stops at each point and proposes a message.
 | 5 | M1-D aarch64 build check, reviewed | Committed |
 | 6 | M2 plan and briefs | Committed |
 | 7 | M2-A button control logic, reviewed | Committed |
-| 8 | M2-B audio host and app shell, reviewed (first point where the human can play it on the Mac; blank window) | Ready to commit |
-| 9 | M2-C the screen, reviewed | |
+| 8 | M2-B audio host and app shell, reviewed (first point where the human can play it on the Mac; blank window) | Committed |
+| 9 | M2-C the screen, reviewed | Ready to commit |
 
 ## What was verified and how
 
@@ -188,6 +188,25 @@ Open after M2-B:
 - Two self-test failure paths (timeout, undelivered event) are checked by reading only.
 - If a keyboard key and the matching pad button are held together, the first release releases the button. Left as is.
 - Not tested with a physical gamepad, only SDL's virtual controller.
+
+## M2-C result (2026-11-17)
+
+- Added `src/ui`: an SDL-free part (font atlas data, value formatting, meter ballistics, layout into a draw list with named panels) and an SDL renderer that draws the list. Text uses the public-domain `font8x8` bitmap font, vendored under `third_party/font8x8` (commit `8e279d2`), scaled by whole numbers. No font library is needed on the device.
+- Screen, top to bottom: tab bar (L1/R1); feedback band (L2/R2) with a striped MAX state that keeps the stored value visible; switch box; the current tab's parameters with their d-pad arrows, large values and position bars; L/R output meters with peak hold and clip; a strip with all eleven values plus CPU; a status line; a footer explaining the global buttons, each lighting while held.
+- Tests: 31 pass in Release and ASan/UBSan, 22 under ThreadSanitizer, 26 without SDL, 26 in each Linux container. Vendor check (43 files), reference hashes and the self-test pass. Re-verified by the orchestrator from clean builds, including the Linux script (exit 0). The orchestrator viewed five of the screenshots.
+- Review: nothing blocking. Every displayed value was checked at minimum, default and maximum; 25 extra extreme-value renders showed no overlap or overflow; the accelerated renderer's output is pixel-identical to the software one. The reviewer found the layout tests too weak (seven wrong displays passed); they now tie each parameter to its arrows and strip cell, check every panel for overlap, and allow only Brick button names. All nine injected bugs now fail a test.
+- Display fixes from review: consistent cents at half-semitones, larger LATCHED/HELD, a mark on the delay time when the switch scales it, cut names end in "..", faint text raised to at least 4.5:1 contrast.
+
+Changes after the human saw it (2026-11-17), applied before the commit and re-verified by the orchestrator from clean builds:
+- The five parameters with no unit (reverb dry/wet, reverb decay, delay mix, repeats, volume) now show the **knob position as 0 to 100 %**, so the number always equals the bar. Parameters with units still show engine values. A tick on the repeats bar marks unity gain (two thirds along), since the number no longer shows it.
+- For those five the bar fills to the displayed whole percentage, so a single fine step (1/1024) may not move bar or number until the next 1 %. Tunable if it bothers the player.
+- The "NOT USED ON THIS TAB" strip is removed; unbound directions are not shown.
+- Human's answers: colours fine for now; "SHIFT" for X is right; percentages fine; meter range -36 to 0 dB fine.
+- Not re-reviewed by a separate agent; the bug-injection table was not rerun after this last change.
+
+Open after M2-C:
+- The footer, strip names and several status words are 16 px, about 1 mm on the Brick's screen. Legibility must be checked on the device (M3).
+- Renderer device-reset events are not handled (M3). A resized Mac window scales glyphs non-integrally; the Brick runs at exactly 1024x768.
 
 ## Pitch range finding (2026-11-17, from the human's first play test)
 

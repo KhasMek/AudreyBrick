@@ -29,6 +29,9 @@ SOUNDPIPE_SHA="3efb43bdabd0ed23b17c694292b5a79f1692a3ea"
 # dr_wav (tools and tests only), v0.14.6
 DRLIBS_URL="https://github.com/mackron/dr_libs"
 DRLIBS_SHA="35b5c392cc15456736c440a68dbe073178bbffe0"
+# font8x8 (the app's bitmap font, public domain)
+FONT8X8_URL="https://github.com/dhepper/font8x8"
+FONT8X8_SHA="8e279d2d864e79128e96188a6b9526cfa3fbfef9"
 
 # Manifest: "<repo-key> <path in upstream> <path in this repo>".
 # "<path>#L<a>-<b>" compares only lines a to b of the upstream file (used for a
@@ -74,6 +77,9 @@ eurorack plaits/dsp/fx/overdrive.h#L1-23 licenses/plaits.NOTICE
 soundpipe LICENSE                      licenses/soundpipe.LICENSE
 drlibs  dr_wav.h                       third_party/dr_libs/dr_wav.h
 drlibs  dr_wav.h#L8658-8704            licenses/dr_wav.LICENSE
+font8x8 font8x8_basic.h                third_party/font8x8/font8x8_basic.h
+font8x8 README                         third_party/font8x8/README
+font8x8 README                         licenses/font8x8.README
 "
 
 # Our own notes, allowed under third_party/ and licenses/ without an upstream.
@@ -82,6 +88,7 @@ third_party/audrey-ii/UPSTREAM.md
 third_party/daisysp/UPSTREAM.md
 third_party/daisysp-lgpl/PROVENANCE.md
 third_party/dr_libs/UPSTREAM.md
+third_party/font8x8/UPSTREAM.md
 "
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/audreybrick-verify.XXXXXX")"
@@ -114,6 +121,7 @@ fetch eurorack  "$EURORACK_URL"  "$EURORACK_SHA"
 fetch stmlib    "$STMLIB_URL"    "$STMLIB_SHA"
 fetch soundpipe "$SOUNDPIPE_URL" "$SOUNDPIPE_SHA"
 fetch drlibs    "$DRLIBS_URL"    "$DRLIBS_SHA"
+fetch font8x8   "$FONT8X8_URL"   "$FONT8X8_SHA"
 
 status=0
 checked=0

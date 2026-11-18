@@ -83,6 +83,20 @@ Files: `Source/Effects/reverbsc.h`, `Source/Effects/reverbsc.cpp`, `Source/Filte
 
 Files: `dr_wav.h`, plus our note `UPSTREAM.md`.
 
+## 5. font8x8 (the app's bitmap font)
+
+| Item | Value |
+|---|---|
+| Location | `third_party/font8x8/` |
+| Licence | Public Domain, as stated in the repository's `README` ("License: Public Domain") and in the header comment of `font8x8_basic.h`. The glyphs derive from public domain VGA fonts (Marcel Sondaar; International Business Machines), as the `README` records. The repository has no separate licence file |
+| Author | Daniel Hepper (`font8x8_basic.h`: "Author: Daniel Hepper <daniel@hepper.net>") |
+| Source URL | https://github.com/dhepper/font8x8 |
+| Commit | `8e279d2d864e79128e96188a6b9526cfa3fbfef9` (2019-07-08, the head of `master`), fetched 2026-11-17. See `third_party/font8x8/UPSTREAM.md` |
+| Licence file | `licenses/font8x8.README` (the upstream `README`, unchanged) |
+| Built into | `audrey_ui_core` (static, `src/ui`): `src/ui/Font.cpp` includes the header once, compiled with `-funsigned-char` (the header is not modified; see `UPSTREAM.md`). Shipped in the app as the on-screen font, ASCII 32 to 126 only |
+
+Files: `font8x8_basic.h`, `README`, plus our note `UPSTREAM.md`.
+
 ## Our own stand-ins (not third-party code)
 
 - `src/shim/daisysp.h`: trimmed umbrella header including only the nine DaisySP modules above.

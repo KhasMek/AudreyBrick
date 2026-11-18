@@ -8,6 +8,7 @@ if(AB_HAVE_SDL)
         App.cpp
     )
     target_link_libraries(audreybrick PRIVATE audrey_platform_sdl) # brings audrey_platform, audrey_control, SDL2
+    target_link_libraries(audreybrick PRIVATE audrey_ui)           # the screen (M2-C)
     target_compile_options(audreybrick PRIVATE ${AB_DSP_OPT_OPTIONS} ${AB_WARNING_OPTIONS})
     set_target_properties(audreybrick PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()

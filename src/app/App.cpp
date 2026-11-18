@@ -385,6 +385,7 @@ void App::shutDown() noexcept
     voice_.reset();
     // 3. Input, window, SDL.
     input_.closeController();
+    ui_.release(); // the glyph atlas belongs to renderer_
     if(renderer_ != nullptr)
         SDL_DestroyRenderer(renderer_);
     renderer_ = nullptr;
@@ -428,11 +429,11 @@ void App::fillSnapshot(double t)
     copyString(snap_.controllerName, sizeof snap_.controllerName, input_.controllerName().c_str());
 }
 
-void App::render(const UiSnapshot&)
+void App::render(const UiSnapshot& s)
 {
-    // M2-B: clear only. Drawing is M2-C.
-    SDL_SetRenderDrawColor(renderer_, 16, 16, 20, 255);
-    SDL_RenderClear(renderer_);
+    // M2-C: the screen (ui::Renderer clears and draws; the glyph atlas is created
+    // on the first call).
+    ui_.draw(renderer_, s);
     SDL_RenderPresent(renderer_);
 }
 

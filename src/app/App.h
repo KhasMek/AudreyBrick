@@ -7,7 +7,7 @@
 //
 //   poll SDL events -> InputMap -> ControlModel::onButton(event, time)
 //   ControlModel::tick(time)
-//   fill a UiSnapshot -> render(snapshot)        (M2-B: only clears the window)
+//   fill a UiSnapshot -> render(snapshot)        (ui::Renderer draws the screen, M2-C)
 //
 // Time is monotonic seconds since audio started, from SDL_GetPerformanceCounter.
 //
@@ -17,7 +17,9 @@
 // keyboard binding; open the first controller; present a few frames; unpause
 // audio; loop.
 // Shutdown order: pause and close the audio device; destroy the model, the
-// control source and the voice; destroy the renderer and the window; SDL_Quit.
+// control source and the voice; close the controller; release the screen's glyph
+// atlas (it belongs to the renderer); destroy the renderer and the window;
+// SDL_Quit.
 //
 // Self-test mode (--selftest <script> --seconds <n>):
 //   - The button script is parsed before audio starts.
@@ -58,6 +60,7 @@
 #include "platform/AudioHost.h"
 #include "platform/AudioRender.h"
 #include "platform/InputMap.h"
+#include "ui/Renderer.h"
 
 namespace audreybrick
 {
@@ -136,6 +139,7 @@ class App
     SDL_Window*   window_         = nullptr;
     SDL_Renderer* renderer_       = nullptr;
     bool          vsync_          = false;
+    ui::Renderer  ui_;            // the screen (M2-C); released before renderer_ is destroyed
     std::uint64_t t0_             = 0;
     double        counterFreq_    = 1.0;
 

@@ -152,6 +152,7 @@ add_subdirectory(src/core)
 add_subdirectory(src/control)
 add_subdirectory(src/tools)
 add_subdirectory(src/platform)
+add_subdirectory(src/ui)
 add_subdirectory(src/app)
 
 # ---------------------------------------------------------------------------
@@ -164,3 +165,4 @@ add_subdirectory(tests/ref)
 add_subdirectory(tests/parity)
 add_subdirectory(tests/control)
 add_subdirectory(tests/platform)
+add_subdirectory(tests/ui)
