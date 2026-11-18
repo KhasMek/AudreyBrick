@@ -189,6 +189,16 @@ Open after M2-B:
 - If a keyboard key and the matching pad button are held together, the first release releases the button. Left as is.
 - Not tested with a physical gamepad, only SDL's virtual controller.
 
+## Pitch range finding (2026-11-17, from the human's first play test)
+
+The human played M2-B on the Mac: generally working as expected, but the pitch range seemed limited to about an octave, unlike the hardware.
+
+Measured by the orchestrator (scratch program on `AudreyVoice`, autocorrelation pitch of the left channel after 8 s, reverb mix 0): the frequency control's string pitch spans 20.6 to 523 Hz as in the firmware, but **with body at minimum the heard pitch stays near 960 to 1000 Hz for frequency 0.0 to 0.7 and jumps to about 1920 Hz above that**, at every feedback level tried. The 1 ms body delay sets the pitch, not the string. With body at maximum and feedback high, the output follows the string over most of the range (20.6, 28.5, 39.4, 54.5, 103.7, 521.7 Hz measured at the corresponding settings), with jumps to harmonics in places. Lowering the highpass does not change the body-at-minimum result.
+
+Cause: the port starts every control at the firmware's registry initial values, which puts body at minimum. A hardware unit starts at its physical knob positions. This is original DSP behaviour at an unlucky start position, not a port bug.
+
+Decision: choose a playable init patch by ear after the presets work (M5). Until then, raise body on the LOOP tab (hold Up) after starting the app.
+
 ## Log
 
 - 2026-11-17: M0 source study completed. Docs written. `CLAUDE.md` given an "M0 corrections" block. Stopped for human approval.

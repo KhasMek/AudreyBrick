@@ -37,6 +37,7 @@ Written at the end of M0 (2026-11-17). The on-device checklist is in `DEVICE_CHE
 | New | **Modulation (2026-11-17):** the human wants a tab with LFOs and possibly an envelope to modulate parameters, in the spirit of the Beetlecrab Tempera. Not designed or scheduled yet; see `CONTROL_SCHEME_PROPOSAL.md` section 0. Timing relative to the fidelity sign-off is the human's call |
 | New | **Button mapping (2026-11-17):** `CONTROL_SCHEME_PROPOSAL.md` section 0 approved as the first version, to be tweaked in use |
 | New | **Modulation timing (2026-11-17):** after the plain port works for the human on the Brick |
+| New | **Init patch (2026-11-17):** the app should start from a playable "init patch" rather than the firmware's registry initial values, which put body at minimum and pin the heard pitch near 1 kHz. To be chosen by ear once presets exist (M5). Implement it as app start-up state; keep the registry values as the reset defaults so scripts and reference hashes do not change. Measurements: `docs/STATUS.md`, "Pitch range finding" |
 | New | **Commits:** the human commits. The orchestrator stops at each good commit point and proposes a short, plainly worded message (no `feat(...)` prefixes) |
 
 ## 2. Decisions needed from the human (as asked at the end of M0)
