@@ -149,6 +149,8 @@ std::string usageText(const char* program)
            "  --swap-ab                game controller A and B swapped: SDL 'a' acts as B, 'b' as A\n"
            "                           (KNULLI on the TrimUI Brick); keyboard and other buttons unaffected\n"
            "  --swap-xy                game controller X and Y swapped: SDL 'x' acts as Y, 'y' as X\n"
+           "  --input-dir <dir>        the folder the INPUT tab's FILE source lists (*.wav); a missing\n"
+           "                           or empty folder is not an error (the launcher passes data/input)\n"
            "  --version                print the version and exit\n"
            "  --no-video               self-test only: no window, renderer or drawing (for a system\n"
            "                           without a usable video driver, e.g. the device's libraries in a\n"
@@ -163,6 +165,8 @@ std::string usageText(const char* program)
            "                           [min, max]; FeedbackGain is the stored feedback. Repeatable.\n"
            "  --expect-peak-min <v>    self-test: each channel's output peak must be above v\n"
            "  --expect-peak-max <v>    self-test: each channel's output peak must be below v\n"
+           "  --expect-input-peak-min <v>\n"
+           "                           self-test: the input meter (after the input gain) must go above v\n"
            "  --help                   print this text and exit\n"
            "\n" +
            keyboardHelpText();
@@ -258,6 +262,28 @@ bool parseOptions(int argc, const char* const* argv, AppOptions& out, std::strin
                         "'";
                 return false;
             }
+        }
+        else if(a == "--input-dir")
+        {
+            if(!value(v))
+                return false;
+            if(*v == '\0')
+            {
+                error = "--input-dir: empty folder name";
+                return false;
+            }
+            o.inputDir = v;
+        }
+        else if(a == "--expect-input-peak-min")
+        {
+            if(!value(v))
+                return false;
+            if(!parseNumber(v, o.inputPeakMin))
+            {
+                error = a + ": expected a number, got '" + v + "'";
+                return false;
+            }
+            o.hasInputPeakMin = true;
         }
         else if(a == "--audio-driver")
         {
@@ -358,9 +384,10 @@ bool parseOptions(int argc, const char* const* argv, AppOptions& out, std::strin
         error = "--seconds is only used with --selftest";
         return false;
     }
-    if(!o.selftest() && (!o.expectKnobs.empty() || o.hasPeakMin || o.hasPeakMax))
+    if(!o.selftest() && (!o.expectKnobs.empty() || o.hasPeakMin || o.hasPeakMax || o.hasInputPeakMin))
     {
-        error = "--expect-knob, --expect-peak-min and --expect-peak-max are only used with --selftest";
+        error = "--expect-knob, --expect-peak-min, --expect-peak-max and --expect-input-peak-min are only used with "
+                "--selftest";
         return false;
     }
     out = std::move(o);
@@ -535,6 +562,21 @@ void App::logGovernors(const char* when)
         log_.line(logTime(), "cpu governor %s: %s", when, cpuFreq_.governors().c_str());
 }
 
+void App::drainInputLog()
+{
+    try
+    {
+        inputLog_.clear();
+        inputCtl_->takeLog(inputLog_);
+    }
+    catch(...)
+    {
+        // Out of memory: these log lines are lost, nothing else.
+    }
+    for(const std::string& l : inputLog_)
+        log_.line(logTime(), "%s", l.c_str());
+}
+
 void App::videoFailure(double t, bool fatal, const char* fmt, ...)
 {
     char         buf[512];
@@ -610,6 +652,15 @@ bool App::startUp(std::string& error)
     model_  = std::make_unique<ControlModel>(*source_);
     audio_  = std::make_unique<AudioRender>(*voice_, *source_, AudioRender::FlushToZero::Enable, &performanceCounter,
                                            counterFreq_);
+    // M2b-A: the input stage, prepared with the render buffers when the device opens.
+    stage_ = std::make_unique<InputStage>();
+    audio_->attachInput(stage_.get());
+    inputCtl_ = std::make_unique<InputController>(*stage_, opts_.inputDir);
+    log_.line(logTime(), "input: source OFF at start; folder %s",
+              opts_.inputDir.empty() ? "none (no --input-dir)" : opts_.inputDir.c_str());
+    inputCtl_->onTabEntered(); // a first scan, for the log
+    inputCtl_->logMemory("at start-up"); // M2b-A2: where /proc/meminfo exists
+    drainInputLog();
     host_   = std::make_unique<AudioHost>(*audio_);
     if(!host_->open(opts_.bufferFrames, error))
         return false;
@@ -664,8 +715,13 @@ void App::shutDown() noexcept
     if(host_)
         host_->close();
     host_.reset();
-    // 2. The instrument.
+    // 2. The input controller (joins the loader thread), then the instrument; the
+    //    stage last (it frees the buffers it still holds; the render points at it).
+    if(inputCtl_)
+        drainInputLog();
+    inputCtl_.reset();
     audio_.reset();
+    stage_.reset();
     model_.reset();
     source_.reset();
     voice_.reset();
@@ -716,6 +772,12 @@ void App::fillSnapshot(double t)
 
     snap_.controllerConnected = input_.controllerConnected();
     copyString(snap_.controllerName, sizeof snap_.controllerName, input_.controllerName().c_str());
+
+    // M2b-A: the input.
+    inputCtl_->fill(snap_.input);
+    snap_.input.peak     = stage_->peak().take();
+    inputPeakSessionMax_ = std::max(inputPeakSessionMax_, snap_.input.peak);
+    statsInputPeak_      = std::max(statsInputPeak_, snap_.input.peak);
 
 }
 
@@ -776,6 +838,8 @@ void App::logStats(double wall, const char* label)
     st.dropped         = model_->commandsDropped();
     st.framesDrawn     = fps_.frames();
     st.keysSuppressed  = events_.takeKeysSuppressed();
+    st.inputSource     = inputCtl_->source() != InputSource::Off ? inputSourceName(inputCtl_->source()) : nullptr;
+    st.inputPeak       = statsInputPeak_;
     char buf[1200];
     formatStats(buf, sizeof buf, st);
     log_.line(logTime(), "%s%s", label, buf);
@@ -784,6 +848,7 @@ void App::logStats(double wall, const char* label)
     statsCpuMax_      = 0.0f;
     statsPeak_[0]     = 0.0f;
     statsPeak_[1]     = 0.0f;
+    statsInputPeak_   = 0.0f;
     statsCallbacks_   = cb;
     statsOverruns_    = ov;
     statsAudioFrames_ = fr;
@@ -945,7 +1010,7 @@ int App::run()
     std::uint64_t drainTarget = 0;
     double       lastPresent  = -1.0;
 
-    InputRouter router(*model_, quit_, selftest);
+    InputRouter router(*model_, quit_, selftest, inputCtl_.get());
     bool        running = true;
     while(running)
     {
@@ -1003,11 +1068,13 @@ int App::run()
                 maxEventLateness_          = std::max(maxEventLateness_, t - ev.timeSeconds);
                 std::printf("selftest: t=%.3f s (audio) %s %s (script %.3f s)\n", t, buttonName(ev.event.button),
                             ev.event.pressed ? "down" : "up", ev.timeSeconds);
-                model_->onButton(ev.event, t);
+                router.deliver(ev.event, t); // the model and the INPUT tab's panel (M2b-A)
             }
         }
 
         model_->tick(t);
+        inputCtl_->tick(t); // M2b-A: gain ramp, loader poll, buffers to free
+        drainInputLog();
 
         if(selftest)
         {
@@ -1162,6 +1229,23 @@ int App::finishSelftest(double wallSeconds, bool timedOut)
                 static_cast<unsigned long long>(model_->commandsDropped()),
                 static_cast<unsigned long long>(source_->commandsProcessed()));
 
+    // M2b-A: the input.
+    const float inPeak = std::max(inputPeakSessionMax_, stage_->peak().take());
+    allFinite          = allFinite && finite(inPeak);
+    {
+        const InputController& in = *inputCtl_;
+        std::printf("input: source %s, gain %.3f, folder %s, %zu file(s) listed, cursor %d, mode %s, state %s, loaded %s",
+                    inputSourceName(in.source()), static_cast<double>(in.gainNorm()),
+                    in.folder().empty() ? "(none)" : in.folder().c_str(), in.files().size(), in.cursor(),
+                    inputPlayModeName(in.playMode()), inputLoadStateName(in.state()),
+                    in.loaded() ? in.loadedInfo().name.c_str() : "(nothing)");
+        if(in.loaded())
+            std::printf(" (%.3f s at 48 kHz)", in.loadedInfo().seconds);
+        if(in.state() == InputLoadState::Failed)
+            std::printf(", last failure: %s", in.reason());
+        std::printf("; input peak max %.4f (after gain)\n", static_cast<double>(inPeak));
+    }
+
     // --- Checks ------------------------------------------------------------------
     const double n = opts_.selftestSeconds;
     char         buf[256];
@@ -1220,6 +1304,15 @@ int App::finishSelftest(double wallSeconds, bool timedOut)
             else
                 fail(buf);
         }
+    }
+    if(opts_.hasInputPeakMin)
+    {
+        std::snprintf(buf, sizeof buf, "input peak: expected above %.6f, actual %.6f", opts_.inputPeakMin,
+                      static_cast<double>(inPeak));
+        if(inPeak > opts_.inputPeakMin)
+            std::printf("selftest: ok: %s\n", buf);
+        else
+            fail(buf);
     }
     if(problems == 0)
         std::printf("selftest: PASSED\n");

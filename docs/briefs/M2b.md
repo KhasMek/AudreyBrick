@@ -176,3 +176,157 @@ Acceptance criteria for the review:
 Report back: findings ranked by severity with file and line; per acceptance criterion of
   the task "verified by running X", "verified by reading" or "not verified"; what you assumed.
 ```
+
+---
+
+# M2b-A2: file browser, crossfade between files, play modes, 10-minute cap
+
+Written 2026-11-18 after the human tried M2b-A on the Brick. It builds on the uncommitted or just-committed M2b-A code in `src/input/`. Read the header comments of `InputStage.h`, `InputController.h`, `InputView.h`, `InputFiles.h` and `InputTypes.h` first; they describe the current behaviour exactly. Everything in M2b-A that this brief does not change must stay as it is, including its tests.
+
+## What the human asked for
+
+1. Files up to **10 minutes** (was 5). Streaming from the card is a later feature, not this task.
+2. A **crossfade** when changing files, instead of fade out, gap, fade in.
+3. A file list that can be **scrolled without loading anything**; loading is a separate, deliberate press. Browsing blind (one name at a time, each step loading a file) is what the human dislikes.
+4. **Play modes** for the file: LOOP (as now) and ONCE (play to the end and stop).
+
+## Design (decided by the orchestrator; say so in your report if something cannot work as written)
+
+### Cap
+
+- `kInputMaxSeconds = 600`. Update every comment, log text and screen text that says 5 minutes.
+- Confirm by reading the code, and state in your report, the loader's **peak memory** for one load (decoded output plus what else?). A source file far longer than the cap must not cost more memory than a file exactly at the cap. Add a test if none proves this.
+- Log `MemAvailable` from `/proc/meminfo` (where the file exists; skip silently elsewhere) to the diagnostic log at start-up and after each finished load, on the UI thread. One line each.
+
+### Stage: crossfade between files
+
+- When a new non-empty buffer is picked up while another is audible (source FILE, level > 0), the stage reads **both** for `kInputFileCrossfadeFrames` (new tuning constant in `InputTypes.h`, 4800 = 100 ms): the old one continues from where it is (still looping or ending by its mode), the new one starts at sample 0. **Equal-power** weights (the two files are unrelated material), from a table allocated in `prepare()`; no trigonometry per sample in `pull()`. At the end the old buffer is retired as now.
+- A buffer that arrives while a crossfade is running waits in the pending slot until the crossfade ends (the existing rule: nothing is picked up while switching).
+- If nothing is audible (level 0, or no current buffer, or the current one has ended in ONCE mode) the new buffer simply starts with the existing 10 ms fade-in.
+- An **empty** buffer still means "nothing": the current one fades out over 10 ms and is retired.
+- The source fade (OFF/FILE) multiplies on top of the crossfade as it does on top of playback now.
+- The retire queue rule is unchanged (if full, the switch waits). Decide and document what "waits" means with two buffers held; the audio thread must never free.
+- With the source OFF and nothing fading, `pull()` still returns nullptr and the app's output stays bit-identical to having no input stage. With a file ended in ONCE mode and nothing fading, it also returns nullptr.
+
+### Stage: play modes
+
+- `enum class InputPlayMode { Loop, Once }`, an atomic set from the UI thread. Default Loop.
+- **Loop:** exactly the current behaviour, including the loop-point crossfade.
+- **Once:** the file plays from sample 0 to its last sample with no loop crossfade, with a 10 ms fade-out over its last `kInputFadeFrames` samples (shorter files: half the file), then stops. A status atomic `ended()` becomes true.
+- **Restart:** a UI-thread call `restart()` (an atomic counter the audio thread compares). On seeing it: if audible, 10 ms fade-out, then position 0 and fade in; if ended or silent, start at 0 with the fade-in. `ended()` clears.
+- Changing Once -> Loop while ended restarts playback (as `restart()`). Changing Loop -> Once while playing: playback continues to the end of the file and stops there; if the position is already inside the loop-crossfade tail region, handle it without a click and document how.
+- A newly arrived buffer always starts at 0 and plays, in either mode.
+- OFF -> FILE with a loaded buffer starts from 0, as now, in either mode.
+
+### Controller: browsing
+
+- A **cursor** (highlighted file) separate from the loaded file.
+- **X + up / down:** move the cursor one file; wraps at the ends; repeats while held (after `tuning::kHoldDelaySeconds`, then a new constant, about 8 steps per second). Loads nothing.
+- **X + right:** load the file under the cursor. If it is already the loaded file, `restart()` it instead (no reload).
+- **X + left:** toggle the play mode, LOOP <-> ONCE.
+- Plain left/right (source), up/down (gain) and Y + up/down (gain reset) are unchanged. X + up/down with the source not FILE does nothing, as do X + left/right.
+- **No automatic load.** Selecting FILE with nothing loaded plays nothing and the screen says how to load (`X + RIGHT: LOAD`). Selecting FILE with a file already loaded and still listed plays it from the start, as now. (This removes M2b-A's "first file loads when FILE is selected". Update its tests.)
+- While a load is pending, the loaded file keeps playing; X + right on another file replaces the pending request (the loader already supports superseding; keep that behaviour and its tests).
+- Rescan rules stay (on selecting FILE, on entering the tab). After a rescan the cursor stays on the same name if it is still listed, else it clamps to the nearest valid index. If the loaded file has disappeared from the list it keeps playing and is still shown as playing.
+- The play mode is not remembered between launches (nothing is yet).
+
+### Screen (INPUT tab, source FILE)
+
+- A list of up to five file names, a window that scrolls with the cursor. The cursor row is highlighted. The loaded file's row carries a mark that reads as "this one plays" without colour alone (for example a leading `>` or the word PLAY). Position text `3 OF 12`. If the list was cut at `kInputMaxFiles`, say so as now.
+- One line for the loaded file: name (if not visible in the window it must still be readable here), length, `CUT TO 10 MIN` if cut, the play mode (`LOOP` / `ONCE`), and `ENDED` when it has ended in ONCE mode.
+- A slim progress bar with elapsed and total time (`1:23 / 4:05`) for the loaded file, from the stage's position atomics.
+- One status line, only when needed: `LOADING <name>` or `CANNOT LOAD: <reason>`.
+- Key hints on the tab for the four X bindings, in the same style as the other tabs' labels (key caps from the existing whitelist).
+- With the source OFF the tab looks as it does now.
+- All text must pass the existing layout tests (no overlap, contrast, key-cap whitelist). Names are cut to fit their row with the existing display-name rule. `UiInputView` stays plain fixed-size data (for example five fixed name slots).
+- Produce BMP screenshots through the existing screenshot path for: list with a file playing in LOOP; ONCE and ended; loading another file while one plays; a failed load; 12 files with the cursor in the middle; no files. Put them in the scratchpad or the build directory, not the repo, and give the paths in your report.
+
+### Not in this task
+
+Streaming, live input, recording, remembering settings, any change to the engine or to other tabs. `docs/STATUS.md` (the orchestrator updates it).
+
+## Rules
+
+- Real-time rules as ever: `pull()` never allocates, frees, locks, logs or does I/O. The allocation test (`tests/input/input_alloc_test.cpp`) must cover the crossfade, ONCE ending, restart and mode changes.
+- Do not change anything under `third_party/`. Do not change git state (no add, commit, stash, checkout, reset).
+- No firmware files in the repo or the package.
+- Never open the Mac's real audio device; use `SDL_AUDIODRIVER=dummy`.
+
+## Tests required (at least)
+
+- Crossfade: sample-exact against a reference computed in the test from the two files and the weight table; equal-power property (sum of squared weights = 1 within float tolerance); no step larger than a stated bound for two full-scale DC files of opposite sign; old buffer retired exactly once; third buffer during a crossfade waits and then crossfades; empty buffer during a crossfade.
+- Once: output equals the file then silence/nullptr; the end fade; `ended()`; restart from ended and from mid-file (click bound); Once -> Loop when ended; Loop -> Once at several positions including inside the tail region.
+- Off bit-identical and file-loop sample-exact tests from M2b-A still pass unchanged where their behaviour is unchanged.
+- Controller: cursor moves, wrap, repeat timing, no load on cursor movement, X + right loads / restarts, X + left toggles, no auto-load, rescan keeps the cursor by name, superseded load.
+- Stress test (threads): extend the existing one with mode toggles and restarts; run under ThreadSanitizer.
+- Cap: a file of 10 min + 1 s is cut to exactly 10 min of frames at 48 kHz.
+- Layout tests for every new screen state.
+
+## Also update
+
+`packaging/README.txt`, `docs/INPUT_RUN_BRICK.md` (new steps: browse with X + up/down, load with X + right, mode with X + left, crossfade, a 10-minute file; keep it a short numbered checklist for the human), `docs/CONTROL_SCHEME_PROPOSAL.md` section 000, the script tests under `tests/platform/` if they rely on auto-load, and the header comments of every file whose behaviour changed.
+
+## Verification before you report (give the numbers)
+
+1. macOS Release: configure, build, `ctest`.
+2. macOS ASan + UBSan build and `ctest`; TSan build and `ctest`.
+3. The no-SDL build and `ctest`.
+4. `scripts/verify_vendor.sh` and the M1 reference check (`scripts/make_reference.sh` or as STATUS.md describes).
+5. Linux: the Debian 13 container builds (gcc and clang) and tests, as in earlier tasks.
+6. `scripts/make_port.sh ~/.cache/audreybrick-device/knulli-scarab-20260511.sqfs` and its PASS/FAIL counts.
+
+Do not leave background shells or processes running when you finish. Report: what you built, every deviation from this brief and why, the peak-memory answer, measured cost of `pull()` during a crossfade on the Mac, test counts for each build, screenshot paths, and anything you are unsure about.
+
+---
+
+# M2b-A3: file choice by holding X, with a pop-up list
+
+Written 2026-11-18. The human saw M2b-A2's in-tab list and found it far too small. This task replaces the **browsing UI and its gestures only**. The stage (crossfade, LOOP / ONCE, restart), the loader, the 10-minute cap, the memory guard and everything else from M2b-A2 stay as they are.
+
+## Behaviour (the human's design, details by the orchestrator)
+
+### The tab
+
+With the source FILE the INPUT tab goes back to M2b-A's layout: full-size SOURCE and GAIN rows and a FILE row. No in-tab list, no hint row. The FILE row shows, at the sizes M2b-A used or larger:
+- `FILE 2 OF 6` (the cursor's position),
+- the file name: the cursor's file while X is held, otherwise the loaded file (or `NOTHING LOADED` and `HOLD X: CHOOSE FILE` when nothing is loaded and files exist),
+- for the loaded file: the progress bar, `1:23 / 4:05`, `LOOP` or `ONCE`, `ENDED`, and `CUT TO 10 MIN` / `FILE ENDS EARLY` when they apply,
+- the small status lines as in M2b-A when needed (`LOADING <name>`, `CANNOT LOAD: <reason>`, and `PLAYING: <name>` whenever the name shown is not the loaded file).
+
+### Holding X (INPUT tab, source FILE)
+
+- **Pressing X** puts the cursor on the loaded file (if it is in the list; else it stays where it was, or the first file).
+- **X + left / right:** the cursor to the previous / next file, wrapping, one step per press (as in M2b-A). Nothing loads.
+- **X + up / down:** the first press opens the **pop-up list** without moving the cursor. While it is open, up / down move the cursor (wrapping, repeating while held at `kInputCursorRepeatHz` after `tuning::kHoldDelaySeconds`), and left / right still step it too.
+- **Releasing X:** the pop-up closes. If a d-pad direction was pressed during this hold and the cursor is not on the loaded file, that file loads (crossfade as built). If the cursor is on the loaded file: nothing, except that a file that has ENDED in ONCE mode is played again. A hold with no d-pad press never loads or restarts anything.
+- **X + Y:** toggle LOOP / ONCE. **X + Select:** play the loaded file again from its start (`restart()`). Neither counts as a d-pad press. Check how ControlModel treats Y and Select while X is held on this tab and make sure neither does anything else there (for example no parameter reset); say what you found.
+- **L1 / R1 while X is held, or `releaseAll()`** (focus loss, controller removed): the choice is cancelled; the pop-up closes, nothing loads, and the d-pad is inert until released as now.
+- With the source OFF, X does nothing on this tab, as before.
+- Selecting FILE still loads nothing by itself.
+- Plain left / right (source), up / down (gain) and Y + up / down (gain reset) are unchanged.
+
+### The pop-up
+
+- A panel drawn over the middle of the screen (it may cover the tab's rows and the parameter grid; the tab bar, the feedback bar, the switch box and the meters stay visible). A clear border and an opaque background.
+- File names at **twice** the text size of M2b-A2's list or larger; as many rows as fit at that size (about eight); the window scrolls with the cursor. The cursor row is highlighted; the loaded file is marked `PLAY` (not by colour alone).
+- A header: `FILES 3 OF 12` and the mode (`LOOP` / `ONCE`). A footer with the hints, using key caps from the existing whitelist: release X to load, Y mode, SELECT play again.
+- `UiInputView` stays plain fixed-size data.
+- The layout tests need a notion of an overlay layer: items in the overlay may cover the base layer, but must not overlap each other, must stay inside the panel, and must meet the contrast rule against the panel's background. Do not weaken the checks for the base layer.
+
+## Remove
+
+The M2b-A2 in-tab list, its compact SOURCE / GAIN rows, the hint row, and the X + up/down, X + right and X + left bindings as they were. Update or replace their tests.
+
+## Tests required (at least)
+
+Controller: cursor starts on the loaded file; left/right step; up/down open then move; repeat timing; release loads only after a d-pad press and only when the cursor differs; release on an ended ONCE file restarts; a hold with no d-pad press does nothing; X + Y and X + Select; cancel on tab change and on `releaseAll()`; the memory guard still holds (a release during a crossfade waits and then loads). Layout: every pop-up state (few files, 12 files with the cursor in the middle and the playing file out of the window, a long name, nothing loaded, loading while one plays, ONCE ended) plus the tab's states without the pop-up. The script tests under `tests/platform/` and `docker/knulli_rootfs_tests.sh` must load a file the new way.
+
+Screenshots (BMP, in the scratchpad, paths in the report): the tab with a file playing; X held with left/right only (no pop-up); the pop-up with 4 files; the pop-up with 12 files; the pop-up in ONCE ended; a failed load.
+
+## Also update
+
+`packaging/README.txt`, `docs/INPUT_RUN_BRICK.md` (keep it a short numbered checklist; keep its Notes), `docs/CONTROL_SCHEME_PROPOSAL.md` section 000, header comments.
+
+## Rules and verification
+
+As M2b-A2: no git state changes, nothing under `third_party/`, no `docs/STATUS.md` edits, `SDL_AUDIODRIVER=dummy`, no background processes left. Run the whole verification list (macOS Release, ASan + UBSan, TSan, no-SDL, `verify_vendor.sh`, the reference check, `scripts/build_linux_arm64.sh`, `scripts/make_port.sh` with the Scarab image) and report the numbers, the deviations and what you are unsure about.

@@ -21,7 +21,9 @@
 #        audreybrick/licenses/                       every file of licenses/, plus
 #                                                    Audrey II's CREDITS.md
 #        audreybrick/THIRD_PARTY.md, LICENSE, README.txt (packaging/README.txt)
-#        audreybrick/data/                           logs (later presets and inputs)
+#        audreybrick/data/                           logs (later presets)
+#        audreybrick/data/input/                     empty: WAV files for the INPUT tab (M2b-A;
+#                                                    the launcher also creates it if missing)
 #    and <out>/AudreyBrick-<version>.zip of that folder, plus
 #    <out>/AudreyBrick-<version>.sha256 (the two binaries and the zip). Prints the
 #    listing and the hashes.
@@ -89,7 +91,7 @@ rm -f "${OUT:?}"/AudreyBrick-*.zip "${OUT:?}"/AudreyBrick-*.sha256
 
 PKG="$OUT/AudreyBrick"
 APP="$PKG/audreybrick"
-mkdir -p "$APP/libs.aarch64" "$APP/licenses" "$APP/data"
+mkdir -p "$APP/libs.aarch64" "$APP/licenses" "$APP/data/input"
 cp "$REPO_ROOT/packaging/AudreyBrick.sh" "$PKG/AudreyBrick.sh"
 cp "$FROM/port/audreybrick" "$APP/audreybrick"
 cp "$FROM/port/libs.aarch64/libaudrey_lgpl.so" "$APP/libs.aarch64/libaudrey_lgpl.so"

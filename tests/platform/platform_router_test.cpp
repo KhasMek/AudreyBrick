@@ -13,20 +13,31 @@
 //   - Select + Start does not quit, and Select reaches the model (fine);
 //   - in self-test mode real input neither reaches the model nor quits (Escape
 //     still quits);
-//   - with the A/B and X/Y swaps on, Menu + Start still quits.
+//   - with the A/B and X/Y swaps on, Menu + Start still quits;
+//   - M2b-A: with the input panel attached, the d-pad on the INPUT tab reaches
+//     the panel (source, gain) and not the model's knobs; on other tabs it does
+//     not reach the panel; entering INPUT rescans; ReleaseAll stops a gain ramp;
+//     deliver() (the self-test's path) drives the INPUT tab the same way;
+//   - M2b-A3: X + Y, X + Select and X + d-pad on INPUT reach the panel and make
+//     the model send no command.
 // No SDL_Init: InputMap::handle needs none for these events.
 
 #include <SDL.h>
 
+#include <cmath>
 #include <initializer_list>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "app/Buttons.h"
 #include "app/ControlModel.h"
 #include "app/InputRouter.h"
 #include "app/MenuQuit.h"
 #include "control/ButtonControlSource.h"
+#include "input/InputController.h"
+#include "input/InputStage.h"
 #include "platform/InputMap.h"
 #include "platform_test_common.h"
 
@@ -161,6 +172,93 @@ int main()
     {
         Rig r;
         check(r.feed(escape()) == R::Quit, "Escape: Quit (InputMap's quit passes through the router)");
+    }
+
+    // --- M2b-A: the INPUT tab ----------------------------------------------------------------------
+    static_assert(noexcept(std::declval<InputRouter&>().route(InputMap::Action::None, ButtonEvent{}, 0.0)),
+                  "route() is noexcept: the input panel catches at its own boundary");
+    static_assert(noexcept(std::declval<InputRouter&>().deliver(ButtonEvent{}, 0.0)), "deliver() is noexcept");
+    {
+        InputMap                             input;
+        auto                                 src   = std::make_unique<ButtonControlSource>();
+        auto                                 model = std::make_unique<ControlModel>(*src);
+        MenuQuit                             quit;
+        InputStage                           stage;
+        stage.prepare(256);
+        InputController                      ctl(stage, ""); // no folder
+        InputRouter                          router(*model, quit, false, &ctl);
+        double                               t = 0.0;
+        auto feed = [&](const SDL_Event& e) {
+            ButtonEvent be{};
+            t += 0.01;
+            return router.route(input.handle(e, be), be, t);
+        };
+        const int kRight = SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+        const int kUp    = SDL_CONTROLLER_BUTTON_DPAD_UP;
+        // On LOOP the d-pad moves frequency, not the panel.
+        feed(down(kRight));
+        feed(up(kRight));
+        check(ctl.source() == InputSource::Off, "LOOP: d-pad right does not reach the input panel");
+        std::vector<std::string> log;
+        ctl.takeLog(log);
+        feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)); // L1: LOOP -> INPUT
+        feed(up(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
+        ctl.takeLog(log);
+        bool scanned = false;
+        for(const std::string& l : log)
+            scanned = scanned || l.find("input: scan of") != std::string::npos;
+        check(model->currentTab() == Tab::Input && scanned, "L1 from LOOP: INPUT, and entering it scans the folder");
+        const std::uint32_t heldBefore = model->heldWord();
+        feed(down(kRight));
+        feed(up(kRight));
+        check(ctl.source() == InputSource::File, "INPUT: d-pad right selects FILE");
+        feed(down(kUp));
+        ctl.tick(t); // the app ticks the panel every frame
+        check(std::fabs(ctl.gainNorm() - (0.5f + 1.0f / 128.0f)) < 1e-6f && model->heldWord() == heldBefore,
+              "INPUT: d-pad up steps the input gain; the model binds nothing there (held word unchanged)");
+        t += 1.0;
+        ctl.tick(t);
+        const float ramped = ctl.gainNorm();
+        ButtonEvent none{};
+        router.route(InputMap::Action::ReleaseAll, none, t);
+        t += 1.0;
+        ctl.tick(t);
+        check(ramped > 0.6f && ctl.gainNorm() == ramped, "a held d-pad ramps the gain; ReleaseAll stops it");
+        // M2b-A3: X + Y, X + Select and X + d-pad on INPUT reach the panel (mode,
+        // play again, the cursor) and send the model no command (no reset, no
+        // step: INPUT binds no knob).
+        {
+            const std::uint64_t sent = model->commandsSent();
+            const InputPlayMode before = ctl.playMode();
+            router.deliver({Button::X, true}, t);
+            router.deliver({Button::Y, true}, t);
+            router.deliver({Button::DpadUp, true}, t); // Y + up with X held: the pop-up, not a gain reset
+            router.deliver({Button::DpadUp, false}, t);
+            router.deliver({Button::Y, false}, t);
+            router.deliver({Button::Select, true}, t);
+            router.deliver({Button::DpadRight, true}, t);
+            router.deliver({Button::DpadRight, false}, t);
+            router.deliver({Button::Select, false}, t);
+            const bool popup = ctl.popupOpen();
+            router.deliver({Button::X, false}, t);
+            check(model->commandsSent() == sent && ctl.playMode() != before && popup && !ctl.popupOpen(),
+                  "INPUT: X + Y toggles the play mode, X + up opens the pop-up, X + Select and X + right reach the "
+                  "panel; the model sends no command (no reset, no step)");
+            router.deliver({Button::X, true}, t);
+            router.deliver({Button::Y, true}, t); // back to LOOP
+            router.deliver({Button::Y, false}, t);
+            router.deliver({Button::X, false}, t);
+        }
+        // deliver(): the self-test's path.
+        router.deliver({Button::DpadLeft, true}, t);
+        router.deliver({Button::DpadLeft, false}, t);
+        check(ctl.source() == InputSource::Off, "deliver(): d-pad left on INPUT selects OFF");
+        router.deliver({Button::R1, true}, t); // INPUT -> LOOP
+        router.deliver({Button::R1, false}, t);
+        router.deliver({Button::DpadRight, true}, t);
+        check(model->currentTab() == Tab::Loop && ctl.source() == InputSource::Off,
+              "R1 from INPUT wraps to LOOP; the d-pad there does not reach the panel");
+        stage.setSource(InputSource::Off);
     }
     return ptest::finish();
 }

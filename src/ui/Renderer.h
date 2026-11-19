@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 //
 // ui::Renderer: draws a UiSnapshot with SDL_Renderer primitives (docs/briefs/M2.md,
-// M2-C). It owns the glyph atlas texture and the output meters' ballistics, builds
+// M2-C). It owns the glyph atlas texture and the output and input meters' ballistics, builds
 // the frame's DrawList with buildLayout() (ui/Layout.h) and draws it:
 // rectangles with SDL_RenderFillRect(s), triangles with SDL_RenderGeometry
 // (SDL 2.0.18) or SDL_RenderDrawLines for outlines, text by copying 8 x 8 atlas
@@ -91,6 +91,7 @@ class Renderer
     unsigned      atlasFailures_ = 0;
     char          atlasError_[160] = {};
     PeakMeter     meter_[2];
+    PeakMeter     inMeter_; // M2b-A: the input meter
     MeterView     meterView_;
     DrawList      list_;
 };

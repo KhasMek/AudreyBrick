@@ -111,6 +111,35 @@ if(AB_HAVE_SDL)
         FAIL_REGULAR_EXPRESSION "ThreadSanitizer|AddressSanitizer|LeakSanitizer|runtime error"
         TIMEOUT 90)
 
+    # M2b-A, acceptance criterion 7: the self-test drives the INPUT tab. The
+    # fixture writes tone.wav (2 s, 220 Hz, 44.1 kHz stereo 16-bit, 0.25 per
+    # channel: its L + R mix peaks at 0.5) into a folder given with --input-dir.
+    #   platform_selftest_input: input_file.txt goes to INPUT and selects FILE,
+    #     touching nothing else (feedback stays at its minimum, -60 dB). The tone
+    #     must reach the input meter (above 0.4 after unity gain) and the output
+    #     (each channel's peak above 0.05; measured 0.138 on the Mac): the input
+    #     is audible through the chain even at minimum feedback.
+    #   platform_selftest_input_off: input_off.txt goes to INPUT only (the source
+    #     stays OFF): the output stays silent (each channel below 0.001; measured
+    #     under 0.00005, the -90 dBFS noise floor) and the input meter at 0.
+    add_test(NAME platform_input_tone_fixture
+             COMMAND input_make_tone ${CMAKE_CURRENT_BINARY_DIR}/selftest_input)
+    set_tests_properties(platform_input_tone_fixture PROPERTIES FIXTURES_SETUP ab_input_tone)
+    add_test(NAME platform_selftest_input
+             COMMAND audreybrick --selftest ${CMAKE_CURRENT_SOURCE_DIR}/input_file.txt --seconds 3
+                     --input-dir ${CMAKE_CURRENT_BINARY_DIR}/selftest_input
+                     --expect-knob FeedbackGain 0.0 0.0
+                     --expect-input-peak-min 0.4 --expect-peak-min 0.05 --expect-peak-max 1.0)
+    add_test(NAME platform_selftest_input_off
+             COMMAND audreybrick --selftest ${CMAKE_CURRENT_SOURCE_DIR}/input_off.txt --seconds 3
+                     --input-dir ${CMAKE_CURRENT_BINARY_DIR}/selftest_input
+                     --expect-knob FeedbackGain 0.0 0.0 --expect-peak-max 0.001)
+    set_tests_properties(platform_selftest_input platform_selftest_input_off PROPERTIES
+        FIXTURES_REQUIRED ab_input_tone
+        ENVIRONMENT "SDL_AUDIODRIVER=dummy;SDL_VIDEODRIVER=dummy;${AB_PLATFORM_ENV}"
+        FAIL_REGULAR_EXPRESSION "ThreadSanitizer|AddressSanitizer|LeakSanitizer|runtime error|selftest: FAIL"
+        TIMEOUT 60)
+
     # M3-B: --version, --swap-ab, --restore-on-exit and the CPU frequency lines,
     # with a fake sysfs tree (AUDREY_SYSFS_CPU). See selftest_sysfs_check.cmake.
     add_test(NAME platform_selftest_sysfs

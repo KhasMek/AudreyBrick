@@ -19,6 +19,10 @@
 #     order even when the clock is not set) and the oldest numbered pairs beyond 7
 #     are deleted. Only files with exactly those name patterns in its own data/
 #     folder are ever renamed or deleted;
+#   - creates audreybrick/data/input (the INPUT tab's FILE source lists the WAV
+#     files in it; M2b-A) with a plain mkdir -p, notes in stdout.log how many WAV
+#     files it holds, and passes its path to the app (--input-dir). A folder that
+#     cannot be created is not fatal: the app then shows no files;
 #   - keeps the device awake while the app runs (see AUDREY_KEEP_AWAKE);
 #   - makes the A, B, X and Y buttons match their labels (see AUDREY_SWAP_AB and
 #     AUDREY_SWAP_XY);
@@ -46,7 +50,8 @@
 # The only files this script ever deletes or writes, other than its own log files
 # in data/: the keep-awake file it created, and, only with AUDREY_GOVERNOR set, the
 # scaling_governor files of the CPU frequency policies whose governor it changed
-# (written back only while they still hold the governor this script set).
+# (written back only while they still hold the governor this script set). It also
+# creates the folder data/input if it is missing, and never touches what is in it.
 #
 # Signals: before the app has started, TERM, INT and HUP only set a flag; the
 # script checks it at safe points and then stops through its normal exit (which
@@ -278,6 +283,20 @@ main() {
     note "folder $APP_DIR"
     [ -n "$fallback_reason" ] && problem "$fallback_reason; logs for this run are in $DATA (lost on reboot)"
     stop_point "after setting up the logs"
+
+    # --- Input folder (M2b-A): data/input next to the logs' usual place ------------------------
+    # Always $APP_DIR/data/input (also when the logs had to go to /tmp). No command
+    # substitution: the WAV files are counted with a glob. Not fatal if it fails.
+    INPUT_DIR="$APP_DIR/data/input"
+    if mkdir -p "$INPUT_DIR" 2>/dev/null && [ -d "$INPUT_DIR" ]; then
+        n_wav=0
+        # Counted as the app lists them: regular files only, no links; the glob
+        # already skips hidden names (those starting with ".", also "._x.wav").
+        for f in "$INPUT_DIR"/*.[wW][aA][vV]; do [ -f "$f" ] && [ ! -L "$f" ] && n_wav=$((n_wav + 1)); done
+        note "input folder: $INPUT_DIR ($n_wav WAV file(s); the INPUT tab's FILE source lists them)"
+    else
+        note "input folder: could not create $INPUT_DIR; the INPUT tab will show no files (not fatal)"
+    fi
 
     # --- Checks ---------------------------------------------------------------------------
     if [ ! -f "$BIN" ]; then
@@ -530,7 +549,7 @@ main() {
     # If this script is killed with SIGKILL its EXIT trap does not run; the app then
     # removes the pause file itself (--remove-on-exit) and restores the governors
     # (--restore-on-exit <file> <found> <set>, one per policy).
-    args=(--fullscreen --exit-with-parent --buffer "$buffer" --log "$LOG")
+    args=(--fullscreen --exit-with-parent --buffer "$buffer" --log "$LOG" --input-dir "$INPUT_DIR")
     [ "$swap_ab" -eq 1 ] && args+=(--swap-ab)
     [ "$swap_xy" -eq 1 ] && args+=(--swap-xy)
     [ "$PAUSE_MADE" -eq 1 ] && args+=(--remove-on-exit "$PAUSE_FILE")

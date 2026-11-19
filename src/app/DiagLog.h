@@ -148,14 +148,18 @@ struct PeriodicStats
     std::uint64_t dropped         = 0;    // UI commands dropped since start
     std::uint64_t framesDrawn     = 0;    // UI frames presented in the window
     std::uint64_t keysSuppressed  = 0;    // unmapped-key lines suppressed in the window
+    // M2b-A: the input source while it is not OFF ("FILE"), or nullptr/empty; and
+    // the largest input peak (after gain) in the window.
+    const char*   inputSource     = nullptr;
+    float         inputPeak       = 0.0f;
 };
 
 // "stats: window 10.0 s, callback load 3.4 % (max 5.2 %, p50 <10 %, p95 <10 %,
 //  histogram 1870/5/0/0/0/0), callbacks 1875, overruns 0, largest 256 frames,
 //  audio clock 1.000x real time, peak L 0.123 R 0.130, dropped 0, frames 600 (60.0 fps),
-//  cpu freq policy0 1416 MHz (window 408..1416)"
+//  cpu freq policy0 1416 MHz (window 408..1416), input FILE peak 0.250"
 // The percentile and histogram part only with haveHistogram; the cpu freq part only
-// with a non-empty cpuFreq. "callback load" is the time spent in the audio callback
+// with a non-empty cpuFreq; the input part (M2b-A) only with a non-empty inputSource. "callback load" is the time spent in the audio callback
 // as a share of the buffer's duration (the screen calls it CPU).
 std::size_t formatStats(char* out, std::size_t size, const PeriodicStats& s) noexcept;
 

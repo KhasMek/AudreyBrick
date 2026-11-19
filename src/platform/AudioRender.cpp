@@ -25,6 +25,8 @@ void AudioRender::prepare(std::size_t frames)
     capacity_ = std::max(frames, kMinCapacity);
     left_     = std::make_unique<float[]>(capacity_);
     right_    = std::make_unique<float[]>(capacity_);
+    if(input_ != nullptr)
+        input_->prepare(capacity_);
 }
 
 void AudioRender::render(float* out, std::size_t frames) noexcept
@@ -53,7 +55,8 @@ void AudioRender::render(float* out, std::size_t frames) noexcept
         while(done < frames)
         {
             const std::size_t n = std::min(frames - done, capacity_);
-            voice_.process(controls_, nullptr, left_.get(), right_.get(), n);
+            const float*      in = input_ != nullptr ? input_->pull(n) : nullptr;
+            voice_.process(controls_, in, left_.get(), right_.get(), n);
             float* o = out + 2 * done;
             for(std::size_t i = 0; i < n; ++i)
             {

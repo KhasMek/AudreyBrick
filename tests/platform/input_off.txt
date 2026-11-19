@@ -1,0 +1,4 @@
+# M2b-A self-test (acceptance criterion 7), the same run with the source left
+# OFF: go to the INPUT tab (which scans the input folder) and touch nothing else.
+0.10  L1        down
+0.15  L1        up

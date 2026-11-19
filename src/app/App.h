@@ -26,8 +26,9 @@
 //   - Script times and the model's clock are on the audio timeline (frames
 //     rendered / 48000). Each scripted event is delivered on the UI thread through
 //     ControlModel (and from there the command queue and the held word to the
-//     audio thread) at the first loop iteration at which that much audio has been
-//     rendered, stamped with that time. The final values therefore do not depend
+//     audio thread) and, since M2b-A, the INPUT tab's panel (InputRouter::deliver)
+//     at the first loop iteration at which that much audio has been rendered,
+//     stamped with that time. The final values therefore do not depend
 //     on whether the driver keeps real-time pace (SDL's dummy driver does not).
 //   - The UI loop polls about every millisecond (presenting at most 60 times a
 //     second, without vsync) so delivery lags the script by at most about one
@@ -101,6 +102,23 @@
 //     unmapped keys, focus changes, a statistics line every 10 seconds and the
 //     reason for exit. A log that cannot be opened is reported once on stderr and
 //     the app runs without it.
+//
+// Audio input (docs/briefs/M2b.md, M2b-A):
+//   - --input-dir <dir>: the folder the FILE source lists (the launcher passes
+//     audreybrick/data/input). Missing, empty or unreadable is not fatal: the
+//     INPUT tab says so. Without the option there is no folder.
+//   - The InputStage is attached to the AudioRender before the device opens (and
+//     prepared with it); the InputController (the INPUT tab's model) gets every
+//     button event through InputRouter::deliver(), and in self-test mode the
+//     scripted events too, so a script can drive the INPUT tab. Its tick() runs
+//     every loop iteration after the model's; its log lines go to the diagnostic
+//     log. The source is OFF at every start. M2b-A2: MemAvailable (from
+//     /proc/meminfo, where it exists) is logged at start-up and after each load.
+//   - Shutdown: the audio device is closed first, then the controller (which
+//     joins the loader thread), then the render and the stage (which frees the
+//     buffers it still holds).
+//   - Self-test: the report prints the input state; --expect-input-peak-min <v>
+//     checks that the input meter (after gain) went above v during the run.
 
 #pragma once
 
@@ -124,6 +142,8 @@
 #include "control/ButtonControlSource.h"
 #include "core/AudreyVoice.h"
 #include "core/ControlSource.h"
+#include "input/InputController.h"
+#include "input/InputStage.h"
 #include "platform/AudioHost.h"
 #include "platform/AudioRender.h"
 #include "platform/InputMap.h"
@@ -154,6 +174,7 @@ struct AppOptions
     bool        swapAB    = false;   // --swap-ab: controller A and B swapped (M3-B)
     bool        swapXY    = false;   // --swap-xy: controller X and Y swapped (M3-B)
     bool        version   = false;   // --version: print the version and exit (M3-B)
+    std::string inputDir;            // --input-dir <dir> (M2b-A): the FILE source's folder; empty = none
     std::string selftestScript;      // --selftest; empty = normal mode
     double      selftestSeconds = 0; // --seconds (required with --selftest), seconds of audio
 
@@ -163,6 +184,8 @@ struct AppOptions
     double                       peakMin    = 0.0; // --expect-peak-min: each channel's peak above this
     bool                         hasPeakMax = false;
     double                       peakMax    = 0.0; // --expect-peak-max: each channel's peak below this
+    bool                         hasInputPeakMin = false;
+    double                       inputPeakMin    = 0.0; // --expect-input-peak-min (M2b-A): the input meter went above this
 
     bool selftest() const noexcept { return !selftestScript.empty(); }
 };
@@ -211,6 +234,7 @@ class App
     void   logAtlasState();
     void   exitActions(); // --remove-on-exit and --restore-on-exit, once per run
     void   logGovernors(const char* when);
+    void   drainInputLog(); // M2b-A: the input controller's lines into the diagnostic log
     // A stop signal during start-up: true (with `error` set) if one has arrived.
     bool   stopAt(const char* stage, std::string& error);
     // Leaves through the normal shutdown with the exit actions; returns the exit code.
@@ -236,8 +260,11 @@ class App
     std::unique_ptr<AudreyVoice>         voice_;
     std::unique_ptr<ButtonControlSource> source_;
     std::unique_ptr<ControlModel>        model_;
+    std::unique_ptr<InputStage>          stage_;    // M2b-A: the input (outlives audio_)
     std::unique_ptr<AudioRender>         audio_;
     std::unique_ptr<AudioHost>           host_;
+    std::unique_ptr<InputController>     inputCtl_; // M2b-A: the INPUT tab's model and the loader thread
+    std::vector<std::string>             inputLog_; // its log lines, drained every iteration
     InputMap                             input_;
 
     // Self-test.
@@ -275,6 +302,8 @@ class App
     float      cpuSessionMax_          = 0.0f;
     float      cpuMaxAfterFirstSecond_ = 0.0f; // self-test report: excludes start-up
     float      peakSessionMax_[2]      = {0.0f, 0.0f};
+    float      inputPeakSessionMax_    = 0.0f; // M2b-A
+    float      statsInputPeak_         = 0.0f; // M2b-A: input peak in the statistics window
 };
 
 } // namespace audreybrick

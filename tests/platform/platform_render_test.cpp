@@ -7,6 +7,12 @@
 // output equals AudreyVoice::process driven directly with an identical control
 // rig, bit for bit, over 5 s of tests/platform/rise.txt.
 //
+// M2b-A, acceptance criterion 1: the same comparison with an InputStage attached
+// and its source OFF (a buffer handed over, a gain of +6 dB set, the gain moved
+// during the run): bit-identical to the voice driven with nullptr, for every
+// buffer size above. And with the source switched to FILE the output does change
+// (the comparison would notice).
+//
 // Also: peaks and the CPU load with a fake clock, silence before prepare(), and
 // (informational) whether enabling flush-to-zero changes any sample over 20 s of
 // the same script. The flush-to-zero render runs on its own thread, because the
@@ -22,6 +28,7 @@
 #include <thread>
 #include <vector>
 
+#include "input/InputStage.h"
 #include "platform/AudioRender.h"
 #include "platform/Denormals.h"
 #include "platform_test_common.h"
@@ -46,9 +53,23 @@ bool sameBits(float a, float b)
 void compareBufferSize(const std::vector<TimedButtonEvent>& ev, std::size_t bufferFrames, std::size_t prepareFrames,
                        double seconds)
 {
-    ptest::Rig  a, b;
+    ptest::Rig  a, b, c;
     AudioRender render(*a.voice, *a.src, AudioRender::FlushToZero::LeaveAlone);
     render.prepare(prepareFrames);
+    // M2b-A: with the input stage attached, source OFF, a file handed over.
+    InputStage  stage;
+    AudioRender withInput(*c.voice, *c.src, AudioRender::FlushToZero::LeaveAlone);
+    withInput.attachInput(&stage);
+    withInput.prepare(prepareFrames);
+    {
+        auto buf = std::make_unique<InputBuffer>();
+        buf->samples.assign(48000, 0.5f);
+        stage.offer(std::move(buf));
+        stage.setGainNorm(0.7071f); // about +6 dB
+        stage.setSource(InputSource::Off);
+    }
+    std::vector<float> interC(2 * bufferFrames);
+    std::size_t        mismatchesC = 0;
 
     const std::size_t  total = static_cast<std::size_t>(seconds * kRate);
     std::vector<float> inter(2 * bufferFrames), l(bufferFrames), r(bufferFrames);
@@ -60,12 +81,17 @@ void compareBufferSize(const std::vector<TimedButtonEvent>& ev, std::size_t buff
         const double      t = static_cast<double>(pos) / kRate;
         a.advanceTo(ev, t);
         b.advanceTo(ev, t);
+        c.advanceTo(ev, t);
+        stage.setGainNorm(static_cast<float>(0.3 + 0.6 * t / seconds)); // moves while OFF
         render.render(inter.data(), n);
+        withInput.render(interC.data(), n);
         b.voice->process(*b.src, nullptr, l.data(), r.data(), n);
         for(std::size_t i = 0; i < n; ++i)
         {
             if(!sameBits(inter[2 * i], l[i]) || !sameBits(inter[2 * i + 1], r[i]))
                 ++mismatches;
+            if(!sameBits(interC[2 * i], l[i]) || !sameBits(interC[2 * i + 1], r[i]))
+                ++mismatchesC;
             if(!std::isfinite(inter[2 * i]) || !std::isfinite(inter[2 * i + 1]))
                 ++nonFinite;
             peak = std::max(peak, std::max(std::fabs(l[i]), std::fabs(r[i])));
@@ -76,6 +102,11 @@ void compareBufferSize(const std::vector<TimedButtonEvent>& ev, std::size_t buff
                 bufferFrames, render.capacity(), total, mismatches, static_cast<double>(peak),
                 static_cast<unsigned long long>(render.callbacks()));
     check(mismatches == 0, "buffer " + std::to_string(bufferFrames) + ": bit-identical to AudreyVoice driven directly");
+    std::printf("  with the input stage attached, source OFF: %zu mismatching frames; stage active %s\n", mismatchesC,
+                stage.active() ? "yes" : "no");
+    check(mismatchesC == 0 && !stage.active() && stage.peak().take() == 0.0f,
+          "buffer " + std::to_string(bufferFrames) + ": with the input stage attached and its source OFF, bit-identical "
+          "to AudreyVoice driven with nullptr (M2b-A criterion 1)");
     check(nonFinite == 0, "buffer " + std::to_string(bufferFrames) + ": output is finite");
     check(peak > 0.01f, "buffer " + std::to_string(bufferFrames) + ": the script makes sound (peak > 0.01)");
     check(render.framesRendered() == total, "framesRendered counts every frame");
@@ -120,6 +151,38 @@ int main()
     // Capacity is max(256, 4096) = 4096; 5000-frame calls are processed in chunks
     // of 4096 + 904.
     compareBufferSize(ev, AudioRender::kMinCapacity + 904, 256, 5.0);
+
+    // --- M2b-A: the comparison notices an input: FILE changes the output ---------
+    {
+        ptest::Rig  x, y;
+        InputStage  stage;
+        AudioRender withInput(*x.voice, *x.src, AudioRender::FlushToZero::LeaveAlone);
+        withInput.attachInput(&stage);
+        withInput.prepare(256);
+        auto buf = std::make_unique<InputBuffer>();
+        buf->samples.resize(48000);
+        for(std::size_t i = 0; i < buf->samples.size(); ++i)
+            buf->samples[i] = static_cast<float>(0.5 * std::sin(2.0 * 3.14159265358979 * 220.0 * i / 48000.0));
+        stage.offer(std::move(buf));
+        stage.setSource(InputSource::File);
+        std::vector<float> o(2 * 256), l(256), r(256);
+        std::size_t        differ = 0;
+        float              peak   = 0.0f;
+        for(int k = 0; k < 400; ++k) // about 2 s, no button pressed: feedback at its minimum
+        {
+            withInput.render(o.data(), 256);
+            y.voice->process(*y.src, nullptr, l.data(), r.data(), 256);
+            for(int i = 0; i < 256; ++i)
+            {
+                differ += !sameBits(o[2 * i], l[i]) ? 1 : 0;
+                peak = std::max(peak, std::fabs(o[2 * i]));
+            }
+        }
+        std::printf("FILE at unity, feedback at its minimum: %zu of %d samples differ from no input; output peak %.4f\n",
+                    differ, 400 * 256, static_cast<double>(peak));
+        check(differ > 50000 && peak > 0.05f,
+              "with the source FILE the output differs and the input is audible at minimum feedback (peak > 0.05)");
+    }
 
     // --- Before prepare(): silence --------------------------------------------
     {

@@ -5,7 +5,8 @@
 // state into a DrawList. No SDL, no allocation. 1024 x 768 logical pixels, top to
 // bottom, each block a panel in the DrawList:
 //
-//   tab bar        L1 key, the five tabs (current one in inverse video), R1 key
+//   tab bar        L1 key, the six tabs (current one in inverse video; each as
+//                  wide as its name plus an equal margin), R1 key
 //   feedback band  stored feedback in dB, bar between L2 and R2 keys with a 0 dB
 //                  tick; while A is held the bar is striped, a plate reads
 //                  "MAX +12.0 dB" in the half away from the stored-value marker,
@@ -21,6 +22,35 @@
 //                  their bars show the same value against its maximum, so
 //                  number and bar agree.
 //   meter panel    L/R output meters with a dB scale, peak hold, CLIP caps.
+//                  M2b-A: whenever the input source is not OFF, a slim IN bar
+//                  along the bottom (the input level after gain; the IN label
+//                  in inverse video while the input clips).
+//   INPUT tab      (M2b-A, in place of the rows) SOURCE row (left/right: OFF and
+//                  FILE as boxes, the current one in inverse video), GAIN row
+//                  (up/down: the gain in dB at 40 px and a bar with a 0 dB
+//                  tick), FILE row (dimmed while OFF: "FILE", "n OF m", the file
+//                  name cut with "..", its length, and a status line), dimmed
+//                  with outline arrows unless the source is FILE; to their right
+//                  a large input meter with a dB scale, peak hold, CLIP cap and
+//                  the held peak in dB.
+//                  M2b-A3, with the source FILE: the same three rows; the
+//                  FILE row shows "n OF m", the name (the cursor's
+//                  file while X is held, else the loaded one, or NOTHING LOADED
+//                  with HOLD X: CHOOSE FILE), a progress line (bar, "elapsed /
+//                  length", LOOP or ONCE, ENDED) and one status line (while
+//                  choosing another file: PLAYING: <name>; else CANNOT LOAD
+//                  <name>: <reason>, LOADING <name> or CUT TO 10 MIN). "n OF m"
+//                  is the position of the file on the name line.
+//   pop-up list    (M2b-A3) while X is held after an up/down press, an overlay
+//                  panel (PanelItem::overlay) built last, x 8..712 y 184..656:
+//                  header FILES n OF m and the mode, eight 32 px names around
+//                  the cursor (cursor row in inverse video with ">", PLAY on the
+//                  loaded file; other names use the full width), one status
+//                  line (CANNOT LOAD <name>: <reason> / LOADING <name> /
+//                  PLAYING: <name>), hints X RELEASE: LOAD, Y MODE, SELECT PLAY
+//                  AGAIN. It covers the tab's rows and the first three columns
+//                  of the value strip, whole rows; the tab bar, feedback band,
+//                  switch box, meters and status line stay.
 //   value strip    all eleven values (tab, name, value, small bar), the current
 //                  tab's cells framed; the twelfth cell is the CPU meter.
 //   status line    audio spec, dropped commands, controller / keyboard hint;
@@ -70,6 +100,10 @@ struct MeterView
     float level[2] = {0.0f, 0.0f}; // L, R (linear)
     float hold[2]  = {0.0f, 0.0f};
     bool  clip[2]  = {false, false};
+    // M2b-A: the input meter (after gain), with the same ballistics.
+    float inLevel = 0.0f;
+    float inHold  = 0.0f;
+    bool  inClip  = false;
 };
 
 // Display names: the long one is used in the current tab when it fits, the short

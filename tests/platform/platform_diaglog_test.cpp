@@ -216,5 +216,27 @@ int main()
         const std::size_t n = formatStats(tiny, sizeof tiny, st);
         check(n < sizeof tiny && std::strlen(tiny) == n, "cut to a small buffer");
     }
+
+    // --- M2b-A: the input part of the statistics line -------------------------------------------
+    {
+        PeriodicStats st;
+        st.windowSeconds = 10.0;
+        st.sampleRate    = 48000;
+        st.audioFrames   = 480000;
+        char buf[512];
+        formatStats(buf, sizeof buf, st);
+        check(std::strstr(buf, "input") == nullptr, "source OFF (no inputSource): no input part");
+        st.inputSource = "FILE";
+        st.inputPeak   = 0.25f;
+        formatStats(buf, sizeof buf, st);
+        const std::string line = buf;
+        const std::string tail = ", input FILE peak 0.250";
+        check(line.size() > tail.size() && line.compare(line.size() - tail.size(), tail.size(), tail) == 0,
+              "a source active: \", input FILE peak 0.250\" at the end ('" + line + "')");
+        st.keysSuppressed = 3;
+        formatStats(buf, sizeof buf, st);
+        check(std::strstr(buf, "input FILE peak 0.250, unmapped-key lines suppressed 3") != nullptr,
+              "the input part comes before the suppressed-keys tail");
+    }
     return ptest::finish();
 }

@@ -12,6 +12,21 @@ These override section 0 where they differ.
 - No in-app screenshot: KNULLI's own works.
 - The screen shows no quit hint (the human's choice; Menu + Start is the system default).
 
+## 000. The INPUT tab as built (M2b-A, M2b-A2 and M2b-A3, 2026-11-18)
+
+INPUT is the sixth tab, after OUT. Left/right: source (OFF, FILE; live sources come with M2b-B). Up/down: input gain, silence to +12 dB with unity in the middle. Y + up/down: gain back to unity. The global buttons work as everywhere. A slim IN bar under the output meters shows input level on every tab while a source is active.
+
+Since M2b-A3 (2026-11-18; it replaces M2b-A2's in-tab list, which the human found too small), with the source FILE nothing loads by itself and a file is chosen by holding X:
+
+- Pressing X puts the cursor on the playing file. X + left/right: previous / next file, one per press, wrapping; the FILE row shows the cursor's file. Nothing loads.
+- X + up/down: the first press opens a large pop-up list (32 px names, eight rows, the playing file marked PLAY and named on a status line); it does not count as a choice unless nothing is playing. Then up/down move the cursor (held: 8 files per second after the hold delay) and left/right still step.
+- Releasing X closes the list and loads the cursor's file, if a direction was pressed during the hold and it is not the playing file (the two crossfade over 100 ms; a file asked for during a crossfade loads once it is over). On the playing file: a load still pending is cancelled (the last choice wins), and a file that has ENDED in ONCE mode plays again. A hold without a direction does nothing.
+- X + Y: play mode LOOP (default) or ONCE (to the end with a 10 ms fade, then silence). X + Select: play the file again from its start.
+- L1/R1 while X is held (or losing focus): the choice is cancelled.
+- The FILE row shows "n OF m", the name, a progress bar with elapsed and total time, LOOP/ONCE, ENDED, CUT TO 10 MIN, and LOADING / CANNOT LOAD / PLAYING when needed. Files are cut at 10 minutes.
+
+With the source OFF, X + any direction does nothing on INPUT.
+
 ## 0. Button-by-button proposal, version 2 (2026-11-17)
 
 **Status: approved by the human on 2026-11-17 as the first version, to be tweaked in use. The MOD tab comes after the plain port works on the Brick.** This replaces the page layout in sections 2 onward; the principle in section 1 and the trade-off reasoning still apply. It follows the human's feedback: tabs on L1/R1 as GrainBrick does, feedback on L2/R2, one tab per section.

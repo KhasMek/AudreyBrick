@@ -1,0 +1,289 @@
+// Copyright (c) 2026 KhasMek
+// SPDX-License-Identifier: MIT
+//
+// InputStage: the audio-thread end of the instrument's input (docs/briefs/M2b.md,
+// M2b-A, and since M2b-A2 the crossfade between files and the play modes).
+// AudioRender calls pull() once per chunk, just before AudreyVoice::process, and
+// passes what it returns as `inMono`: either a pointer to `frames` input
+// samples, or nullptr.
+//
+// What pull() does, and nothing else:
+//   1. Reads the source generation, the source, the gain target, the play mode
+//      and the restart counter (atomic loads; see "Memory order" below).
+//   2. Retries retiring a buffer it has finished with (if the retire queue was
+//      full), handles a restart() request, and picks up a newly handed-over
+//      buffer (one atomic exchange) unless it is busy with one (see below).
+//   3. If nothing is audible and nothing has to fade (source OFF, or no buffer,
+//      or the buffer has ended in ONCE mode, and the fade level is 0): returns
+//      nullptr. The voice then runs exactly as without an input (off is
+//      bit-identical).
+//   4. Otherwise, per sample: the fade level moves linearly towards its target
+//      (1/kInputFadeFrames per sample), the gain follows its target through a
+//      one-pole (time constant kInputGainSmoothingSeconds), the sample is read
+//      from the current buffer (and, during a crossfade between files, from the
+//      old one too) and written as sample * gain * level into the stage's own
+//      preallocated buffer.
+//   5. Takes the peak |in| of the chunk into peak() (a MaxHold, like the output
+//      meters) and publishes a few status atomics.
+// No allocation, free, lock, file access, logging, trigonometry or wait.
+//
+// Reading a buffer of N samples (one "player": a buffer, a position, and two
+// flags). The tail region is its last X samples, X = kInputLoopCrossfadeFrames
+// or N/2 for a file of N < 2X samples (N = 1: no tail). The play mode decides,
+// when the position enters the tail region, how this pass ends:
+//   - LOOP: the tail is crossfaded linearly with the first X samples,
+//     x = tail * (1 - w) + head * w with w = (k + 1) / (X + 1) for k = 0..X-1,
+//     and playback then continues at sample X. So the loop period is N - X and
+//     the first pass plays the file from sample 0 unaltered.
+//   - ONCE: the tail fades out with the same weights, x = tail * (1 - w), so the
+//     last sample is at 1/(X + 1) and the next would be 0; then the player has
+//     ended (ended() is true) and gives silence. Before the tail the samples are
+//     the file's exactly. (N = 1: the one sample, then the end.)
+//   The mode is read when the tail is entered and holds until the end of that
+//   pass; a mode change inside the tail applies from the next pass. This is how
+//   LOOP -> ONCE inside the tail stays click-free: the loop crossfade already
+//   under way completes, playback continues at X, and the file stops at the end
+//   of the next pass. LOOP -> ONCE before the tail: this pass is the last.
+//   ONCE -> LOOP while the file plays: the tail it reaches loops; while it has
+//   ended: as restart() (start at 0 with the fade-in). ONCE -> LOOP inside a
+//   ONCE tail: the file ends (the fade-out completes) and then restarts.
+//   These automatic restarts, like restart(), never cut a sound: if the old
+//   file of a crossfade still sounds (a new file shorter than the crossfade has
+//   already ended), they fade out over 10 ms first, which also ends the
+//   crossfade and retires the old buffer. pull() never returns nullptr while a
+//   crossfade is half-way: it is ended (and the old buffer retired) first.
+//
+// Fades (no clicks):
+//   - Source OFF -> FILE (or a first buffer arriving while FILE): fade in from 0
+//     over 10 ms, from the start of the file if the level had reached 0. A file
+//     that had ended in ONCE mode starts again from 0 when the source is
+//     switched OFF and back to FILE (a source generation counter makes sure a
+//     quick OFF/FILE between two pulls is not missed).
+//   - FILE -> OFF: fade out over 10 ms, then nullptr.
+//   - A new non-empty buffer while the current one is audible (level > 0 and not
+//     ended): an equal-power crossfade of kInputFileCrossfadeFrames (100 ms).
+//     The old player goes on from where it is (still looping or ending by the
+//     mode), the new one starts at sample 0; the output is
+//     new * T[k] + old * T[F - 1 - k], k = 0..F-1, F = kInputFileCrossfadeFrames,
+//     T[k] = sin(pi/2 * (k + 1) / (F + 1)), so T[F - 1 - k] = cos of the same
+//     angle and T[k]^2 + T[F-1-k]^2 = 1 (the two files are unrelated material).
+//     T is a table built in prepare(). After F samples the new buffer plays alone
+//     and the old one is retired. The fade level (source fade, restart fade)
+//     multiplies the sum as it multiplies plain playback. If the level reaches 0
+//     during the crossfade (source OFF, a restart), the crossfade ends there and
+//     the old buffer is retired.
+//   - A new non-empty buffer while nothing is audible (level 0, no buffer, the
+//     current one ended): it simply starts at 0 with the 10 ms fade-in.
+//   - An empty buffer (0 frames) means "nothing": the current buffer fades out
+//     over 10 ms and is retired; the stage then returns nullptr.
+//   - restart() (UI thread, an atomic counter): if the file is audible, a 10 ms
+//     fade-out, then position 0 and the fade-in; if it has ended or is silent, it
+//     starts at 0 with the fade-in (or, with the source OFF, will start at 0).
+//     ended() clears. A new buffer arriving during the restart's fade-out
+//     replaces the restart (it starts at 0 anyway).
+//   - Gain: every change goes through the one-pole; the largest step between two
+//     consecutive gain values is coefficient * |target - current| <= 4 * a, with
+//     a = 1 - exp(-1 / (0.010 * 48000)) = 0.00208, so at most 0.0083 of linear gain
+//     per sample (the full 0 -> 4 jump), and 0.0021 per sample for 0 -> 1.
+//   - The crossfade's largest step for two full-scale DC files of opposite sign
+//     (+1 new, -1 old) is (pi/2)/(F+1) * sqrt(2) = 4.6e-4 per sample.
+//
+// Buffer lifetime (the hand-over):
+//   - The UI thread owns a buffer until it calls offer(). offer() swaps it into
+//     the single pending slot (an atomic exchange). If the slot already held a
+//     buffer that the audio thread had not picked up, the exchange returns it to
+//     the UI thread, which frees it: the audio thread never saw it.
+//   - The audio thread takes the pending buffer with an atomic exchange (it then
+//     owns it). It does not take one while it is switching: while a crossfade
+//     runs, while an old buffer waits to be retired, or while it waits to switch
+//     to a buffer it took (an empty one, or any one while the retire queue is
+//     full). A buffer offered meanwhile waits in the pending slot (and can still
+//     be superseded there by the UI thread).
+//   - When it is done with a buffer (after the crossfade, or after the fade-out
+//     for an empty one) it pushes it onto the retire queue (the project's SPSC
+//     queue, audio -> UI) and never touches it again.
+//   - The retire queue full (the UI has not reclaimed for 8 switches): "waits"
+//     means: a crossfade still runs and completes; the old buffer is then held,
+//     no longer read, and pushed as soon as there is room, and no new buffer is
+//     picked up meanwhile. A switch to a buffer while nothing is audible waits,
+//     silent, until there is room. Nothing is lost and the audio thread never
+//     frees. At most four buffers exist outside the UI thread: the current one,
+//     the old one (crossfading or held), one taken and waiting, and the pending one.
+//   - The UI thread calls reclaim() every frame and frees what comes back.
+//   - At shutdown: close the audio device first (pull() no longer runs), then
+//     destroy the stage; its destructor frees every buffer it holds, the pending
+//     one and anything still in the retire queue.
+//   Memory order: offer() is an acq_rel exchange (release publishes the buffer's
+//   contents written by the loader, which handed it to the UI thread under a
+//   mutex); the audio thread's exchange is acq_rel too (acquire sees them). The
+//   retire queue releases on push and acquires on pop. The UI thread offers a
+//   buffer before it changes the source (InputController does), and pull() reads
+//   the source (acquire) before its exchange, so a source change is never seen
+//   without the buffers offered before it. setSource() stores the source and
+//   then increments the source generation (release); pull() reads the
+//   generation (acquire) before the source, so a new generation comes with the
+//   source that made it. The play mode and the restart counter are independent
+//   requests (relaxed).
+//
+// Threads: the constructor, prepare(), the destructor and the UI calls on the UI
+// thread (prepare() before audio starts); pull() on the audio thread only (one
+// thread at a time); peak() and the status getters from any thread.
+
+#pragma once
+
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+#include "control/SpscQueue.h"
+#include "input/InputTypes.h"
+#include "platform/Meters.h"
+
+namespace audreybrick
+{
+
+// A mono buffer at 48 kHz, immutable once handed over.
+struct InputBuffer
+{
+    std::vector<float> samples;
+};
+
+class InputStage
+{
+  public:
+    // Capacity of the retire queue (buffers waiting for the UI thread to free them).
+    static constexpr std::size_t kRetireCapacity = 8;
+
+    InputStage();
+    ~InputStage();
+    InputStage(const InputStage&)            = delete;
+    InputStage& operator=(const InputStage&) = delete;
+
+    // Allocates the output buffer for `frames` frames and the crossfade table.
+    // Call before audio starts, never while pull() may run. pull() before
+    // prepare() returns nullptr.
+    void        prepare(std::size_t frames);
+    std::size_t capacity() const noexcept { return capacity_; }
+
+    // --- UI thread ---------------------------------------------------------------
+    void setSource(InputSource s) noexcept;
+    // Knob position 0..1 (clamped); gain = (2n)^2.
+    void setGainNorm(float n) noexcept;
+    // LOOP or ONCE (M2b-A2); LOOP at start.
+    void setPlayMode(InputPlayMode m) noexcept;
+    // Plays the current buffer again from its start (M2b-A2; see "Fades").
+    void restart() noexcept;
+    // Hands a buffer to the audio thread (ownership passes). Returns the buffer
+    // that was still waiting in the pending slot, if any (never seen by the audio
+    // thread; the caller frees it), else nullptr. nullptr is not allowed (use an
+    // empty buffer for "nothing").
+    std::unique_ptr<InputBuffer> offer(std::unique_ptr<InputBuffer> buffer) noexcept;
+    // One buffer the audio thread has finished with, or nullptr. Call until it
+    // returns nullptr, every UI frame; the caller frees them.
+    std::unique_ptr<InputBuffer> reclaim() noexcept;
+
+    // --- Audio thread ----------------------------------------------------------------
+    // `frames` at most capacity() (more is clamped to capacity(); AudioRender never
+    // asks for more). Returns the stage's buffer of `frames` samples, or nullptr.
+    const float* pull(std::size_t frames) noexcept;
+
+    // --- Any thread ----------------------------------------------------------------------
+    // The largest |in| (after gain and fades) since the last take().
+    MaxHold& peak() noexcept { return peak_; }
+    // True while pull() returned a buffer in its last call (a source is audible
+    // or fading).
+    bool active() const noexcept { return active_.load(std::memory_order_relaxed); }
+    // Frames of the current buffer (the one playing, or the new one of a
+    // crossfade; 0 if none).
+    std::size_t playingFrames() const noexcept { return playingFrames_.load(std::memory_order_relaxed); }
+    // Read position in the current buffer (in LOOP mode it runs from X to N after
+    // the first pass; N once ended).
+    std::size_t position() const noexcept { return position_.load(std::memory_order_relaxed); }
+    // The current buffer has ended in ONCE mode (M2b-A2).
+    bool ended() const noexcept { return ended_.load(std::memory_order_relaxed); }
+    // A crossfade between two files is running (M2b-A2).
+    bool crossfading() const noexcept { return crossfading_.load(std::memory_order_relaxed); }
+    // The stage holds a buffer besides the current one: the old one of a
+    // crossfade (running, or held for a full retire queue) or one taken and
+    // waiting to be switched to. As of the last pull() (M2b-A2 review, S2).
+    bool holdsOther() const noexcept { return holdsOld_.load(std::memory_order_relaxed); }
+    // The switch count as of the last pull() that ended holding nothing but the
+    // current buffer (no crossfade, no held old buffer, nothing taken and
+    // waiting). Stored with release after switches() was incremented, so a
+    // reader that loads this (acquire) and then switches() and finds them equal
+    // knows the stage has settled on its latest buffer (M2b-A2 review, S2 and M1).
+    std::uint64_t settledSwitches() const noexcept { return settled_.load(std::memory_order_acquire); }
+    // Buffers the audio thread has switched to (or started crossfading to) since start.
+    std::uint64_t switches() const noexcept { return switches_.load(std::memory_order_relaxed); }
+    // Restarts carried out: restart() requests and the automatic ones (ONCE ->
+    // LOOP or OFF -> FILE with an ended file) (tests).
+    std::uint64_t restarts() const noexcept { return restartsDone_.load(std::memory_order_relaxed); }
+
+    // The crossfade weight T[k] (tests; k < kInputFileCrossfadeFrames, after prepare()).
+    float crossfadeWeight(std::size_t k) const noexcept { return xfTable_ ? xfTable_[k] : 0.0f; }
+
+  private:
+    struct Player
+    {
+        InputBuffer* buf      = nullptr;
+        std::size_t  pos      = 0;
+        bool         ended    = false; // ONCE: reached the end
+        bool         tailOnce = false; // the mode read when the current pass entered its tail
+        float        next(InputPlayMode mode) noexcept;
+        bool         playable() const noexcept { return buf != nullptr && !buf->samples.empty() && !ended; }
+        void         rewind() noexcept
+        {
+            pos      = 0;
+            ended    = false;
+            tailOnce = false;
+        }
+    };
+
+    void finishCrossfade() noexcept; // the old player stops being read; retire it (or hold it)
+    void startFresh() noexcept;      // level 0, the current player at 0 (it will fade in)
+    void requestRestart() noexcept;  // a fade-out first if it sounds, else startFresh()
+
+    // Shared.
+    std::atomic<int>           source_{static_cast<int>(InputSource::Off)};
+    std::atomic<std::uint32_t> sourceGen_{0};
+    std::atomic<float>         gainTarget_{1.0f};
+    std::atomic<int>           mode_{static_cast<int>(InputPlayMode::Loop)};
+    std::atomic<std::uint32_t> restartReq_{0};
+    std::atomic<InputBuffer*>  pending_{nullptr};
+    SpscQueue<InputBuffer*>    retired_{kRetireCapacity};
+    MaxHold                    peak_;
+    std::atomic<bool>          active_{false};
+    std::atomic<std::size_t>   playingFrames_{0};
+    std::atomic<std::size_t>   position_{0};
+    std::atomic<bool>          ended_{false};
+    std::atomic<bool>          crossfading_{false};
+    std::atomic<bool>          holdsOld_{false};
+    std::atomic<std::uint64_t> switches_{0};
+    std::atomic<std::uint64_t> restartsDone_{0};
+    std::atomic<std::uint64_t> settled_{0};
+
+    // Audio thread only (and the destructor).
+    Player                   cur_;
+    Player                   old_;              // crossfading out (xf_ < F) or held for retiring (xf_ >= F)
+    std::size_t              xf_      = 0;      // crossfade position
+    InputBuffer*             next_    = nullptr; // taken from pending_, waiting to be switched to
+    bool                     restartFade_ = false; // a restart's fade-out is running
+    std::uint32_t            restartSeen_ = 0;
+    std::uint32_t            genSeen_     = 0;
+    float                    level_   = 0.0f; // fade level 0..1
+    float                    gain_    = 1.0f; // smoothed linear gain
+    float                    gainCoef_;
+    std::unique_ptr<float[]> out_;
+    std::unique_ptr<float[]> xfTable_; // kInputFileCrossfadeFrames weights
+    std::size_t              capacity_ = 0;
+
+    static_assert(std::atomic<InputBuffer*>::is_always_lock_free, "the hand-over must be lock-free");
+    static_assert(std::atomic<float>::is_always_lock_free, "the gain must be lock-free");
+    static_assert(std::atomic<int>::is_always_lock_free, "the source must be lock-free");
+    static_assert(std::atomic<std::uint32_t>::is_always_lock_free, "the counters must be lock-free");
+    static_assert(std::atomic<std::size_t>::is_always_lock_free, "status must be lock-free");
+};
+
+} // namespace audreybrick

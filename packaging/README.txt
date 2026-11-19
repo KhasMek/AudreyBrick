@@ -20,8 +20,8 @@ Audrey II by Synthux Academy.
 AudreyBrick is an unofficial port and is not made or endorsed by Synthux Academy
 or Infrasonic Audio. The DSP is the original firmware's code (MIT licence). DaisySP
 by Electrosmith (MIT, and LGPL-2.1 for ReverbSc and Tone, see below). The font is
-font8x8 by Daniel Hepper (public domain). Full notices: THIRD_PARTY.md and the
-licenses/ folder.
+font8x8 by Daniel Hepper (public domain). WAV files are read with dr_wav by David
+Reid (MIT No Attribution). Full notices: THIRD_PARTY.md and the licenses/ folder.
 
 AudreyBrick's own code: MIT licence, see LICENSE.
 Source repository: to be published.
@@ -47,7 +47,8 @@ Always:
   SELECT (hold)    fine: the d-pad and L2/R2 move in small steps (SELECT + START
                    has no function in AudreyBrick; it is KNULLI's screenshot, see below)
   SELECT + B       latch the delay switch on or off
-  X (hold)         the d-pad moves the tab's other parameter (DELAY: repeats)
+  X (hold)         the d-pad moves the tab's other parameter (DELAY: repeats;
+                   INPUT: choosing the file, see below)
   Y + d-pad        reset that parameter to its default
   START            nothing by itself
   MENU + START     quit
@@ -58,6 +59,77 @@ Tabs (d-pad left/right, d-pad up/down):
   REVERB   dry/wet                            decay
   DELAY    time                               mix;  X + up/down: repeats
   OUT      -                                  volume
+  INPUT    source (OFF, FILE)                 input gain;  Y + up/down: gain to 0 dB
+           with FILE: hold X to choose a file (X + left/right: one by one;
+           X + up/down: the list), release X to load it; X + Y: LOOP/ONCE;
+           X + SELECT: play the file again from the start
+
+
+Audio input (INPUT tab)
+-----------------------
+The original instrument has an audio input: whatever comes in is added to the
+string, inside the feedback loop, so it sounds even with the feedback at its
+minimum and rings the string and the loop as you raise it. AudreyBrick can feed
+it from a WAV file (the microphone and USB audio come in a later version).
+
+  1. Put WAV files into the folder audreybrick/data/input on the SD card
+     (roms/ports/audreybrick/data/input; on the device
+     /userdata/roms/ports/audreybrick/data/input). The launcher creates the
+     folder if it is missing. Files directly in that folder are used; folders
+     inside it, links and files whose names start with "." are ignored (so are
+     the "._" files a Mac leaves next to each file it copies).
+  2. In AudreyBrick go to the INPUT tab (L1 from LOOP, or R1 past OUT).
+  3. D-pad right selects FILE. Nothing loads by itself. To choose a file,
+     hold X:
+       X + left/right  the previous / next file (by name, wrapping round),
+                       shown in the FILE row; nothing loads yet
+       X + up/down     opens a large list of the files; up/down move through
+                       it (hold to scroll); left/right still step. Opening
+                       the list and releasing X without moving only looks
+                       (with nothing playing yet, it loads the highlighted
+                       file)
+       release X       loads the file you went to (if you pressed a direction
+                       and it is not the file already playing). While it
+                       loads, the playing file goes on; then the two crossfade
+                       (100 ms). Releasing X without pressing a direction
+                       does nothing; choosing the playing file again while
+                       another loads cancels that load.
+       X + Y           play mode: LOOP (round and round, the default) or ONCE
+                       (to the end, then silence; ENDED on the screen)
+       X + SELECT      play the file again from the start (also after ENDED;
+                       or choose the ended file again and release X)
+     L1/R1 while X is held cancels the choice. The FILE row shows the file,
+     its progress, LOOP or ONCE and ENDED; the list marks the playing file
+     PLAY. D-pad up/down sets the input gain (-inf to +12 dB, 0 dB in the
+     middle; Y + up/down sets it back to 0 dB).
+  4. The INPUT tab shows the input level after the gain (large meter, with a
+     CLIP mark from 0 dBFS). Whenever the source is not OFF, a small IN bar at the
+     bottom of the meter panel shows the input level on every tab.
+
+The source is OFF at every start, the play mode LOOP; nothing about the input
+is remembered.
+
+Files: mono or stereo (stereo is mixed as left + right), 16-bit, 24-bit, 32-bit
+or float, and the other formats dr_wav reads, at 8 to 384 kHz. Rates other than
+48 kHz are converted when the file loads. At most the first 10 minutes of a file
+are used (the screen then says CUT TO 10 MIN), and at most 256 files are listed.
+A 10-minute file takes about 115 MB of memory while it plays. At most two such
+files are in memory at once (the playing one and the one loading, or during
+the 100 ms crossfade the old one): a file asked for during a crossfade starts
+loading when the crossfade is over.
+
+If you replace a file on the card while AudreyBrick runs, it notices when the
+list is read again (on entering the INPUT tab or selecting FILE): choosing
+that name then loads the new file instead of keeping the old one.
+A file that cannot be used shows CANNOT LOAD and the reason; whatever was
+playing keeps playing. The log (data/audreybrick.log) has a line for every file
+loaded and every failure.
+
+Keep your own copy of the files elsewhere: replacing the audreybrick folder with
+a new version deletes data/, and data/input with it. No audio files are shipped.
+
+Mind your ears: a loud file through the distortion and feedback can be very loud.
+Start with the gain at 0 dB or below and the volume low.
 
 
 Quitting

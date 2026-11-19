@@ -96,6 +96,11 @@ void Renderer::draw(SDL_Renderer* r, const UiSnapshot& s) noexcept
         meterView_.hold[ch]  = meter_[ch].hold();
         meterView_.clip[ch]  = meter_[ch].clipped();
     }
+    // M2b-A: the input meter, same ballistics.
+    inMeter_.update(s.input.peak, s.timeSeconds);
+    meterView_.inLevel = inMeter_.level();
+    meterView_.inHold  = inMeter_.hold();
+    meterView_.inClip  = inMeter_.clipped();
     buildLayout(s, meterView_, list_);
     drawList(r, list_);
 }
@@ -110,34 +115,47 @@ void Renderer::drawList(SDL_Renderer* r, const DrawList& list) noexcept
     SDL_SetRenderDrawColor(r, bg.r, bg.g, bg.b, 255);
     SDL_RenderClear(r);
 
-    for(std::size_t i = 0; i < list.rectCount; ++i)
+    // M2b-A3: two layers. The base layer first (rectangles, triangles, text),
+    // then the items of overlay panels (the pop-up list) the same way, so an
+    // overlay covers everything of the base layer beneath it.
+    auto onLayer = [&list](int panel, bool overlay) {
+        const bool o = panel >= 0 && static_cast<std::size_t>(panel) < list.panelCount &&
+                       list.panels[static_cast<std::size_t>(panel)].overlay;
+        return o == overlay;
+    };
+    for(const bool overlay : {false, true})
     {
-        const RectItem& it = list.rects[i];
-        if(it.w <= 0 || it.h <= 0)
-            continue;
-        SDL_SetRenderDrawColor(r, it.color.r, it.color.g, it.color.b, it.color.a);
-        if(it.thickness <= 0)
+        for(std::size_t i = 0; i < list.rectCount; ++i)
         {
-            const SDL_Rect rc{it.x, it.y, it.w, it.h};
-            SDL_RenderFillRect(r, &rc);
+            const RectItem& it = list.rects[i];
+            if(it.w <= 0 || it.h <= 0 || !onLayer(it.panel, overlay))
+                continue;
+            SDL_SetRenderDrawColor(r, it.color.r, it.color.g, it.color.b, it.color.a);
+            if(it.thickness <= 0)
+            {
+                const SDL_Rect rc{it.x, it.y, it.w, it.h};
+                SDL_RenderFillRect(r, &rc);
+            }
+            else
+            {
+                const int t = it.thickness * 2 > it.w || it.thickness * 2 > it.h ? 1 : it.thickness;
+                const SDL_Rect sides[4] = {
+                    {it.x, it.y, it.w, t},
+                    {it.x, it.y + it.h - t, it.w, t},
+                    {it.x, it.y + t, t, it.h - 2 * t},
+                    {it.x + it.w - t, it.y + t, t, it.h - 2 * t},
+                };
+                SDL_RenderFillRects(r, sides, 4);
+            }
         }
-        else
-        {
-            const int t = it.thickness * 2 > it.w || it.thickness * 2 > it.h ? 1 : it.thickness;
-            const SDL_Rect sides[4] = {
-                {it.x, it.y, it.w, t},
-                {it.x, it.y + it.h - t, it.w, t},
-                {it.x, it.y + t, t, it.h - 2 * t},
-                {it.x + it.w - t, it.y + t, t, it.h - 2 * t},
-            };
-            SDL_RenderFillRects(r, sides, 4);
-        }
+        for(std::size_t i = 0; i < list.triCount; ++i)
+            if(onLayer(list.tris[i].panel, overlay))
+                drawTri(r, list.tris[i]);
+        if(atlas_ != nullptr)
+            for(std::size_t i = 0; i < list.textCount; ++i)
+                if(onLayer(list.texts[i].panel, overlay))
+                    drawText(r, list.texts[i]);
     }
-    for(std::size_t i = 0; i < list.triCount; ++i)
-        drawTri(r, list.tris[i]);
-    if(atlas_ != nullptr)
-        for(std::size_t i = 0; i < list.textCount; ++i)
-            drawText(r, list.texts[i]);
 }
 
 void Renderer::drawTri(SDL_Renderer* r, const TriItem& t) noexcept

@@ -8,7 +8,8 @@
 //   - every file exists, loads back at 1024 x 768, and is not blank;
 //   - all images differ from each other;
 //   - every text item of the draw list left pixels of its own colour inside its
-//     rectangle (the text was really drawn);
+//     rectangle (the text was really drawn), except base-layer text under an
+//     overlay panel (M2b-A3: the pop-up list covers it, drawn after it);
 //   - the glyph atlas draws every character 32..126 exactly (each scaled pixel
 //     matches the font bits) at scale 2 and 3.
 
@@ -199,6 +200,18 @@ int main(int, char**)
             for(const char* c = t.text; *c != '\0'; ++c)
                 nonSpace = nonSpace || *c != ' ';
             if(!nonSpace)
+                continue;
+            // M2b-A3: a base-layer text under an overlay panel (the pop-up) is
+            // hidden by design: not looked for.
+            bool hidden = false;
+            const bool ownOverlay = t.panel >= 0 && static_cast<std::size_t>(t.panel) < list->panelCount &&
+                                    list->panels[static_cast<std::size_t>(t.panel)].overlay;
+            for(std::size_t p = 0; p < list->panelCount && !ownOverlay; ++p)
+            {
+                const PanelItem& o = list->panels[p];
+                hidden = hidden || (o.overlay && t.x < o.x + o.w && o.x < t.x + t.w && t.y < o.y + o.h && o.y < t.y + t.h);
+            }
+            if(hidden)
                 continue;
             const std::uint32_t want  = rgb(t.color);
             bool                found = false;

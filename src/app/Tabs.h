@@ -5,6 +5,10 @@
 // subset: LOOP, FILTER, REVERB, DELAY, OUT. Each tab binds up to four knobs to
 // the d-pad: left/right and up/down, and the same two axes with X held. Right
 // and up increase. FeedbackGain is never bound (it lives on L2/R2).
+//
+// M2b-A adds INPUT after OUT. It binds no knob (all four bindings are kNoKnob):
+// its d-pad, X and Y move the input panel's own state (source, gain, file),
+// which InputRouter sends to the InputController (input/InputController.h).
 
 #pragma once
 
@@ -22,6 +26,7 @@ enum class Tab : unsigned char
     Reverb,
     Delay,
     Out,
+    Input, // M2b-A: no knob bindings; the input panel (InputController)
     Count
 };
 

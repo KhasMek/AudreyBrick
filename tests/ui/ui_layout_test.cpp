@@ -19,6 +19,21 @@
 // states; the TIME mark; latch press versus momentary hold; the status line cut
 // with ".." (the controller keeps 16 characters); a forced overflow; the contrast of the text colours; no operator new
 // over 1000 frames.
+// M2b-A: the INPUT tab in each state (off; file playing; X held; loading; error;
+// no files; long names; clip): its three rows and the input meter,
+// M2b-A3: with the source FILE the FILE row (n OF m, the cursor's or the loaded
+// file's name, NOTHING LOADED / HOLD X: CHOOSE FILE, the progress line with the
+// mode and ENDED, the status line with LOADING / CANNOT LOAD / PLAYING / CUT);
+// the pop-up list in every state (4 and 12 files, a long name, nothing loaded,
+// loading, ONCE ended, no files): an overlay panel built last, opaque, double-size
+// names, cursor and PLAY marks, header and key-cap hints. Overlay items may cover
+// the base layer but not each other, stay in their panel and keep 4.5:1 contrast
+// against their own background; the base layer's checks are unchanged; the source
+// choices in inverse video, the gain in dB with its bar and 0 dB tick, the FILE
+// row dimmed unless the source is FILE and armed only with X, the file name cut
+// with "..", "n OF m", the length and the status line; the IN indicator on the
+// other tabs whenever the source is not OFF (and never with it OFF), without
+// moving anything else on the screen; six tabs in the tab bar.
 
 #include <algorithm>
 #include <atomic>
@@ -35,7 +50,10 @@
 #include <vector>
 
 #include "app/Tabs.h"
+#include "input/InputTypes.h"
+#include "input/InputView.h"
 #include "ui/Format.h"
+#include "ui/MeterBallistics.h"
 #include "ui/Layout.h"
 #include "ui_test_common.h"
 
@@ -158,6 +176,9 @@ const char* kindName(PanelKind k)
         case PanelKind::CpuCell: return "cpu cell";
         case PanelKind::StatusLine: return "status line";
         case PanelKind::FooterCell: return "footer cell";
+        case PanelKind::InputRow: return "input row";
+        case PanelKind::InputMeter: return "input meter";
+        case PanelKind::InputPopup: return "input pop-up";
     }
     return "?";
 }
@@ -224,6 +245,8 @@ struct Headroom
     std::size_t texts = 0, rects = 0, tris = 0, panels = 0, keys = 0;
 } g_peak;
 
+double contrastOf(const Color& a, const Color& b); // below, with the palette checks
+
 // --- Generic structure checks ------------------------------------------------------------
 void checkStructure(const std::string& n, const DrawList& d)
 {
@@ -244,7 +267,7 @@ void checkStructure(const std::string& n, const DrawList& d)
             std::printf("  panel %s %d outside the screen\n", kindName(d.panels[i].kind), d.panels[i].index);
         }
         for(std::size_t j = i + 1; j < d.panelCount; ++j)
-            if(intersects(box(d.panels[i]), box(d.panels[j])))
+            if(!d.panels[i].overlay && !d.panels[j].overlay && intersects(box(d.panels[i]), box(d.panels[j])))
             {
                 ++bad;
                 std::printf("  panels overlap: %s %d (%d,%d %dx%d) and %s %d (%d,%d %dx%d)\n",
@@ -253,7 +276,17 @@ void checkStructure(const std::string& n, const DrawList& d)
                             d.panels[j].x, d.panels[j].y, d.panels[j].w, d.panels[j].h);
             }
     }
-    check(bad == 0, n + "all " + std::to_string(d.panelCount) + " panels inside the screen, none overlapping");
+    check(bad == 0, n + "all " + std::to_string(d.panelCount) + " panels inside the screen, none overlapping (an "
+                        "overlay panel may cover the base layer)");
+    // M2b-A3: two overlay panels must not overlap each other either.
+    int overlays = 0, overlayClash = 0;
+    for(std::size_t i = 0; i < d.panelCount; ++i)
+    {
+        overlays += d.panels[i].overlay ? 1 : 0;
+        for(std::size_t j = i + 1; j < d.panelCount; ++j)
+            overlayClash += d.panels[i].overlay && d.panels[j].overlay && intersects(box(d.panels[i]), box(d.panels[j]));
+    }
+    check(overlayClash == 0, n + std::to_string(overlays) + " overlay panel(s), none overlapping another");
 
     auto inOwnPanel = [&](const Box& b, int panel) {
         return panel >= 0 && static_cast<std::size_t>(panel) < d.panelCount &&
@@ -281,6 +314,10 @@ void checkStructure(const std::string& n, const DrawList& d)
             ++stray;
     check(stray == 0, n + "every text, rectangle, triangle and key cap inside its own panel");
 
+    // The layer of an item: its panel's overlay flag. Overlap rules apply within a layer.
+    auto layer = [&](int panel) {
+        return panel >= 0 && static_cast<std::size_t>(panel) < d.panelCount && d.panels[static_cast<std::size_t>(panel)].overlay;
+    };
     int textOverlap = 0;
     int barUnderText = 0;
     int small        = 0;
@@ -293,20 +330,27 @@ void checkStructure(const std::string& n, const DrawList& d)
         if(a.w != static_cast<int>(std::strlen(a.text)) * 8 * a.scale || a.h != 8 * a.scale)
             ++badSize;
         for(std::size_t j = i + 1; j < d.textCount; ++j)
-            if(intersects(box(a), box(d.texts[j])))
+            if(layer(a.panel) == layer(d.texts[j].panel) && intersects(box(a), box(d.texts[j])))
             {
                 ++textOverlap;
                 std::printf("  text overlap: \"%s\" and \"%s\"\n", a.text, d.texts[j].text);
             }
         for(std::size_t r = 0; r < d.rectCount; ++r)
-            if((d.rects[r].tag == RectTag::Bar || d.rects[r].tag == RectTag::UnityMark) && d.rects[r].w > 0 && d.rects[r].h > 0 &&
-               intersects(box(a), box(d.rects[r])))
+            if((d.rects[r].tag == RectTag::Bar || d.rects[r].tag == RectTag::UnityMark ||
+                d.rects[r].tag == RectTag::GainUnityMark) && d.rects[r].w > 0 && d.rects[r].h > 0 &&
+               layer(a.panel) == layer(d.rects[r].panel) && intersects(box(a), box(d.rects[r])))
             {
                 ++barUnderText;
                 std::printf("  bar %d,%d %dx%d under text \"%s\"\n", d.rects[r].x, d.rects[r].y, d.rects[r].w,
                             d.rects[r].h, a.text);
             }
     }
+    int nonAscii = 0;
+    for(std::size_t i = 0; i < d.textCount; ++i)
+        for(const char* c = d.texts[i].text; *c != '\0'; ++c)
+            if(static_cast<unsigned char>(*c) < 32 || static_cast<unsigned char>(*c) > 126)
+                ++nonAscii;
+    check(nonAscii == 0, n + "every character drawn is printable ASCII (the font's range)");
     check(textOverlap == 0, n + "no two text rectangles overlap");
     check(barUnderText == 0, n + "no bar or tick touches any text");
     check(small == 0, n + "no text below scale 2 (16 px)");
@@ -336,6 +380,26 @@ void checkStructure(const std::string& n, const DrawList& d)
     }
     check(notBrick == 0 && d.keyCount > 0, n + "all " + std::to_string(d.keyCount) + " key caps are Brick buttons");
     check(looseLabels == 0, n + "every key label sits in its own key cap");
+
+    // M2b-A3: overlay text against what is behind it inside the overlay panel
+    // (the last solid rectangle of that panel containing it).
+    int lowContrast = 0;
+    for(std::size_t i = 0; i < d.textCount; ++i)
+    {
+        const TextItem& t = d.texts[i];
+        if(!layer(t.panel))
+            continue;
+        const RectItem* behind = nullptr;
+        for(std::size_t r = 0; r < d.rectCount; ++r)
+            if(d.rects[r].panel == t.panel && d.rects[r].thickness == 0 && contains(box(d.rects[r]), box(t)))
+                behind = &d.rects[r];
+        if(behind == nullptr || contrastOf(t.color, behind->color) < 4.5)
+        {
+            ++lowContrast;
+            std::printf("  overlay text \"%s\": no opaque background or contrast below 4.5:1\n", t.text);
+        }
+    }
+    check(lowContrast == 0, n + "every overlay text has an opaque background in its panel with contrast >= 4.5:1");
 
     // Footer: exactly these caps, in order, per cell.
     const std::vector<std::vector<std::string>> footer = {{"L1", "R1"}, {"L2", "R2"}, {"A"},          {"B"},
@@ -496,14 +560,503 @@ void checkStrings(const std::string& n, const UiSnapshot& s, const DrawList& d)
     check(missing == 0, n + "all " + std::to_string(want.size()) + " expected strings drawn");
 }
 
+// --- M2b-A: the INPUT tab and the IN indicator ----------------------------------------------------
+bool sameColor(const Color& a, const Color& b)
+{
+    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+}
+
+const TextItem* textIn(const DrawList& d, int panel, const char* text, TextRole role)
+{
+    for(std::size_t i = 0; i < d.textCount; ++i)
+        if(d.texts[i].panel == panel && d.texts[i].role == role && std::strcmp(d.texts[i].text, text) == 0)
+            return &d.texts[i];
+    return nullptr;
+}
+
+// A filled rectangle of colour `c` in `panel` that contains `box`.
+bool filledBehind(const DrawList& d, int panel, const Box& b, const Color& c)
+{
+    for(std::size_t r = 0; r < d.rectCount; ++r)
+        if(d.rects[r].panel == panel && d.rects[r].thickness == 0 && sameColor(d.rects[r].color, c) &&
+           contains(box(d.rects[r]), b))
+            return true;
+    return false;
+}
+
+void checkArrows(const std::string& n, const DrawList& d, int p, bool lr, bool armed, const char* what)
+{
+    std::set<ArrowDir> dirs;
+    int                arrows = 0, filled = 0;
+    for(std::size_t i = 0; i < d.triCount; ++i)
+        if(d.tris[i].panel == p && d.tris[i].size >= 32)
+        {
+            ++arrows;
+            dirs.insert(d.tris[i].dir);
+            filled += d.tris[i].filled ? 1 : 0;
+        }
+    const std::set<ArrowDir> want = lr ? std::set<ArrowDir>{ArrowDir::Left, ArrowDir::Right}
+                                       : std::set<ArrowDir>{ArrowDir::Up, ArrowDir::Down};
+    check(arrows == 2 && dirs == want && filled == (armed ? 2 : 0) &&
+              d.panels[static_cast<std::size_t>(p)].active == armed,
+          n + what + " row: " + (lr ? "left/right" : "up/down") + " arrows, " +
+              (armed ? "armed (filled arrows)" : "not armed (outline arrows)"));
+}
+
+void checkInputMeter(const std::string& n, const MeterView& m, const DrawList& d, int mtr);
+
+// M2b-A3: the FILE row with the source FILE, and the pop-up list.
+std::string displayCut(const char* raw, std::size_t room)
+{
+    char safe[96];
+    copyDisplayName(safe, sizeof safe, raw);
+    std::string v = safe;
+    if(v.size() > room)
+        v = v.substr(0, room - 2) + "..";
+    return v;
+}
+
+const char* cursorName(const UiInputView& in)
+{
+    const int i = in.cursor - in.listFirst;
+    return (in.cursor >= 0 && i >= 0 && i < in.listRows) ? in.listNames[i] : "";
+}
+
+bool startsWith(const char* s, const std::string& p)
+{
+    return std::strncmp(s, p.c_str(), p.size()) == 0;
+}
+
+void checkInputFileChoose(const std::string& n, const UiSnapshot& s, const DrawList& d, int file)
+{
+    const UiInputView& in = s.input;
+    const PanelItem&   fp = d.panels[static_cast<std::size_t>(file)];
+    check(fp.y == 364 && fp.h == 108 && !fp.overlay, n + "FILE row: M2b-A's place and size (y 364, 108 px)");
+    const TextItem* fname = textIn(d, file, "FILE", TextRole::InputName);
+    check(fname != nullptr && fname->scale == 4 && sameColor(fname->color, palette::text), n + "FILE name at 32 px, bright");
+    checkArrows(n, d, file, true, s.xHeld, "FILE");
+    // The name: the cursor's file while choosing, else the loaded one; "n OF m"
+    // describes the same file.
+    const bool  showCursor = in.choosing && in.fileCount > 0 && cursorName(in)[0] != '\0';
+    if(in.fileCount > 0)
+    {
+        const std::string m   = " OF " + std::to_string(in.fileCount);
+        const std::string pos = (showCursor || !in.loaded) ? std::to_string(in.cursor + 1) + m
+                                : in.loadedIndex >= 0      ? std::to_string(in.loadedIndex + 1) + m
+                                                           : "-" + m;
+        check(textIn(d, file, pos.c_str(), TextRole::InputValue) != nullptr,
+              n + "FILE row shows \"" + pos + "\" (the position of the file named on the row)");
+    }
+    const char* raw        = showCursor ? cursorName(in) : (in.loaded ? in.playingName : "");
+    if(raw[0] != '\0')
+    {
+        const std::string want = displayCut(raw, (700 - 166) / 24);
+        const TextItem*   t    = textIn(d, file, want.c_str(), TextRole::InputValue);
+        check(t != nullptr && t->scale == 3 && t->y == 364 + 42,
+              n + "FILE row name \"" + want + "\" at 24 px (" + (showCursor ? "the cursor's file, X held" : "the loaded file") + ")");
+    }
+    else if(in.fileCount > 0)
+    {
+        bool x = false;
+        for(std::size_t k = 0; k < d.keyCount; ++k)
+            x = x || (d.keys[k].panel == file && std::strcmp(d.keys[k].label, "X") == 0 && d.keys[k].y > 364 + 60);
+        check(textIn(d, file, "NOTHING LOADED", TextRole::InputPlaying) != nullptr && x &&
+                  textIn(d, file, "HOLD", TextRole::InputValue) != nullptr &&
+                  textIn(d, file, ": CHOOSE FILE", TextRole::InputValue) != nullptr,
+              n + "FILE row: NOTHING LOADED and HOLD X: CHOOSE FILE");
+    }
+    else
+    {
+        const bool readError = std::strcmp(in.folderError, "CANNOT READ FOLDER") == 0;
+        const TextItem* t = textIn(d, file, readError ? "CANNOT READ FOLDER" : "NO FILES IN data/input", TextRole::InputStatus);
+        check(t != nullptr && t->scale == 3 && (!readError || filledBehind(d, file, box(*t), palette::clip)),
+              n + "FILE row: " + (readError ? "CANNOT READ FOLDER in inverse video" : "NO FILES IN data/input"));
+    }
+    // Progress for the loaded file.
+    if(in.loaded)
+    {
+        char a[16], t[16];
+        formatMinSec(a, sizeof a, in.ended ? in.loadedSeconds : in.positionSeconds);
+        formatMinSec(t, sizeof t, in.loadedSeconds);
+        const std::string times = std::string(a) + " / " + t;
+        const std::string mode  = std::string(inputPlayModeName(in.playMode)) + (in.ended ? " ENDED" : "");
+        int bars = 0;
+        for(std::size_t r = 0; r < d.rectCount; ++r)
+            bars += d.rects[r].panel == file && d.rects[r].tag == RectTag::Bar && d.rects[r].y == 364 + 75 ? 1 : 0;
+        check(textIn(d, file, times.c_str(), TextRole::InputValue) != nullptr &&
+                  textIn(d, file, mode.c_str(), TextRole::InputValue) != nullptr && bars == 2,
+              n + "FILE row: the progress bar, \"" + times + "\" and \"" + mode + "\"");
+    }
+    // The status line: one part.
+    const TextItem* status = nullptr;
+    for(std::size_t k = 0; k < d.textCount; ++k)
+        if(d.texts[k].panel == file && d.texts[k].role == TextRole::InputStatus && d.texts[k].y == 364 + 90)
+            status = &d.texts[k];
+    std::string want;
+    bool        bad = false;
+    if(in.loaded && showCursor && in.cursor != in.loadedIndex)
+        want = displayCut(("PLAYING: " + std::string(in.playingName)).c_str(), 33);
+    else if(in.state == InputLoadState::Failed)
+    {
+        want = std::string("CANNOT LOAD ") + in.fileName + ": " + in.reason;
+        bad  = true;
+    }
+    else if(in.state == InputLoadState::Loading)
+        want = displayCut(("LOADING " + std::string(in.fileName)).c_str(), 33);
+    else if(in.loadedCut)
+        want = "CUT TO 10 MIN";
+    else if(in.loadedEndedEarly)
+        want = "FILE ENDS EARLY";
+    if(want.empty())
+        check(status == nullptr, n + "FILE row: no status line");
+    else
+    {
+        const std::string text = status ? status->text : "";
+        bool              ok   = status != nullptr && status->scale == 2;
+        if(bad)
+        {
+            // The reason whole at the end; the name possibly cut.
+            const std::string tail = std::string(": ") + in.reason;
+            ok = ok && startsWith(text.c_str(), "CANNOT LOAD ") && text.size() >= tail.size() &&
+                 text.compare(text.size() - tail.size(), tail.size(), tail) == 0 &&
+                 filledBehind(d, file, box(*status), palette::clip) && sameColor(status->color, palette::bg);
+        }
+        else
+            ok = ok && text == want;
+        check(ok, n + "FILE row status \"" + text + "\" (want \"" + want + "\")");
+    }
+}
+
+void checkPopup(const std::string& n, const UiSnapshot& s, const DrawList& d)
+{
+    const UiInputView& in    = s.input;
+    const int          pop   = findPanel(d, PanelKind::InputPopup);
+    const bool         shown = s.tab == Tab::Input && in.source == InputSource::File && in.choosing && in.popup;
+    if(!shown)
+    {
+        check(pop < 0, n + "no pop-up");
+        return;
+    }
+    if(pop < 0)
+    {
+        check(false, n + "pop-up drawn");
+        return;
+    }
+    const PanelItem& pp = d.panels[static_cast<std::size_t>(pop)];
+    check(pp.overlay && pp.x >= 8 && pp.x + pp.w <= 712 && pp.y >= 184 && pp.y + pp.h <= 656 &&
+              static_cast<std::size_t>(pop) == d.panelCount - 1,
+          n + "pop-up: an overlay panel built last, inside x 8..712, y 184..656 (meters, tab bar, feedback band and "
+              "switch box uncovered)");
+    // Whole rows of the value grid: no strip cell is cut by the pop-up's top or bottom edge.
+    int cutCells = 0;
+    for(std::size_t i = 0; i < d.panelCount; ++i)
+    {
+        const PanelItem& c = d.panels[i];
+        if(c.overlay || (c.kind != PanelKind::StripCell && c.kind != PanelKind::CpuCell) || c.x >= pp.x + pp.w)
+            continue;
+        const bool overlapsY = c.y < pp.y + pp.h && pp.y < c.y + c.h;
+        const bool insideY   = c.y >= pp.y && c.y + c.h <= pp.y + pp.h;
+        cutCells += overlapsY && !insideY ? 1 : 0;
+    }
+    check(cutCells == 0, n + "pop-up: the value grid's rows it reaches are covered whole (no cell cut by its top or bottom)");
+    // The status line: CANNOT LOAD <name>: <reason> / LOADING <name> / PLAYING: <name>.
+    const TextItem* st = nullptr;
+    for(std::size_t k = 0; k < d.textCount; ++k)
+        if(d.texts[k].panel == pop && d.texts[k].y == 566)
+            st = &d.texts[k];
+    std::string wantSt;
+    if(in.state == InputLoadState::Failed)
+        wantSt = std::string("CANNOT LOAD ") + displayCut(in.fileName, 96) + ": " + in.reason;
+    else if(in.state == InputLoadState::Loading)
+        wantSt = "LOADING " + displayCut(in.fileName, 96);
+    else if(in.loaded)
+        wantSt = "PLAYING: " + displayCut(in.playingName, 96);
+    if(wantSt.size() > 42)
+        wantSt = wantSt.substr(0, 40); // compare the start only when it had to be cut
+    check(wantSt.empty() ? st == nullptr
+                         : (st != nullptr && startsWith(st->text, in.state == InputLoadState::Failed ? "CANNOT LOAD " : wantSt) &&
+                            (in.state != InputLoadState::Failed ||
+                             std::string(st->text).find(std::string(": ") + in.reason) != std::string::npos)),
+          n + "pop-up status \"" + (st ? st->text : "(none)") + "\"");
+    // Opaque: a filled background over the whole panel, a 4 px border.
+    bool bg = false, border = false;
+    for(std::size_t r = 0; r < d.rectCount; ++r)
+    {
+        if(d.rects[r].panel != pop)
+            continue;
+        bg     = bg || (d.rects[r].thickness == 0 && d.rects[r].x == pp.x && d.rects[r].y == pp.y && d.rects[r].w == pp.w &&
+                    d.rects[r].h == pp.h);
+        border = border || (d.rects[r].thickness >= 3 && d.rects[r].w == pp.w && d.rects[r].h == pp.h);
+    }
+    check(bg && border, n + "pop-up: an opaque background and a clear border");
+    const std::string head = in.fileCount > 0 ? "FILES " + std::to_string(in.cursor + 1) + " OF " + std::to_string(in.fileCount)
+                                              : std::string("FILES");
+    const std::string mode = std::string(inputPlayModeName(in.playMode)) + (in.ended ? " ENDED" : "");
+    check(textIn(d, pop, head.c_str(), TextRole::PopupText) != nullptr &&
+              textIn(d, pop, mode.c_str(), TextRole::PopupText) != nullptr,
+          n + "pop-up header \"" + head + "\" and \"" + mode + "\"");
+    int bad = 0, names = 0, cursors = 0, plays = 0;
+    for(int i = 0; i < in.listRows; ++i)
+    {
+        const int         index = in.listFirst + i;
+        const bool        isPlay = index == in.loadedIndex;
+        const std::string want   = displayCut(in.listNames[i], isPlay ? (632 - 8 - 64) / 32 : (8 + 704 - 16 - 64) / 32);
+        const TextItem*   t     = textIn(d, pop, want.c_str(), TextRole::PopupText);
+        if(t == nullptr || t->scale < 4)
+        {
+            ++bad;
+            std::printf("  pop-up row %d: \"%s\" not drawn at 32 px\n", i, want.c_str());
+            continue;
+        }
+        ++names;
+        bool mark = false, play = false;
+        for(std::size_t k = 0; k < d.textCount; ++k)
+        {
+            const TextItem& o = d.texts[k];
+            if(o.panel != pop || o.y + o.h <= t->y || o.y >= t->y + t->h || &o == t)
+                continue;
+            mark = mark || std::strcmp(o.text, ">") == 0;
+            play = play || std::strcmp(o.text, "PLAY") == 0;
+        }
+        const bool isCursor = index == in.cursor;
+        if(isCursor != (mark && filledBehind(d, pop, box(*t), palette::accent) && sameColor(t->color, palette::bg)))
+            ++bad;
+        if(play != (index == in.loadedIndex))
+            ++bad;
+        cursors += mark ? 1 : 0;
+        plays += play ? 1 : 0;
+    }
+    const bool cursorIn = in.cursor >= in.listFirst && in.cursor < in.listFirst + in.listRows;
+    const bool loadedIn = in.loadedIndex >= in.listFirst && in.loadedIndex < in.listFirst + in.listRows;
+    check(bad == 0 && names == in.listRows && in.listRows == std::min(in.fileCount, kInputListRows) &&
+              (in.fileCount == 0 || (cursorIn && cursors == 1)) && plays == (loadedIn ? 1 : 0),
+          n + "pop-up: " + std::to_string(in.listRows) + " names at 32 px (twice the M2b-A2 list), the cursor row in "
+              "inverse video with \">\", PLAY on the loaded row only" + (loadedIn ? "" : " (the playing file is out of the window)"));
+    if(in.fileCount == 0)
+        check(textIn(d, pop, "NO FILES IN data/input", TextRole::PopupText) != nullptr, n + "pop-up: NO FILES IN data/input");
+    int caps = 0;
+    for(std::size_t k = 0; k < d.keyCount; ++k)
+        if(d.keys[k].panel == pop)
+            caps += (std::strcmp(d.keys[k].label, "X") == 0 || std::strcmp(d.keys[k].label, "Y") == 0 ||
+                     std::strcmp(d.keys[k].label, "SELECT") == 0)
+                        ? 1
+                        : 0;
+    check(caps == 3 && textIn(d, pop, "RELEASE: LOAD", TextRole::PopupText) != nullptr &&
+              textIn(d, pop, "MODE", TextRole::PopupText) != nullptr &&
+              textIn(d, pop, "PLAY AGAIN", TextRole::PopupText) != nullptr,
+          n + "pop-up hints: X RELEASE: LOAD, Y MODE, SELECT PLAY AGAIN with key caps");
+}
+
+void checkInputTab(const std::string& n, const UiSnapshot& s, const MeterView& m, const DrawList& d)
+{
+    const UiInputView& in = s.input;
+    int                rows = 0, meters = 0, knobRows = 0;
+    for(std::size_t i = 0; i < d.panelCount; ++i)
+    {
+        rows += d.panels[i].kind == PanelKind::InputRow ? 1 : 0;
+        meters += d.panels[i].kind == PanelKind::InputMeter ? 1 : 0;
+        knobRows += d.panels[i].kind == PanelKind::Row ? 1 : 0;
+    }
+    if(s.tab != Tab::Input)
+    {
+        check(rows == 0 && meters == 0, n + "no INPUT rows or input meter off the INPUT tab");
+        return;
+    }
+    check(rows == 3 && meters == 1 && knobRows == 0, n + "INPUT: three input rows and the input meter, no knob rows");
+    const int src  = findPanel(d, PanelKind::InputRow, kNoKnobIndex, 0);
+    const int gain = findPanel(d, PanelKind::InputRow, kNoKnobIndex, 1);
+    const int file = findPanel(d, PanelKind::InputRow, kNoKnobIndex, 2);
+    const int mtr  = findPanel(d, PanelKind::InputMeter);
+    if(src < 0 || gain < 0 || file < 0 || mtr < 0)
+    {
+        check(false, n + "INPUT: every row found");
+        return;
+    }
+
+    // SOURCE: the name, OFF and FILE at 32 px, the current one in inverse video.
+    const TextItem* srcName = textIn(d, src, "SOURCE", TextRole::InputName);
+    check(srcName != nullptr && srcName->scale == 4, n + "SOURCE name at 32 px");
+    checkArrows(n, d, src, true, !s.xHeld, "SOURCE");
+    for(int i = 0; i < kInputSourceCount; ++i)
+    {
+        const auto      sv  = static_cast<InputSource>(i);
+        const TextItem* t   = textIn(d, src, inputSourceName(sv), TextRole::InputValue);
+        const bool      cur = sv == in.source;
+        check(t != nullptr && t->scale >= 4 && filledBehind(d, src, box(*t), palette::accent) == cur &&
+                  sameColor(t->color, cur ? palette::bg : palette::dim),
+              n + "SOURCE " + inputSourceName(sv) + (cur ? ": the current choice, in inverse video" : ": shown, not inverse"));
+    }
+
+    // GAIN: the dB value at 40 px, its bar at the knob position, the 0 dB tick at the middle.
+    char want[32];
+    formatInputGain(want, sizeof want, in.gainNorm);
+    const TextItem* gv = textIn(d, gain, want, TextRole::InputValue);
+    check(textIn(d, gain, "GAIN", TextRole::InputName) != nullptr && gv != nullptr && gv->scale == 5,
+          n + "GAIN shows \"" + want + "\" at 40 px");
+    checkArrows(n, d, gain, false, !s.xHeld, "GAIN");
+    std::vector<const RectItem*> bars;
+    const RectItem*              tick = nullptr;
+    for(std::size_t r = 0; r < d.rectCount; ++r)
+    {
+        if(d.rects[r].panel != gain)
+            continue;
+        if(d.rects[r].tag == RectTag::Bar)
+            bars.push_back(&d.rects[r]);
+        if(d.rects[r].tag == RectTag::GainUnityMark)
+            tick = &d.rects[r];
+    }
+    check(bars.size() >= 2 && std::fabs(bars[1]->w - bars[0]->w * in.gainNorm) <= 1.0 && tick != nullptr &&
+              std::fabs(tick->x + tick->w / 2.0 - (bars[0]->x + bars[0]->w * 0.5)) <= 1.0,
+          n + "GAIN bar at the knob position, the 0 dB tick at its middle");
+
+    if(in.source == InputSource::File)
+    {
+        checkInputFileChoose(n, s, d, file);
+        checkInputMeter(n, m, d, mtr);
+        return;
+    }
+
+    // FILE: dimmed unless FILE, armed only with X, the X cap.
+    const bool      fileOn = in.source == InputSource::File;
+    const TextItem* fname  = textIn(d, file, "FILE", TextRole::InputName);
+    check(fname != nullptr && fname->scale == 4 && sameColor(fname->color, fileOn ? palette::text : palette::faint),
+          n + "FILE name at 32 px, " + (fileOn ? "bright (source FILE)" : "dimmed (source not FILE)"));
+    checkArrows(n, d, file, true, fileOn && s.xHeld, "FILE");
+    const std::vector<std::string> keys = keysIn(d, file);
+    check(std::find(keys.begin(), keys.end(), "X") != keys.end(), n + "FILE row has the X cap");
+    // The name, cut with ".." when it does not fit.
+    char shown[sizeof in.fileName];
+    copyDisplayName(shown, sizeof shown, in.fileName, sizeof in.fileName);
+    if(shown[0] != '\0')
+    {
+        const TextItem* nameText = nullptr;
+        for(std::size_t i = 0; i < d.textCount; ++i)
+        {
+            const TextItem& t = d.texts[i];
+            if(t.panel != file || t.role != TextRole::InputValue)
+                continue;
+            const std::size_t len = std::strlen(t.text);
+            const bool whole = std::strcmp(t.text, shown) == 0;
+            const bool cut   = len > 2 && t.text[len - 1] == '.' && t.text[len - 2] == '.' &&
+                             std::strncmp(t.text, shown, len - 2) == 0 && std::strlen(shown) > len;
+            if(whole || cut)
+                nameText = &t;
+        }
+        const bool longName = std::strlen(shown) > 22;
+        check(nameText != nullptr && nameText->scale == 3 &&
+                  (longName ? std::strcmp(nameText->text, shown) != 0 : std::strcmp(nameText->text, shown) == 0),
+              n + "FILE name \"" + (nameText ? nameText->text : "(none)") + "\" at 24 px" + (longName ? ", cut with .." : ""));
+    }
+    if(in.fileCount > 0)
+    {
+        char pos[32];
+        if(in.fileIndex >= 0)
+            std::snprintf(pos, sizeof pos, "%d OF %d", in.fileIndex + 1, in.fileCount);
+        else if(in.fileName[0] != '\0')
+            std::snprintf(pos, sizeof pos, "- OF %d", in.fileCount);
+        else
+            std::snprintf(pos, sizeof pos, "%d FILE%s", in.fileCount, in.fileCount == 1 ? "" : "S");
+        check(textIn(d, file, pos, TextRole::InputValue) != nullptr, n + "FILE row shows \"" + pos + "\"");
+    }
+    if(in.shownIsLoaded)
+    {
+        char len[32];
+        formatClock(len, sizeof len, in.loadedSeconds);
+        check(textIn(d, file, len, TextRole::InputValue) != nullptr, n + "FILE row shows the length \"" + len + "\"");
+    }
+    const TextItem* status = nullptr;
+    for(std::size_t i = 0; i < d.textCount; ++i)
+        if(d.texts[i].panel == file && d.texts[i].role == TextRole::InputStatus)
+            status = &d.texts[i];
+    std::string wantStatus;
+    const bool  readError = std::strcmp(in.folderError, "CANNOT READ FOLDER") == 0;
+    switch(in.state)
+    {
+        case InputLoadState::NoFiles: wantStatus = readError ? "CANNOT READ FOLDER" : "NO FILES IN data/input"; break;
+        case InputLoadState::Loading: wantStatus = "LOADING.."; break;
+        case InputLoadState::Failed: wantStatus = std::string("CANNOT LOAD: ") + in.reason; break;
+        case InputLoadState::Ready:
+            wantStatus = in.loadedCut ? "CUT TO 10 MIN" : (in.loadedEndedEarly ? "FILE ENDS EARLY" : (fileOn ? "LOOPING" : "LOADED"));
+            break;
+        case InputLoadState::Idle: wantStatus = in.fileListCut ? "FIRST 256 FILES SHOWN" : ""; break;
+    }
+    if(wantStatus.empty())
+        check(status == nullptr, n + "FILE row: no status line");
+    else
+        check(status != nullptr && status->text == wantStatus && status->scale >= 2,
+              n + "FILE row status \"" + wantStatus + "\" (\"" + (status ? status->text : "(none)") + "\")");
+    if((in.state == InputLoadState::Failed || (in.state == InputLoadState::NoFiles && readError)) && status != nullptr)
+        check(filledBehind(d, file, box(*status), palette::clip) && sameColor(status->color, palette::bg),
+              n + "the failure is in inverse video (bg on clip)");
+    // The second line: what is really playing when it is not the file named above.
+    std::string wantSecond;
+    char        playing[sizeof in.playingName];
+    copyDisplayName(playing, sizeof playing, in.playingName, sizeof in.playingName);
+    if(in.loaded && !in.shownIsLoaded && playing[0] != '\0')
+        wantSecond = std::string(fileOn ? "PLAYING: " : "LOADED: ") + playing;
+    else if(in.state == InputLoadState::Failed)
+        wantSecond = "NOTHING PLAYING";
+    const TextItem* second = nullptr;
+    for(std::size_t i = 0; i < d.textCount; ++i)
+        if(d.texts[i].panel == file && d.texts[i].role == TextRole::InputPlaying)
+            second = &d.texts[i];
+    if(wantSecond.empty())
+        check(second == nullptr, n + "FILE row: no PLAYING line (the named file is the one loaded, or nothing failed)");
+    else
+        check(second != nullptr && second->scale == 2 &&
+                  (second->text == wantSecond ||
+                   (std::strlen(second->text) > 2 && std::string(second->text).substr(std::strlen(second->text) - 2) == ".." &&
+                    wantSecond.compare(0, std::strlen(second->text) - 2, second->text, std::strlen(second->text) - 2) == 0)),
+              n + "FILE row: second line \"" + wantSecond + "\" (\"" + (second ? second->text : "(none)") + "\")");
+    if(!wantSecond.empty() && status != nullptr)
+        check(status->scale == 2, n + "with a second line the status is at 16 px");
+
+    checkInputMeter(n, m, d, mtr);
+}
+
+// The input meter: CLIP (solid while clipping), IN, the held peak in dB.
+void checkInputMeter(const std::string& n, const MeterView& m, const DrawList& d, int mtr)
+{
+    const TextItem* clip = textIn(d, mtr, "CLIP", TextRole::ClipLabel);
+    check(clip != nullptr && filledBehind(d, mtr, box(*clip), palette::clip) == m.inClip,
+          n + "input meter: CLIP " + (m.inClip ? "solid (clipping)" : "outlined"));
+    char peak[32];
+    if(m.inHold > PeakMeter::kSilence)
+        formatDb(peak, sizeof peak, 20.0f * std::log10(m.inHold));
+    else
+        std::snprintf(peak, sizeof peak, "-inf dB");
+    check(textIn(d, mtr, "IN", TextRole::InputMeterText) != nullptr &&
+              textIn(d, mtr, peak, TextRole::InputMeterText) != nullptr,
+          n + "input meter: IN and the held peak \"" + peak + "\"");
+}
+
+void checkInIndicator(const std::string& n, const UiSnapshot& s, const MeterView& m, const DrawList& d)
+{
+    const int       p  = findPanel(d, PanelKind::Meter);
+    const TextItem* in = p >= 0 ? textIn(d, p, "IN", TextRole::InputMeterText) : nullptr;
+    if(s.input.source == InputSource::Off)
+    {
+        check(in == nullptr, n + "source OFF: no IN indicator");
+        return;
+    }
+    check(in != nullptr && in->y >= 452 && filledBehind(d, p, box(*in), palette::clip) == m.inClip &&
+              sameColor(in->color, m.inClip ? palette::bg : palette::text),
+          n + "source not OFF: the IN indicator at the bottom of the meter panel" +
+              (m.inClip ? ", in inverse video (clipping)" : ""));
+}
+
 void checkSnapshot(const char* name, const UiSnapshot& s, DrawList& d)
 {
-    buildLayout(s, uitest::firstFrameMeters(s), d);
+    const MeterView m = uitest::firstFrameMeters(s);
+    buildLayout(s, m, d);
     const std::string n = std::string(name) + ": ";
     checkStructure(n, d);
     checkRows(n, s, d);
     checkStrip(n, s, d);
     checkStrings(n, s, d);
+    checkInputTab(n, s, m, d);
+    checkInIndicator(n, s, m, d);
+    checkPopup(n, s, d);
 }
 
 // --- Feedback band ----------------------------------------------------------------------------
@@ -572,6 +1125,11 @@ double channel(std::uint8_t c)
 double luminance(const Color& c)
 {
     return 0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
+}
+double contrast(const Color& a, const Color& b);
+double contrastOf(const Color& a, const Color& b)
+{
+    return contrast(a, b);
 }
 double contrast(const Color& a, const Color& b)
 {
@@ -802,6 +1360,73 @@ int main()
         const UiSnapshot loop = uitest::playingSnapshot(Tab::Loop);
         check(std::fabs(fill - full * loop.knob[static_cast<std::size_t>(Knob::Frequency)].norm) <= 1.0,
               "LOOP row: frequency bar at the knob position");
+    }
+
+    // M2b-A: the IN indicator adds to the meter panel and moves nothing: every
+    // item of the screen with the source OFF is drawn identically with it on
+    // (FILE playing), in the same order; the extra items are in the meter panel,
+    // at y 452 or below, under the L/R/OUT labels. On every knob tab.
+    for(Tab t : {Tab::Loop, Tab::Filter, Tab::Reverb, Tab::Delay, Tab::Out})
+    {
+        UiSnapshot off = uitest::inputPlayingSnapshot();
+        off.tab        = t;
+        UiSnapshot on  = off;
+        off.input.source = InputSource::Off;
+        auto a = std::make_unique<DrawList>();
+        auto b = std::make_unique<DrawList>();
+        buildLayout(off, uitest::firstFrameMeters(off), *a);
+        buildLayout(on, uitest::firstFrameMeters(on), *b);
+        const int meter = findPanel(*b, PanelKind::Meter);
+        auto same = [](const TextItem& x, const TextItem& y) {
+            return std::strcmp(x.text, y.text) == 0 && x.x == y.x && x.y == y.y && x.scale == y.scale && x.panel == y.panel;
+        };
+        auto sameRect = [](const RectItem& x, const RectItem& y) {
+            return x.x == y.x && x.y == y.y && x.w == y.w && x.h == y.h && x.panel == y.panel && x.tag == y.tag;
+        };
+        // The extra items are appended after the meter panel's own: compare the
+        // off list against the on list with the meter panel's extras skipped.
+        std::size_t j = 0, extraBad = 0, mismatch = 0;
+        for(std::size_t i = 0; i < a->textCount; ++i, ++j)
+        {
+            while(j < b->textCount && !same(a->texts[i], b->texts[j]))
+            {
+                if(b->texts[j].panel != meter || b->texts[j].y < 452)
+                    ++extraBad;
+                ++j;
+            }
+            if(j >= b->textCount)
+                ++mismatch;
+        }
+        std::size_t k = 0;
+        for(std::size_t i = 0; i < a->rectCount; ++i, ++k)
+        {
+            while(k < b->rectCount && !sameRect(a->rects[i], b->rects[k]))
+            {
+                if(b->rects[k].panel != meter || b->rects[k].y < 452)
+                    ++extraBad;
+                ++k;
+            }
+            if(k >= b->rectCount)
+                ++mismatch;
+        }
+        const bool panelsSame = a->panelCount == b->panelCount && a->triCount == b->triCount && a->keyCount == b->keyCount;
+        check(mismatch == 0 && extraBad == 0 && panelsSame && b->textCount == a->textCount + 1,
+              std::string("IN indicator on ") + tabSpec(t).name +
+                  ": the strip, the CPU cell and the output meters are unchanged; only the IN label and bar are added, "
+                  "at the bottom of the meter panel");
+    }
+
+    // M2b-A: six tabs, INPUT last, each name inside its own tab box, none touching.
+    {
+        buildLayout(uitest::inputOffSnapshot(), MeterView{}, *d);
+        std::vector<const TextItem*> names;
+        for(std::size_t i = 0; i < d->textCount; ++i)
+            if(d->texts[i].role == TextRole::TabName)
+                names.push_back(&d->texts[i]);
+        bool ordered = names.size() == kTabCount && std::strcmp(names.back()->text, "INPUT") == 0;
+        for(std::size_t i = 1; ordered && i < names.size(); ++i)
+            ordered = names[i]->x >= names[i - 1]->x + names[i - 1]->w + 16 && names[i]->scale == 3;
+        check(ordered && kTabCount == 6, "tab bar: six tabs at 24 px, INPUT last, at least 16 px between names");
     }
 
     checkFeedbackBand(*d);

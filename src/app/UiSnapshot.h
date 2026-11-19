@@ -21,6 +21,7 @@
 #include "app/Buttons.h"
 #include "app/Tabs.h"
 #include "core/ControlSource.h"
+#include "input/InputView.h"
 
 namespace audreybrick
 {
@@ -97,6 +98,13 @@ struct UiSnapshot
     // --- Controller -------------------------------------------------------------------
     bool controllerConnected = false;
     char controllerName[64]  = {}; // SDL GameController name, empty if none
+
+    // --- Input (M2b-A) ------------------------------------------------------------------
+    // The INPUT tab's state and the input level (input/InputView.h). input.peak is
+    // the largest |in| after gain since the previous snapshot; the screen shows it
+    // on the INPUT tab and, whenever the source is not OFF, as the IN bar in the
+    // meter panel on every tab.
+    UiInputView input;
 };
 
 } // namespace audreybrick

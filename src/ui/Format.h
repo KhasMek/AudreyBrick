@@ -58,6 +58,18 @@ std::size_t formatPlain(char* out, std::size_t size, float value) noexcept;
 // CPU load (1.0 = 100 %): one decimal below 10 % ("3.2 %"), whole numbers above.
 std::size_t formatCpu(char* out, std::size_t size, float load) noexcept;
 
+// M2b-A. The input gain for a knob position n (gain = (2n)^2): "-inf dB" at 0,
+// otherwise its level by formatDb ("0.0 dB" at 0.5, "+12.0 dB" at 1, "-6.0 dB"
+// near 0.354).
+std::size_t formatInputGain(char* out, std::size_t size, float norm) noexcept;
+// A length as minutes, seconds and tenths, rounded to the tenth: "0:02.0",
+// "1:05.3", "5:00.0". Negative or not finite: "--".
+std::size_t formatClock(char* out, std::size_t size, float seconds) noexcept;
+
+// M2b-A2. A time as whole minutes and seconds, rounded down: "0:00", "1:23",
+// "10:00". Negative or not finite: "--".
+std::size_t formatMinSec(char* out, std::size_t size, float seconds) noexcept;
+
 // A knob's engine value in its unit, by the rules above ("" = plain, two decimals).
 std::size_t formatEngineValue(char* out, std::size_t size, float engine, const char* unit) noexcept;
 // What the screen shows for a knob: its engine value by the rules above.

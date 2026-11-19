@@ -197,6 +197,9 @@ std::size_t formatStats(char* out, std::size_t size, const PeriodicStats& s) noe
     char freq[320] = "";
     if(s.cpuFreq != nullptr && s.cpuFreq[0] != '\0')
         std::snprintf(freq, sizeof freq, ", cpu freq %s", s.cpuFreq);
+    char input[64] = "";
+    if(s.inputSource != nullptr && s.inputSource[0] != '\0')
+        std::snprintf(input, sizeof input, ", input %.16s peak %.3f", s.inputSource, static_cast<double>(s.inputPeak));
     char tail[64] = "";
     if(s.keysSuppressed > 0)
         std::snprintf(tail, sizeof tail, ", unmapped-key lines suppressed %llu",
@@ -204,12 +207,12 @@ std::size_t formatStats(char* out, std::size_t size, const PeriodicStats& s) noe
     const int n = std::snprintf(
         out, size,
         "stats: window %.1f s, callback load %.1f %% (max %.1f %%%s), callbacks %llu, overruns %llu, largest %llu frames, "
-        "audio clock %.3fx real time, peak L %.3f R %.3f, dropped %llu, frames %llu (%.1f fps)%s%s",
+        "audio clock %.3fx real time, peak L %.3f R %.3f, dropped %llu, frames %llu (%.1f fps)%s%s%s",
         s.windowSeconds, 100.0 * static_cast<double>(s.cpuSmoothed), 100.0 * static_cast<double>(s.cpuMax), hist,
         static_cast<unsigned long long>(s.callbacks), static_cast<unsigned long long>(s.overruns),
         static_cast<unsigned long long>(s.largestCallback), ratio,
         static_cast<double>(s.peakL), static_cast<double>(s.peakR), static_cast<unsigned long long>(s.dropped),
-        static_cast<unsigned long long>(s.framesDrawn), fps, freq, tail);
+        static_cast<unsigned long long>(s.framesDrawn), fps, freq, input, tail);
     return n < 0 ? 0 : (static_cast<std::size_t>(n) < size ? static_cast<std::size_t>(n) : size - 1);
 }
 

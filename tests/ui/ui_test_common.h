@@ -20,6 +20,7 @@
 #include "app/UiSnapshot.h"
 #include "core/ControlSource.h"
 #include "core/ParamTable.h"
+#include "input/InputTypes.h"
 #include "ui/DrawList.h"
 #include "ui/Layout.h"
 #include "ui/MeterBallistics.h"
@@ -201,6 +202,334 @@ inline UiSnapshot longStatusSnapshot()
     return s;
 }
 
+// --- M2b-A: the INPUT tab and the IN indicator ---------------------------------------
+inline void setInputName(UiSnapshot& s, const char* name)
+{
+    std::snprintf(s.input.fileName, sizeof s.input.fileName, "%s", name);
+}
+
+inline void setInputGain(UiSnapshot& s, float norm)
+{
+    s.input.gainNorm = norm;
+    s.input.gainDb   = inputGainDb(norm);
+}
+
+// M2b-A2: the browser window as InputController::fill() makes it: `names` are the
+// whole list (only the first kInputListRows around the cursor are copied).
+inline void setInputList(UiSnapshot& s, const std::vector<std::string>& names, int cursor, int loadedIndex)
+{
+    UiInputView& v  = s.input;
+    const int    n  = static_cast<int>(names.size());
+    const int    rows = n < kInputListRows ? n : kInputListRows;
+    int          first = cursor - kInputListRows / 2;
+    if(first > n - rows)
+        first = n - rows;
+    if(first < 0)
+        first = 0;
+    v.fileCount   = n;
+    v.cursor      = n > 0 ? cursor : -1;
+    v.listFirst   = first;
+    v.listRows    = rows;
+    v.loadedIndex = loadedIndex;
+    for(int i = 0; i < kInputListRows; ++i)
+        std::snprintf(v.listNames[i], sizeof v.listNames[i], "%s",
+                      i < rows ? names[static_cast<std::size_t>(first + i)].c_str() : "");
+}
+
+inline std::vector<std::string> fourFiles()
+{
+    return {"cello_drone.wav", "field_hum.wav", "notes.wav", "rain_on_roof.wav"};
+}
+
+// INPUT, source OFF, unity gain, four files listed, nothing loaded.
+inline UiSnapshot inputOffSnapshot()
+{
+    UiSnapshot s     = playingSnapshot(Tab::Input);
+    s.input.source   = InputSource::Off;
+    setInputGain(s, kInputGainUnityNorm);
+    s.input.fileCount = 4;
+    s.input.fileIndex = -1;
+    s.input.state     = InputLoadState::Idle;
+    setInputList(s, fourFiles(), 0, -1);
+    return s;
+}
+
+// INPUT, FILE playing: the second of four files, 1:23.4 long, gain +4.1 dB, input at -10 dB.
+inline UiSnapshot inputPlayingSnapshot()
+{
+    UiSnapshot s     = inputOffSnapshot();
+    s.input.source   = InputSource::File;
+    setInputGain(s, 0.62f);
+    setInputName(s, "cello_drone.wav");
+    std::snprintf(s.input.playingName, sizeof s.input.playingName, "%s", "cello_drone.wav");
+    s.input.fileIndex     = 1;
+    s.input.loaded        = true;
+    s.input.shownIsLoaded = true;
+    s.input.loadedSeconds = 83.4f;
+    s.input.state         = InputLoadState::Ready;
+    s.input.peak          = 0.316f;
+    setInputList(s, fourFiles(), 0, 0);
+    s.input.positionSeconds = 37.2f;
+    return s;
+}
+
+// FILE playing with X held and d-pad right down (the next file is asked for).
+inline UiSnapshot inputXHeldSnapshot()
+{
+    UiSnapshot s = inputPlayingSnapshot();
+    s.xHeld      = true;
+    setButton(s, Button::X, true);
+    setButton(s, Button::DpadRight, true);
+    setInputList(s, fourFiles(), 1, 0); // M2b-A3: X + right stepped the cursor on, the first file plays
+    s.input.choosing = true;
+    return s;
+}
+
+// FILE, the third file loading while the second still plays.
+inline UiSnapshot inputLoadingSnapshot()
+{
+    UiSnapshot s = inputPlayingSnapshot();
+    setInputName(s, "rain_on_roof.wav");
+    s.input.fileIndex     = 3;
+    s.input.shownIsLoaded = false;
+    s.input.state         = InputLoadState::Loading;
+    setInputList(s, fourFiles(), 3, 0);
+    return s;
+}
+
+// FILE, the fourth file failed (not a WAV file); the gain at 0 ("-inf dB").
+inline UiSnapshot inputErrorSnapshot()
+{
+    UiSnapshot s = inputPlayingSnapshot();
+    setInputName(s, "notes.wav");
+    s.input.fileIndex     = 3;
+    s.input.shownIsLoaded = false;
+    s.input.state         = InputLoadState::Failed;
+    std::snprintf(s.input.reason, sizeof s.input.reason, "%s", "NOT A WAV FILE");
+    setInputGain(s, 0.0f);
+    s.input.peak = 0.0f;
+    s.input.fileIndex = 2;
+    setInputList(s, fourFiles(), 2, 0);
+    return s;
+}
+
+// FILE selected, but the folder has no WAV files.
+inline UiSnapshot inputNoFilesSnapshot()
+{
+    UiSnapshot s     = inputOffSnapshot();
+    s.input.source   = InputSource::File;
+    s.input.fileCount = 0;
+    s.input.fileIndex = -1;
+    s.input.state     = InputLoadState::NoFiles;
+    setInputList(s, {}, -1, -1);
+    return s;
+}
+
+// FILE with the longest name the view holds, cut at ten minutes, 256 files
+// listed of more, the gain at +12 dB; long names in the list too.
+inline UiSnapshot inputLongNameSnapshot()
+{
+    UiSnapshot s = inputPlayingSnapshot();
+    setInputName(s, "an_extremely_long_field_recording_name_from_the_harbour_at_night_with_ships_and_gulls.wav");
+    s.input.fileCount     = 256;
+    s.input.fileIndex     = 199;
+    s.input.fileListCut   = true;
+    s.input.loadedSeconds = 600.0f;
+    s.input.loadedCut     = true;
+    setInputGain(s, 1.0f);
+    std::vector<std::string> names;
+    for(int i = 0; i < 256; ++i)
+        names.push_back(i == 199 ? std::string(s.input.fileName)
+                                 : "recording_" + std::to_string(1000 + i) + "_with_a_rather_long_descriptive_name.wav");
+    setInputList(s, names, 199, 199);
+    std::snprintf(s.input.playingName, sizeof s.input.playingName, "%s", s.input.fileName);
+    s.input.positionSeconds = 599.9f;
+    return s;
+}
+
+// FILE playing hot: the input clips (peak 1.4 after +12 dB of gain).
+inline UiSnapshot inputClipSnapshot()
+{
+    UiSnapshot s = inputPlayingSnapshot();
+    setInputGain(s, 1.0f);
+    s.input.peak = 1.4f;
+    return s;
+}
+
+// FILE, a load failed with nothing loaded before it.
+inline UiSnapshot inputErrorNothingSnapshot()
+{
+    UiSnapshot s = inputErrorSnapshot();
+    setInputName(s, "broken_recording.wav");
+    s.input.loaded         = false;
+    s.input.playingName[0] = '\0';
+    setInputList(s, fourFiles(), 2, -1);
+    std::snprintf(s.input.reason, sizeof s.input.reason, "%s", "UNSUPPORTED FORMAT");
+    setInputGain(s, 0.5f);
+    return s;
+}
+
+// FILE, the folder cannot be read (unreadable, or the scan failed); the file
+// loaded before keeps playing.
+inline UiSnapshot inputReadErrorSnapshot()
+{
+    UiSnapshot s = inputPlayingSnapshot();
+    s.input.fileName[0]   = '\0';
+    s.input.fileIndex     = -1;
+    s.input.fileCount     = 0;
+    s.input.shownIsLoaded = false;
+    s.input.folderMissing = true;
+    std::snprintf(s.input.folderError, sizeof s.input.folderError, "%s", "CANNOT READ FOLDER");
+    s.input.state = InputLoadState::NoFiles;
+    setInputList(s, {}, -1, -1);
+    return s;
+}
+
+// FILE, the source OFF meanwhile, a UTF-8 name being loaded while another (also
+// UTF-8) is loaded: raw bytes in the view, shown as "?".
+inline UiSnapshot inputUtf8Snapshot()
+{
+    UiSnapshot s = inputLoadingSnapshot();
+    s.input.source = InputSource::Off;
+    setInputName(s, "caf\xc3\xa9_\xe2\x99\xab_\xf0\x9f\x8e\xb5_night.wav");
+    std::snprintf(s.input.playingName, sizeof s.input.playingName, "%s", "\xc3\xbc\xc3\xb6\xc3\xa4_drone.wav");
+    return s;
+}
+
+// LOOP with FILE playing: the IN indicator in the meter panel.
+inline UiSnapshot inIndicatorSnapshot()
+{
+    UiSnapshot s = inputPlayingSnapshot();
+    s.tab        = Tab::Loop;
+    return s;
+}
+
+// DELAY with the input clipping: the IN indicator's label in inverse video.
+inline UiSnapshot inIndicatorClipSnapshot()
+{
+    UiSnapshot s = inputClipSnapshot();
+    s.tab        = Tab::Delay;
+    return s;
+}
+
+// M2b-A2: ONCE, played to its end.
+inline UiSnapshot inputOnceEndedSnapshot()
+{
+    UiSnapshot s           = inputPlayingSnapshot();
+    s.input.playMode       = InputPlayMode::Once;
+    s.input.ended          = true;
+    s.input.positionSeconds = 83.4f;
+    s.input.peak           = 0.0f;
+    return s;
+}
+
+// M2b-A2/A3: twelve files, the cursor on the sixth (the window scrolled), the
+// twelfth playing (out of the window).
+inline UiSnapshot inputTwelveFilesSnapshot()
+{
+    UiSnapshot               s = inputPlayingSnapshot();
+    std::vector<std::string> names;
+    for(int i = 1; i <= 12; ++i)
+        names.push_back("take_" + std::string(i < 10 ? "0" : "") + std::to_string(i) + (i == 7 ? "_caf\xc3\xa9" : "") +
+                        ".wav");
+    setInputList(s, names, 5, 11); // the window shows files 2..9: the playing take_12 is out of it
+    setInputName(s, "take_12.wav");
+    std::snprintf(s.input.playingName, sizeof s.input.playingName, "%s", "take_12.wav");
+    s.input.fileIndex       = 11;
+    s.input.loadedSeconds   = 245.0f;
+    s.input.positionSeconds = 83.0f;
+    return s;
+}
+
+// M2b-A2: FILE selected, files listed, nothing loaded yet (X + RIGHT: LOAD).
+inline UiSnapshot inputNothingLoadedSnapshot()
+{
+    UiSnapshot s     = inputOffSnapshot();
+    s.input.source   = InputSource::File;
+    setInputList(s, fourFiles(), 0, -1);
+    return s;
+}
+
+// M2b-A3: the pop-up list open over a snapshot (X held after an up/down press).
+inline UiSnapshot withPopup(UiSnapshot s, Button dir = Button::DpadDown)
+{
+    s.xHeld = true;
+    setButton(s, Button::X, true);
+    setButton(s, dir, true);
+    s.input.choosing = true;
+    s.input.popup    = true;
+    return s;
+}
+
+inline UiSnapshot inputPopupFourSnapshot()
+{
+    UiSnapshot s = inputPlayingSnapshot();
+    setInputList(s, fourFiles(), 2, 0);
+    return withPopup(s);
+}
+
+inline UiSnapshot inputPopupTwelveSnapshot()
+{
+    return withPopup(inputTwelveFilesSnapshot());
+}
+
+inline UiSnapshot inputPopupLongNameSnapshot()
+{
+    return withPopup(inputLongNameSnapshot(), Button::DpadUp);
+}
+
+inline UiSnapshot inputPopupNothingLoadedSnapshot()
+{
+    UiSnapshot s = inputNothingLoadedSnapshot();
+    setInputList(s, fourFiles(), 1, -1);
+    return withPopup(s);
+}
+
+inline UiSnapshot inputPopupLoadingSnapshot()
+{
+    UiSnapshot s = inputLoadingSnapshot();
+    setInputList(s, fourFiles(), 1, 0);
+    return withPopup(s);
+}
+
+inline UiSnapshot inputPopupOnceEndedSnapshot()
+{
+    return withPopup(inputOnceEndedSnapshot());
+}
+
+// A3 review: a failed load with the pop-up open, and X held (no pop-up) while the
+// failure shows: the PLAYING line names the loaded file.
+inline UiSnapshot inputPopupFailedSnapshot()
+{
+    return withPopup(inputErrorSnapshot());
+}
+
+inline UiSnapshot inputChoosingFailedSnapshot()
+{
+    UiSnapshot s = inputErrorSnapshot();
+    s.xHeld      = true;
+    setButton(s, Button::X, true);
+    setButton(s, Button::DpadLeft, true);
+    s.input.choosing = true;
+    return s;
+}
+
+// The loaded file not listed (renamed on the card): "- OF 4".
+inline UiSnapshot inputLoadedUnlistedSnapshot()
+{
+    UiSnapshot s = inputPlayingSnapshot();
+    setInputList(s, fourFiles(), 2, -1);
+    std::snprintf(s.input.playingName, sizeof s.input.playingName, "%s", "renamed_since.wav");
+    setInputName(s, "renamed_since.wav");
+    s.input.fileIndex = -1;
+    return s;
+}
+
+inline UiSnapshot inputPopupNoFilesSnapshot()
+{
+    return withPopup(inputNoFilesSnapshot());
+}
+
 struct NamedSnapshot
 {
     const char* name;
@@ -242,6 +571,32 @@ inline std::vector<NamedSnapshot> allSnapshots()
         {"long_status", longStatusSnapshot()},
         {"select_start", selectStartSnapshot()},
         {"device_status", deviceStatusSnapshot()},
+        {"input_off", inputOffSnapshot()},
+        {"input_file_playing", inputPlayingSnapshot()},
+        {"input_x_held", inputXHeldSnapshot()},
+        {"input_loading", inputLoadingSnapshot()},
+        {"input_error", inputErrorSnapshot()},
+        {"input_no_files", inputNoFilesSnapshot()},
+        {"input_long_name", inputLongNameSnapshot()},
+        {"input_clip", inputClipSnapshot()},
+        {"input_error_nothing_playing", inputErrorNothingSnapshot()},
+        {"input_read_error", inputReadErrorSnapshot()},
+        {"input_utf8_names", inputUtf8Snapshot()},
+        {"input_once_ended", inputOnceEndedSnapshot()},
+        {"input_twelve_files", inputTwelveFilesSnapshot()},
+        {"input_nothing_loaded", inputNothingLoadedSnapshot()},
+        {"input_popup_4_files", inputPopupFourSnapshot()},
+        {"input_popup_12_files", inputPopupTwelveSnapshot()},
+        {"input_popup_long_name", inputPopupLongNameSnapshot()},
+        {"input_popup_nothing_loaded", inputPopupNothingLoadedSnapshot()},
+        {"input_popup_loading", inputPopupLoadingSnapshot()},
+        {"input_popup_once_ended", inputPopupOnceEndedSnapshot()},
+        {"input_popup_no_files", inputPopupNoFilesSnapshot()},
+        {"input_popup_failed", inputPopupFailedSnapshot()},
+        {"input_choosing_failed", inputChoosingFailedSnapshot()},
+        {"input_loaded_unlisted", inputLoadedUnlistedSnapshot()},
+        {"in_indicator_loop", inIndicatorSnapshot()},
+        {"in_indicator_clip_delay", inIndicatorClipSnapshot()},
     };
 }
 
@@ -258,6 +613,11 @@ inline ui::MeterView firstFrameMeters(const UiSnapshot& s)
         v.hold[ch]  = m[ch].hold();
         v.clip[ch]  = m[ch].clipped();
     }
+    ui::PeakMeter in; // M2b-A
+    in.update(s.input.peak, s.timeSeconds);
+    v.inLevel = in.level();
+    v.inHold  = in.hold();
+    v.inClip  = in.clipped();
     return v;
 }
 

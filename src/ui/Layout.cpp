@@ -12,6 +12,8 @@
 #include "app/Buttons.h"
 #include "app/Tabs.h"
 #include "core/ParamTable.h"
+#include "input/InputTypes.h"
+#include "input/InputView.h"
 #include "ui/Format.h"
 #include "ui/MeterBallistics.h"
 
@@ -28,9 +30,11 @@ constexpr int kMargin = 8;
 
 constexpr int kTabBarY = 4;
 constexpr int kTabBarH = 48;
+// Tabs from x 76 to 952 (between the L1 and R1 keys), 4 px apart. Since M2b-A
+// (six tabs) each is as wide as its name at 24 px plus an equal share of the rest.
 constexpr int kTabsX   = 76;
-constexpr int kTabStep = 174;
-constexpr int kTabW    = 170;
+constexpr int kTabsEnd = 952;
+constexpr int kTabGap  = 4;
 
 constexpr int kBandY  = 60;
 constexpr int kBandH  = 116;
@@ -65,6 +69,45 @@ constexpr int kMeterH    = 200;
 constexpr int kMeterBarW = 24;
 constexpr int kMeterLX   = 952;
 constexpr int kMeterRX   = 984;
+
+// M2b-A: the IN indicator in the meter panel (y 452..472, under the L/R/OUT labels).
+constexpr int kInIndX = 884;
+constexpr int kInIndY = 454;
+constexpr int kInBarX = 924;
+constexpr int kInBarY = 457;
+constexpr int kInBarW = 84;
+constexpr int kInBarH = 10;
+
+// M2b-A: the INPUT tab. Rows x 8..712, the input meter x 720..872, both in the
+// current tab's area (y 184..472).
+constexpr int kInRowW      = 704;
+constexpr int kInRight     = 700; // right edge of the rows' values
+constexpr int kInSourceY   = 184;
+constexpr int kInSourceH   = 76;
+constexpr int kInGainY     = 266;
+constexpr int kInGainH     = 92;
+constexpr int kInFileY     = 364;
+constexpr int kInFileH     = 108;
+constexpr int kInMeterX    = 720;
+constexpr int kInMeterW    = 152;
+constexpr int kInBigBarX   = 800;
+constexpr int kInBigBarW   = 56;
+// M2b-A3: the pop-up file list, over the tab's rows and the first three
+// columns of the value strip, whose three rows it covers whole (x 8..712, y
+// 184..656: the strip ends at 656; the tab bar, feedback band, switch box,
+// meters, the strip's fourth column and the status line stay visible).
+constexpr int kPopX      = 8;
+constexpr int kPopY      = 184;
+constexpr int kPopW      = 704;
+constexpr int kPopH      = 472;
+constexpr int kPopRowY   = 232; // first row
+constexpr int kPopStep   = 40;  // 32 px names
+constexpr int kPopNameX  = 64;
+constexpr int kPopPlayX  = 632; // the PLAY mark
+constexpr int kPopStatusY = 566;
+constexpr int kPopHintsY  = 618;
+constexpr int kSmallArrowA = 84; // the compact rows' arrows (RowGeom kSmall)
+constexpr int kSmallArrowB = 122;
 
 constexpr int kStripY    = 480;
 constexpr int kStripStep = 60;
@@ -101,7 +144,7 @@ class Builder
 
     // Starts a panel; the items that follow belong to it.
     void panel(PanelKind kind, int x, int y, int w, int h, int knob = kNoKnobIndex, int index = 0,
-               bool active = false, bool xBinding = false, bool leftRight = false) noexcept
+               bool active = false, bool xBinding = false, bool leftRight = false, bool overlay = false) noexcept
     {
         if(d_.panelCount >= limitOf(d_.panelLimit, DrawList::kMaxPanels))
         {
@@ -120,6 +163,7 @@ class Builder
         p.active     = active;
         p.xBinding   = xBinding;
         p.leftRight  = leftRight;
+        p.overlay    = overlay;
         panel_       = static_cast<int>(d_.panelCount++);
     }
 
@@ -340,20 +384,33 @@ void tabBar(Builder& b, const UiSnapshot& s) noexcept
     b.tri(rx + 40, kTabBarY + 16, 16, ArrowDir::Right, r1fg, true);
     b.key("R1", rx, kTabBarY, 60, kTabBarH, r1);
 
+    // Widths: each name's width at scale 3 plus an equal share of the space left
+    // (the remainder, a few pixels, goes to the first tabs).
+    int names = 0;
+    for(std::size_t i = 0; i < kTabCount; ++i)
+        names += textWidth(tabSpec(static_cast<Tab>(i)).name, 3);
+    const int count = static_cast<int>(kTabCount);
+    const int spare = (kTabsEnd - kTabsX) - (count - 1) * kTabGap - names;
+    const int pad   = spare > 0 ? spare / count : 0;
+    int       extra = spare > 0 ? spare % count : 0;
+    int       x     = kTabsX;
     for(std::size_t i = 0; i < kTabCount; ++i)
     {
         const Tab  t      = static_cast<Tab>(i);
         const bool active = t == s.tab;
-        const int  x      = kTabsX + static_cast<int>(i) * kTabStep;
+        const int  w      = textWidth(tabSpec(t).name, 3) + pad + (extra > 0 ? 1 : 0);
+        if(extra > 0)
+            --extra;
         if(active)
-            b.fill(x, kTabBarY, kTabW, kTabBarH, pal::accent);
+            b.fill(x, kTabBarY, w, kTabBarH, pal::accent);
         else
         {
-            b.fill(x, kTabBarY, kTabW, kTabBarH, pal::panel);
-            b.frame(x, kTabBarY, kTabW, kTabBarH, pal::edge, 1);
+            b.fill(x, kTabBarY, w, kTabBarH, pal::panel);
+            b.frame(x, kTabBarY, w, kTabBarH, pal::edge, 1);
         }
-        b.textCentered(x + kTabW / 2, kTabBarY + (kTabBarH - glyphPx(3)) / 2, 3, active ? pal::bg : pal::dim,
+        b.textCentered(x + w / 2, kTabBarY + (kTabBarH - glyphPx(3)) / 2, 3, active ? pal::bg : pal::dim,
                        TextRole::TabName, tabSpec(t).name);
+        x += w + kTabGap;
     }
 }
 
@@ -674,6 +731,577 @@ void meters(Builder& b, const MeterView& m) noexcept
     b.text(kMeterX + 4, 436, 2, pal::dim, TextRole::MeterLabel, "OUT");
 }
 
+// M2b-A: the IN indicator, inside the meter panel below the L/R/OUT labels, only
+// while the source is not OFF. The label is in inverse video while the input clips.
+void inIndicator(Builder& b, const UiSnapshot& s, const MeterView& m) noexcept
+{
+    if(s.input.source == InputSource::Off)
+        return;
+    if(m.inClip)
+        b.fill(kInIndX - 2, kInIndY - 2, textWidth("IN", 2) + 4, 20, pal::clip);
+    b.text(kInIndX, kInIndY, 2, m.inClip ? pal::bg : pal::text, TextRole::InputMeterText, "IN");
+    b.fill(kInBarX, kInBarY, kInBarW, kInBarH, pal::panelDark, RectTag::Bar);
+    const int w = fraction(kInBarW, meterPosition(m.inLevel));
+    if(w > 0)
+        b.fill(kInBarX, kInBarY, w, kInBarH, m.inClip ? pal::clip : pal::meter, RectTag::Bar);
+    if(m.inHold > 0.0f)
+    {
+        int hx = kInBarX + fraction(kInBarW, meterPosition(m.inHold)) - 2;
+        hx     = hx < kInBarX ? kInBarX : (hx > kInBarX + kInBarW - 3 ? kInBarX + kInBarW - 3 : hx);
+        b.fill(hx, kInBarY, 3, kInBarH, pal::text, RectTag::Bar);
+    }
+    b.frame(kInBarX, kInBarY, kInBarW, kInBarH, pal::edge, 1);
+}
+
+// --- INPUT tab (M2b-A) ----------------------------------------------------------------------
+// The arrows, the X cap and the name of an INPUT row, in the layout of a compact
+// knob row (32 px arrows at x 84 and 122, the 32 px name at x 166).
+//   bright: the row's content is current (text colour; FILE is dimmed unless the
+//           source is FILE).
+//   armed:  its d-pad binding acts in the current X state (filled arrows, accent
+//           frame; the panel's `active`), as the knob rows show it: SOURCE and
+//           GAIN without X, FILE with X (and only while the source is FILE).
+void inputRowStart(Builder& b, const UiSnapshot& s, int index, int y, int h, int midY, bool bright, bool armed,
+                   bool leftRight, bool xBinding, const char* name) noexcept
+{
+    const Color fg = bright ? pal::text : pal::faint;
+    b.panel(PanelKind::InputRow, kRowX, y, kInRowW, h, kNoKnobIndex, index, armed, xBinding, leftRight);
+    b.fill(kRowX, y, kInRowW, h, bright ? pal::panel : pal::panelDark);
+    b.frame(kRowX, y, kInRowW, h, armed ? pal::accent : pal::edge, armed ? 3 : 1);
+    if(xBinding)
+    {
+        b.keyCap(16, midY - 16, "X", 3, fg, pal::panel, bright && down(s, Button::X));
+        b.text(52, midY - 12, 3, fg, TextRole::Other, "+");
+    }
+    // The d-pad directions; a held direction gets a frame while the binding acts.
+    const Button dirA   = leftRight ? Button::DpadLeft : Button::DpadUp;
+    const Button dirB   = leftRight ? Button::DpadRight : Button::DpadDown;
+    const int    arrowY = midY - 16;
+    if(armed && down(s, dirA))
+        b.frame(kSmallArrowA - 4, arrowY - 4, 40, 40, pal::accent, 2);
+    if(armed && down(s, dirB))
+        b.frame(kSmallArrowB - 4, arrowY - 4, 40, 40, pal::accent, 2);
+    arrowPair(b, kSmallArrowA, kSmallArrowB, arrowY, 32, leftRight, armed ? pal::text : fg, armed);
+    b.text(kRowNameX, midY - 16, 4, fg, TextRole::InputName, name);
+}
+
+void inputSourceRow(Builder& b, const UiSnapshot& s) noexcept
+{
+    const int y    = kInSourceY;
+    const int h    = kInSourceH;
+    const int midY = y + h / 2;
+    const int boxH = 48;
+    inputRowStart(b, s, 0, y, h, midY, true, !s.xHeld, true, false, "SOURCE");
+    // The choices as boxes, right-aligned; the current one solid (inverse video).
+    int right = kInRight;
+    for(int i = kInputSourceCount - 1; i >= 0; --i)
+    {
+        const auto        src  = static_cast<InputSource>(i);
+        const char*       name = inputSourceName(src);
+        const bool        cur  = src == s.input.source;
+        const int         w    = textWidth(name, 4) + 32;
+        const int         x    = right - w;
+        if(cur)
+            b.fill(x, midY - boxH / 2, w, boxH, pal::accent);
+        else
+            b.frame(x, midY - boxH / 2, w, boxH, pal::faint, 2);
+        b.text(x + 16, midY - 16, 4, cur ? pal::bg : pal::dim, TextRole::InputValue, name);
+        right = x - 12;
+    }
+}
+
+void inputGainRow(Builder& b, const UiSnapshot& s) noexcept
+{
+    char value[24];
+    formatInputGain(value, sizeof value, s.input.gainNorm);
+    const int y    = kInGainY;
+    const int midY = y + 28;
+    inputRowStart(b, s, 1, y, kInGainH, midY, true, !s.xHeld, false, false, "GAIN");
+    b.textRight(kInRight, midY - 20, 5, pal::text, TextRole::InputValue, value);
+    // The bar: the knob position, with a tick at unity (n = 0.5, 0 dB).
+    const int barY = y + 60;
+    const int barW = kInRight - kRowNameX;
+    b.fill(kRowNameX, barY, barW, 20, pal::panelDark, RectTag::Bar);
+    b.fill(kRowNameX, barY, fraction(barW, s.input.gainNorm), 20, pal::accent, RectTag::Bar);
+    b.frame(kRowNameX, barY, barW, 20, pal::edge, 1);
+    const int tx = kRowNameX + fraction(barW, kInputGainUnityNorm);
+    b.fill(tx - 1, barY - 5, 3, 30, pal::text, RectTag::GainUnityMark);
+}
+
+void inputFileRow(Builder& b, const UiSnapshot& s) noexcept
+{
+    const UiInputView& in     = s.input;
+    const int          y      = kInFileY;
+    const int          midY   = y + 26;
+    const bool         active = in.source == InputSource::File;
+    const Color        fg     = active ? pal::text : pal::faint;
+    inputRowStart(b, s, 2, y, kInFileH, midY, active, active && s.xHeld, true, true, "FILE");
+
+    // Line 1, right: "n OF m" ("4 FILES" while none is chosen).
+    char pos[24] = "";
+    if(in.fileCount > 0)
+    {
+        if(in.fileIndex >= 0)
+            std::snprintf(pos, sizeof pos, "%d OF %d", in.fileIndex + 1, in.fileCount);
+        else if(in.fileName[0] != '\0')
+            std::snprintf(pos, sizeof pos, "- OF %d", in.fileCount);
+        else
+            std::snprintf(pos, sizeof pos, "%d FILE%s", in.fileCount, in.fileCount == 1 ? "" : "S");
+        b.textRight(kInRight, y + 14, 3, fg, TextRole::InputValue, pos);
+    }
+
+    // Line 2: the file name, the whole row wide, cut with "..". Names are drawn
+    // as display text (non-ASCII as "?"), then cut, so a cut never splits a
+    // character.
+    // (Two status lines below: the name sits 4 px higher.)
+    const bool twoLines = (in.loaded && !in.shownIsLoaded && in.playingName[0] != '\0') || in.state == InputLoadState::Failed;
+    if(in.fileName[0] != '\0')
+    {
+        const int   room = (kInRight - kRowNameX) / glyphPx(3);
+        char        safe[sizeof in.fileName];
+        char        name[TextItem::kMaxChars + 1];
+        std::size_t keep = room > 0 ? static_cast<std::size_t>(room) : 0;
+        if(keep > TextItem::kMaxChars)
+            keep = TextItem::kMaxChars;
+        copyDisplayName(safe, sizeof safe, in.fileName, sizeof in.fileName);
+        appendCut(name, sizeof name, 0, safe, keep);
+        b.text(kRowNameX, twoLines ? y + 42 : y + 46, 3, fg, TextRole::InputValue, name);
+    }
+
+    // Line 3: the status. While a different file sounds than the one named on
+    // line 2 (loading another, a failed load, a folder that cannot be listed),
+    // or a load failed with nothing loaded, the status and a second line ("PLAYING:
+    // <name>", "LOADED: <name>" with the source OFF, or "NOTHING PLAYING") share
+    // the space at 16 px. Otherwise the length of the loaded file and the status at
+    // 24 px. A failure is in inverse video.
+    char        status[64] = "";
+    bool        bad        = false;
+    const bool  readError  = std::strcmp(in.folderError, "CANNOT READ FOLDER") == 0;
+    switch(in.state)
+    {
+        case InputLoadState::NoFiles:
+            std::snprintf(status, sizeof status, "%s", readError ? "CANNOT READ FOLDER" : "NO FILES IN data/input");
+            bad = readError;
+            break;
+        case InputLoadState::Loading: std::snprintf(status, sizeof status, "LOADING.."); break;
+        case InputLoadState::Failed:
+            std::snprintf(status, sizeof status, "CANNOT LOAD: %s", in.reason);
+            bad = true;
+            break;
+        case InputLoadState::Ready:
+            if(in.loadedCut)
+                std::snprintf(status, sizeof status, "CUT TO 10 MIN");
+            else if(in.loadedEndedEarly)
+                std::snprintf(status, sizeof status, "FILE ENDS EARLY");
+            else
+                std::snprintf(status, sizeof status, "%s", active ? "LOOPING" : "LOADED");
+            break;
+        case InputLoadState::Idle: break;
+    }
+    if(status[0] == '\0' && in.fileListCut)
+        std::snprintf(status, sizeof status, "FIRST %d FILES SHOWN", in.fileCount);
+
+    const bool otherPlaying = in.loaded && !in.shownIsLoaded && in.playingName[0] != '\0';
+    char       second[TextItem::kMaxChars + 1] = "";
+    if(otherPlaying)
+    {
+        const char* label = active ? "PLAYING: " : "LOADED: ";
+        char        safe[sizeof in.playingName];
+        copyDisplayName(safe, sizeof safe, in.playingName, sizeof in.playingName);
+        const std::size_t room = static_cast<std::size_t>((kInRight - kRowNameX) / glyphPx(2));
+        const std::size_t at   = appendCut(second, sizeof second, 0, label, sizeof second);
+        appendCut(second, sizeof second, at, safe, room > at ? room - at : 0);
+    }
+    else if(in.state == InputLoadState::Failed)
+    {
+        std::snprintf(second, sizeof second, "NOTHING PLAYING");
+    }
+    const Color statusFg = active ? pal::dim : pal::faint;
+
+    if(second[0] != '\0')
+    {
+        // Two lines at 16 px: the status (y + 72), the second line (y + 91).
+        const int   ty = y + 72;
+        char        cut[TextItem::kMaxChars + 1];
+        const auto  room = static_cast<std::size_t>((kInRight - kRowNameX - (bad ? 16 : 0)) / glyphPx(2));
+        appendCut(cut, sizeof cut, 0, status, room < TextItem::kMaxChars ? room : TextItem::kMaxChars);
+        if(bad)
+        {
+            b.fill(kRowNameX, ty - 2, textWidth(cut, 2) + 16, glyphPx(2) + 4, pal::clip);
+            b.text(kRowNameX + 8, ty, 2, pal::bg, TextRole::InputStatus, cut);
+        }
+        else if(cut[0] != '\0')
+        {
+            b.text(kRowNameX, ty, 2, statusFg, TextRole::InputStatus, cut);
+        }
+        b.text(kRowNameX, y + 91, 2, fg, TextRole::InputPlaying, second);
+        return;
+    }
+
+    char len[24] = "";
+    if(in.shownIsLoaded)
+        formatClock(len, sizeof len, in.loadedSeconds);
+    int sx = kRowNameX;
+    if(len[0] != '\0' && !bad)
+    {
+        b.text(sx, y + 76, 3, fg, TextRole::InputValue, len);
+        sx += textWidth(len, 3) + 24;
+    }
+    if(status[0] != '\0')
+    {
+        const int   width = kInRight - sx - (bad ? 16 : 0);
+        const int   scale = textWidth(status, 3) <= width ? 3 : 2;
+        char        cut[TextItem::kMaxChars + 1];
+        std::size_t room = width > 0 ? static_cast<std::size_t>(width / glyphPx(scale)) : 0;
+        if(room > TextItem::kMaxChars)
+            room = TextItem::kMaxChars;
+        appendCut(cut, sizeof cut, 0, status, room);
+        const int ty = y + kInFileH - 8 - glyphPx(scale); // y + 76 at 24 px, y + 84 at 16 px
+        if(bad)
+        {
+            b.fill(sx, ty - 4, textWidth(cut, scale) + 16, glyphPx(scale) + 8, pal::clip);
+            b.text(sx + 8, ty, scale, pal::bg, TextRole::InputStatus, cut);
+        }
+        else
+        {
+            b.text(sx, ty, scale, statusFg, TextRole::InputStatus, cut);
+        }
+    }
+}
+
+// M2b-A3: the FILE row with the source FILE (M2b-A's place and sizes):
+//   right of FILE, "n OF m": the position of the file on the name line (the
+//          cursor's while choosing or when nothing is loaded, else the loaded
+//          file's; "- OF m" if the loaded file is not listed);
+//   the name at 24 px: the cursor's file while X is held, else the loaded file;
+//          NOTHING LOADED (with HOLD X: CHOOSE FILE below it) when nothing is
+//          loaded and files exist; NO FILES IN data/input or the folder error
+//          (in inverse video) without files;
+//   y + 72 for the loaded file, at 16 px: a slim progress bar, "1:23 / 4:05"
+//          (elapsed / length), LOOP or ONCE, and ENDED;
+//   y + 90 at 16 px, one status, when needed: see the status line below.
+const char* cursorNameOf(const UiInputView& in) noexcept
+{
+    const int i = in.cursor - in.listFirst;
+    return (in.cursor >= 0 && i >= 0 && i < in.listRows && i < kInputListRows) ? in.listNames[i] : "";
+}
+
+// One status text, cut to `room` characters: with `playingOnly`, "PLAYING:
+// <loaded>"; else by priority "CANNOT LOAD <name>: <reason>" (the name cut so
+// the reason stays whole; `bad` set), "LOADING <name>", and (only if
+// `orPlaying`) "PLAYING: <loaded>". Returns whether anything was written.
+bool popupStatusText(char* out, std::size_t size, const UiInputView& in, int room, bool playingOnly, bool& bad,
+                     bool orPlaying = false) noexcept
+{
+    out[0]                = '\0';
+    bad                   = false;
+    const std::size_t lim = static_cast<std::size_t>(room > 0 ? room : 0) < size - 1
+                                ? static_cast<std::size_t>(room > 0 ? room : 0)
+                                : size - 1;
+    char safe[96];
+    if(!playingOnly && in.state == InputLoadState::Failed)
+    {
+        bad = true;
+        char tail[48];
+        std::snprintf(tail, sizeof tail, ": %s", in.reason);
+        const std::size_t tl = std::strlen(tail);
+        copyDisplayName(safe, sizeof safe, in.fileName);
+        std::size_t at = appendCut(out, size, 0, "CANNOT LOAD ", lim);
+        const std::size_t nameRoom = lim > at + tl + 1 ? lim - 1 - at - tl : 0; // 1: the inverse box's margin
+        at = appendCut(out, size, at, safe, nameRoom);
+        appendCut(out, size, at, tail, tl);
+        return true;
+    }
+    if(!playingOnly && in.state == InputLoadState::Loading)
+    {
+        copyDisplayName(safe, sizeof safe, in.fileName);
+        const std::size_t at = appendCut(out, size, 0, "LOADING ", lim);
+        appendCut(out, size, at, safe, lim > at ? lim - at : 0);
+        return true;
+    }
+    if((playingOnly || orPlaying) && in.loaded)
+    {
+        copyDisplayName(safe, sizeof safe, in.playingName);
+        const std::size_t at = appendCut(out, size, 0, "PLAYING: ", lim);
+        appendCut(out, size, at, safe, lim > at ? lim - at : 0);
+        return true;
+    }
+    return false;
+}
+
+void inputFileRowChoose(Builder& b, const UiSnapshot& s) noexcept
+{
+    const UiInputView& in   = s.input;
+    const int          y    = kInFileY;
+    const int          midY = y + 26;
+    inputRowStart(b, s, 2, y, kInFileH, midY, true, s.xHeld, true, true, "FILE");
+    const int room3 = (kInRight - kRowNameX) / glyphPx(3);
+    const int room2 = (kInRight - kRowNameX) / glyphPx(2);
+
+    // "n OF m" describes the file on the name line: the cursor's while choosing
+    // (or when nothing is loaded), else the loaded file's ("- OF m" if it is not
+    // listed).
+    const bool showCursor = in.choosing && in.fileCount > 0 && cursorNameOf(in)[0] != '\0';
+    if(in.fileCount > 0)
+    {
+        char pos[24];
+        if(showCursor || !in.loaded)
+            std::snprintf(pos, sizeof pos, "%d OF %d", in.cursor + 1, in.fileCount);
+        else if(in.loadedIndex >= 0)
+            std::snprintf(pos, sizeof pos, "%d OF %d", in.loadedIndex + 1, in.fileCount);
+        else
+            std::snprintf(pos, sizeof pos, "- OF %d", in.fileCount);
+        if(in.cursor >= 0 || in.loaded)
+            b.textRight(kInRight, y + 14, 3, pal::text, TextRole::InputValue, pos);
+    }
+
+    // The name line.
+    const char* raw        = showCursor ? cursorNameOf(in) : (in.loaded ? in.playingName : "");
+    if(raw[0] != '\0')
+    {
+        char safe[96];
+        char name[TextItem::kMaxChars + 1];
+        copyDisplayName(safe, sizeof safe, raw);
+        appendCut(name, sizeof name, 0, safe, static_cast<std::size_t>(room3));
+        b.text(kRowNameX, y + 42, 3, pal::text, TextRole::InputValue, name);
+    }
+    else if(in.fileCount > 0)
+    {
+        b.text(kRowNameX, y + 42, 3, pal::dim, TextRole::InputPlaying, "NOTHING LOADED");
+    }
+    else
+    {
+        const bool  readError = std::strcmp(in.folderError, "CANNOT READ FOLDER") == 0;
+        const char* why       = readError ? "CANNOT READ FOLDER" : "NO FILES IN data/input";
+        if(readError)
+        {
+            b.fill(kRowNameX - 4, y + 38, textWidth(why, 3) + 8, 32, pal::clip);
+            b.text(kRowNameX, y + 42, 3, pal::bg, TextRole::InputStatus, why);
+        }
+        else
+        {
+            b.text(kRowNameX, y + 42, 3, pal::dim, TextRole::InputStatus, why);
+        }
+    }
+
+    // Progress (the loaded file), or how to choose.
+    const int py = y + 72;
+    if(in.loaded)
+    {
+        const int   barW = 140;
+        const float frac = in.loadedSeconds > 0.0f ? in.positionSeconds / in.loadedSeconds : 0.0f;
+        b.fill(kRowNameX, py + 3, barW, 10, pal::panelDark, RectTag::Bar);
+        b.fill(kRowNameX, py + 3, fraction(barW, in.ended ? 1.0f : frac), 10, pal::accent, RectTag::Bar);
+        b.frame(kRowNameX, py + 3, barW, 10, pal::edge, 1);
+        char a[16], t[16], times[40];
+        formatMinSec(a, sizeof a, in.ended ? in.loadedSeconds : in.positionSeconds);
+        formatMinSec(t, sizeof t, in.loadedSeconds);
+        std::snprintf(times, sizeof times, "%s / %s", a, t);
+        b.text(kRowNameX + barW + 12, py, 2, pal::text, TextRole::InputValue, times);
+        char mode[24];
+        std::snprintf(mode, sizeof mode, "%s%s", inputPlayModeName(in.playMode), in.ended ? " ENDED" : "");
+        b.textRight(kInRight, py, 2, pal::text, TextRole::InputValue, mode);
+    }
+    else if(in.fileCount > 0)
+    {
+        b.text(kRowNameX, py, 2, pal::text, TextRole::InputValue, "HOLD");
+        const int x = kRowNameX + textWidth("HOLD", 2) + 8;
+        const int w = b.keyCap(x, py - 2, "X", 2, pal::text, pal::panel, s.xHeld, 20);
+        b.text(x + w + 4, py, 2, pal::text, TextRole::InputValue, ": CHOOSE FILE");
+        char mode[16];
+        std::snprintf(mode, sizeof mode, "%s", inputPlayModeName(in.playMode));
+        b.textRight(kInRight, py, 2, pal::dim, TextRole::InputValue, mode);
+    }
+
+    // The status line (one part only): while choosing, if the name above is not
+    // the loaded file, PLAYING: <loaded> (LOADING shows after the release);
+    // otherwise CANNOT LOAD <name>: <reason> (inverse video), LOADING <name>, or
+    // CUT TO 10 MIN / FILE ENDS EARLY.
+    const int   sy      = y + 90;
+    bool        bad     = false;
+    char        status[TextItem::kMaxChars + 1] = "";
+    const char* flag    = in.loadedCut ? "CUT TO 10 MIN" : (in.loadedEndedEarly ? "FILE ENDS EARLY" : "");
+    if(in.loaded && showCursor && in.cursor != in.loadedIndex)
+        popupStatusText(status, sizeof status, in, room2, true, bad);
+    else if(in.state == InputLoadState::Failed || in.state == InputLoadState::Loading)
+        popupStatusText(status, sizeof status, in, room2, false, bad);
+    else if(flag[0] != '\0')
+        std::snprintf(status, sizeof status, "%s", flag);
+    if(status[0] != '\0')
+    {
+        if(bad)
+        {
+            b.fill(kRowNameX - 4, sy - 1, textWidth(status, 2) + 8, 18, pal::clip);
+            b.text(kRowNameX, sy, 2, pal::bg, TextRole::InputStatus, status);
+        }
+        else
+        {
+            b.text(kRowNameX, sy, 2, pal::dim, TextRole::InputStatus, status);
+        }
+    }
+}
+
+// M2b-A3: the pop-up list, while X is held after an up/down press (an overlay
+// panel, built last so it is drawn over everything else):
+//   y 194  "FILES 3 OF 12" and the mode (LOOP / ONCE, with ENDED);
+//   y 232  kInputListRows rows of 40 px: ">" and the cursor row in inverse
+//          video, the names at 32 px, PLAY (16 px) on the loaded file's row;
+//          or NO FILES IN data/input;
+//   y 566  one status line: CANNOT LOAD <name>: <reason> (inverse video), or
+//          LOADING <name>, or PLAYING: <name> whenever a file is loaded (so the
+//          playing file is named even when it is outside the window);
+//   y 618  hints: X RELEASE: LOAD, Y MODE, SELECT PLAY AGAIN.
+void inputPopup(Builder& b, const UiSnapshot& s) noexcept
+{
+    const UiInputView& in = s.input;
+    b.panel(PanelKind::InputPopup, kPopX, kPopY, kPopW, kPopH, kNoKnobIndex, 0, true, true, false, true);
+    b.fill(kPopX, kPopY, kPopW, kPopH, pal::bg);
+    b.frame(kPopX, kPopY, kPopW, kPopH, pal::accent, 4);
+    char head[48];
+    if(in.fileCount > 0 && in.cursor >= 0)
+        std::snprintf(head, sizeof head, "FILES %d OF %d", in.cursor + 1, in.fileCount);
+    else
+        std::snprintf(head, sizeof head, "FILES");
+    b.text(kPopX + 16, kPopY + 10, 3, pal::text, TextRole::PopupText, head);
+    char mode[24];
+    std::snprintf(mode, sizeof mode, "%s%s", inputPlayModeName(in.playMode), in.ended ? " ENDED" : "");
+    b.textRight(kPopX + kPopW - 16, kPopY + 10, 3, pal::text, TextRole::PopupText, mode);
+    b.fill(kPopX + 8, kPopY + 40, kPopW - 16, 2, pal::edge);
+
+    if(in.fileCount <= 0 || in.listRows <= 0)
+    {
+        b.text(kPopX + 16, kPopRowY + 4, 3, pal::dim, TextRole::PopupText, "NO FILES IN data/input");
+    }
+    else
+    {
+        // The PLAY column is only needed on the playing row: the other names use
+        // the full width.
+        const std::size_t roomPlay = static_cast<std::size_t>((kPopPlayX - 8 - kPopNameX) / glyphPx(4));
+        const std::size_t roomFull = static_cast<std::size_t>((kPopX + kPopW - 16 - kPopNameX) / glyphPx(4));
+        for(int i = 0; i < in.listRows && i < kInputListRows; ++i)
+        {
+            const int   index  = in.listFirst + i;
+            const int   ry     = kPopRowY + i * kPopStep;
+            const bool  cursor = index == in.cursor;
+            const bool  plays  = index == in.loadedIndex;
+            const Color fg     = cursor ? pal::bg : pal::text;
+            if(cursor)
+            {
+                b.fill(kPopX + 8, ry, kPopW - 16, kPopStep - 2, pal::accent);
+                b.text(kPopX + 16, ry + 3, 4, fg, TextRole::PopupText, ">");
+            }
+            char safe[sizeof in.listNames[0]];
+            char name[TextItem::kMaxChars + 1];
+            copyDisplayName(safe, sizeof safe, in.listNames[i], sizeof in.listNames[i]);
+            appendCut(name, sizeof name, 0, safe, plays ? roomPlay : roomFull);
+            if(name[0] != '\0')
+                b.text(kPopNameX, ry + 3, 4, fg, TextRole::PopupText, name);
+            if(plays)
+                b.text(kPopPlayX, ry + 11, 2, fg, TextRole::PopupText, "PLAY");
+        }
+    }
+
+    // The status line.
+    {
+        char       status[TextItem::kMaxChars + 1];
+        bool       bad  = false;
+        const int  room = (kPopW - 32) / glyphPx(2);
+        if(popupStatusText(status, sizeof status, in, room, false, bad, true))
+        {
+            if(bad)
+            {
+                b.fill(kPopX + 12, kPopStatusY - 2, textWidth(status, 2) + 8, 20, pal::clip);
+                b.text(kPopX + 16, kPopStatusY, 2, pal::bg, TextRole::PopupText, status);
+            }
+            else
+            {
+                b.text(kPopX + 16, kPopStatusY, 2, pal::text, TextRole::PopupText, status);
+            }
+        }
+    }
+
+    // Hints.
+    int x = kPopX + 16;
+    const struct
+    {
+        const char* key;
+        const char* text;
+    } hints[] = {{"X", "RELEASE: LOAD"}, {"Y", "MODE"}, {"SELECT", "PLAY AGAIN"}};
+    for(const auto& h : hints)
+    {
+        const int w = b.keyCap(x, kPopHintsY, h.key, 2, pal::text, pal::bg, false, 22);
+        b.text(x + w + 6, kPopHintsY + 3, 2, pal::text, TextRole::PopupText, h.text);
+        x += w + 6 + textWidth(h.text, 2) + 24;
+    }
+}
+
+void inputMeter(Builder& b, const MeterView& m) noexcept
+{
+    b.panel(PanelKind::InputMeter, kInMeterX, kAreaY, kInMeterW, kAreaH);
+    b.fill(kInMeterX, kAreaY, kInMeterW, kAreaH, pal::panel);
+    b.frame(kInMeterX, kAreaY, kInMeterW, kAreaH, pal::edge, 1);
+
+    // CLIP cap: solid while the clip latch is on.
+    const int capX = kInMeterX + 8;
+    const int capW = kInMeterW - 16;
+    if(m.inClip)
+        b.fill(capX, 192, capW, 24, pal::clip);
+    else
+        b.frame(capX, 192, capW, 24, pal::faint, 2);
+    b.textCentered(capX + capW / 2, 196, 2, m.inClip ? pal::bg : pal::faint, TextRole::ClipLabel, "CLIP");
+
+    struct Tick
+    {
+        float       db;
+        const char* label;
+    };
+    const Tick ticks[] = {{0.0f, "0"}, {-6.0f, "-6"}, {-12.0f, "-12"}, {-24.0f, "-24"}, {-36.0f, "-36"}};
+    for(const Tick& t : ticks)
+    {
+        const int ty = kMeterTop + static_cast<int>(std::lround((1.0 - meterPositionDb(t.db)) * kMeterH));
+        b.fill(kInBigBarX - 16, ty - 1, 12, 2, pal::dim);
+        b.textRight(kInBigBarX - 20, ty - 8, 2, pal::dim, TextRole::InputMeterText, t.label);
+    }
+
+    const int hotY = kMeterTop + static_cast<int>(std::lround((1.0 - meterPositionDb(-6.0f)) * kMeterH));
+    b.fill(kInBigBarX, kMeterTop, kInBigBarW, kMeterH, pal::panelDark, RectTag::Bar);
+    const int top = kMeterTop + kMeterH - fraction(kMeterH, meterPosition(m.inLevel));
+    if(top < kMeterTop + kMeterH)
+    {
+        const int greenTop = top > hotY ? top : hotY;
+        b.fill(kInBigBarX, greenTop, kInBigBarW, kMeterTop + kMeterH - greenTop, pal::meter, RectTag::Bar);
+        if(top < hotY)
+            b.fill(kInBigBarX, top, kInBigBarW, hotY - top, pal::meterHot, RectTag::Bar);
+    }
+    if(m.inHold > 0.0f)
+    {
+        int hy = kMeterTop + kMeterH - fraction(kMeterH, meterPosition(m.inHold)) - 1;
+        hy     = hy < kMeterTop ? kMeterTop : (hy > kMeterTop + kMeterH - 3 ? kMeterTop + kMeterH - 3 : hy);
+        b.fill(kInBigBarX, hy, kInBigBarW, 3, pal::text, RectTag::Bar);
+    }
+    b.frame(kInBigBarX, kMeterTop, kInBigBarW, kMeterH, pal::edge, 1);
+
+    b.textCentered(kInBigBarX + kInBigBarW / 2, 432, 2, pal::dim, TextRole::InputMeterText, "IN");
+    // The held peak in dB ("-inf dB" for silence).
+    char peak[24];
+    if(m.inHold > PeakMeter::kSilence)
+        formatDb(peak, sizeof peak, 20.0f * std::log10(m.inHold));
+    else
+        std::snprintf(peak, sizeof peak, "-inf dB");
+    b.textCentered(kInMeterX + kInMeterW / 2, 452, 2, pal::text, TextRole::InputMeterText, peak);
+}
+
+void inputTab(Builder& b, const UiSnapshot& s, const MeterView& m) noexcept
+{
+    inputSourceRow(b, s);
+    inputGainRow(b, s);
+    if(s.input.source == InputSource::File)
+        inputFileRowChoose(b, s); // M2b-A3
+    else
+        inputFileRow(b, s);
+    inputMeter(b, m);
+}
+
 // --- Value strip ---------------------------------------------------------------------------
 // Strip cells: label line y+6..22, value y+25..49 (scale 3) or y+29..45
 // (scale 2), bar y+50..53 (never under the value).
@@ -950,11 +1578,18 @@ void buildLayout(const UiSnapshot& s, const MeterView& m, DrawList& out) noexcep
     tabBar(b, s);
     feedbackBand(b, s);
     switchBox(b, s);
-    currentTab(b, s);
+    if(s.tab == Tab::Input)
+        inputTab(b, s, m); // M2b-A: no knob rows on INPUT
+    else
+        currentTab(b, s);
     meters(b, m);
+    inIndicator(b, s, m);
     strip(b, s);
     statusLine(b, s);
     footer(b, s);
+    // M2b-A3: the pop-up list last, over everything it covers.
+    if(s.tab == Tab::Input && s.input.source == InputSource::File && s.input.popup && s.input.choosing)
+        inputPopup(b, s);
 }
 
 } // namespace ui

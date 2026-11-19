@@ -69,7 +69,7 @@ Limits of what was confirmed:
 
 Files: `Source/Effects/reverbsc.h`, `Source/Effects/reverbsc.cpp`, `Source/Filters/tone.h`, `Source/Filters/tone.cpp`, `LICENSE`, `LICENSE.daisysp-mit-7f67768`, `PROVENANCE.md`.
 
-## 4. dr_wav (tools and tests only)
+## 4. dr_wav (WAV reading in the app's file input, the tools and the tests)
 
 | Item | Value |
 |---|---|
@@ -79,7 +79,7 @@ Files: `Source/Effects/reverbsc.h`, `Source/Effects/reverbsc.cpp`, `Source/Filte
 | Source URL | https://github.com/mackron/dr_libs |
 | Commit | `35b5c392cc15456736c440a68dbe073178bbffe0` (dr_wav v0.14.6, 2026-10-31), fetched 2026-11-17. See `third_party/dr_libs/UPSTREAM.md` |
 | Licence file | `licenses/dr_wav.LICENSE` (lines 8658 to 8704 of `dr_wav.h`, unchanged) |
-| Built into | `audrey_tools` (static, `src/tools`), used by `audrey-render`, `wavcheck`, `audrey-gen-input`, `parity_test` and `tools_test`. **Not** part of `audrey_core` or the audio path, and not shipped in the device app |
+| Built into | `audrey_tools` (static, `src/tools`), used by `audrey-render`, `wavcheck`, `audrey-gen-input`, `parity_test` and `tools_test`; and, since M2b-A, `audrey_input_files` (static, `src/input`, its own copy of the implementation in `DrWavImpl.cpp`), linked into the device app `audreybrick` and the `input_*` tests, where it decodes the INPUT tab's WAV files on the loader thread only. **Not** part of `audrey_core` or the audio path (the audio thread never calls it); no binary links both copies |
 
 Files: `dr_wav.h`, plus our note `UPSTREAM.md`.
 

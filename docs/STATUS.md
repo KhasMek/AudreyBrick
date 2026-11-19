@@ -11,7 +11,7 @@ Maintained by the orchestrator. Last updated: 2026-11-17.
 | M0 source study | Done, pending human review |
 | M1 host DSP | **Done and reviewed (M1-A to M1-D).** Awaiting the human's sign-off of the milestone |
 | M2 host app | **Done and reviewed (M2-A, M2-B, M2-C): the app plays on the Mac with the full screen.** Awaiting the human's play test and sign-off of the milestone |
-| M2b input path | Not started |
+| M2b input path | **M2b-A (INPUT tab, file input) done and reviewed; awaiting the human's device run (`docs/INPUT_RUN_BRICK.md`).** M2b-B (mic and USB) follows that run |
 | M3 device build | **The app runs on the Brick; two device runs done (2026-11-18).** Buttons, keep-awake, screenshots and sound confirmed by the human. M3-C (quit on Menu + Start) is done, reviewed and confirmed on the device in a third run. **The plain port runs on the Brick with its full control scheme.** Awaiting the human's choice of what comes next |
 | M4 tuning | Not started |
 | M5 presets, polish, release decision | Not started |
@@ -61,7 +61,9 @@ The human commits. The orchestrator stops at each point and proposes a message.
 | 10 | Screen: plain engine values for the five unitless parameters | Committed |
 | 11 | M3-A device build, device behaviour and the Port package, reviewed; firmware findings and the first-run checklist | Committed |
 | 12 | M3-B fixes from the first device run (button swaps, CPU frequency logging, opt-in governor, signal hardening), reviewed; device results and the second-run checklist | Committed |
-| 13 | M3-C: quit on Menu + Start, hold-to-quit removed, quit hint in the status line; second-run results and the third-run checklist | Ready to commit |
+| 13 | M3-C: quit on Menu + Start, hold-to-quit removed; second-run results and the third-run checklist | Committed |
+| 14 | M2b plan | Committed |
+| 15 | M2b-A and M2b-A2: the input stage, the INPUT tab, file input with a hold-X pop-up browser (M2b-A3), crossfade, LOOP/ONCE and a 10-minute cap, reviewed; device checklist | Ready to commit |
 
 ## What was verified and how
 
@@ -270,6 +272,24 @@ Open:
 - What a habitual double Menu + Start press does after the app has already closed was not reported.
 - The M5 "freeze" slot can no longer use Start alone or Select + Start; see `CONTROL_SCHEME_PROPOSAL.md` section 00.
 
+## M2b-A result (2026-11-18)
+
+- New `src/input/` (no SDL): `InputStage` on the audio path (source state, loop player with a 10 ms crossfade, fades at start and change, a smoothed gain, the input peak), a windowed-sinc `Resampler`, `InputFiles` (folder listing, WAV decoding with dr_wav, `L + R` mono mix, conversion to 48 kHz, a 5-minute cut), an `InputLoader` thread, and `InputController` for the tab. `AudioRender` calls the stage and passes its buffer, or `nullptr` when the source is off, to the voice.
+- The INPUT tab (sixth), an always-visible IN bar while a source is active, `--input-dir`, and `data/input/` in the package. Files go in `roms/ports/audreybrick/data/input/` on the card.
+- **Off is bit-identical** to the app without the stage, for buffers from 1 to 5000 frames, including after a file has played and with the gain moving. Checked by the project's test and independently by the reviewer.
+- **The file path is exact:** what the voice receives equals the file's mono mix, looped, apart from the documented fades (the reviewer's own model matched bit for bit). No step at the loop point larger than the signal's own slope.
+- **Audio thread:** zero allocations or frees while playing, swapping files and ramping gain. Buffers pass to the audio thread through a single-slot atomic exchange and come back through an SPSC queue to be freed on the UI thread. ThreadSanitizer clean under millions of swaps.
+- **Resampler:** level within 0.001 dB; tones above 24 kHz suppressed by about 100 dB (reviewer's measurement). A 5-minute 192 kHz stereo file streams through in about 2 s on the Mac with 58 MB peak memory.
+- **Bad files:** about 30 kinds refused with a short reason or loaded sanely; nothing outside the input folder is read; samples are clamped to plus or minus 8 at load.
+- **Cost:** about 2 microseconds per 256-frame callback on the Mac (0.04 % of the buffer). The device figure is not measured yet.
+- Tests: 54 in Release and ASan/UBSan, 46 under ThreadSanitizer, 40 without SDL, 40 in each Debian 13 container, 54 in the device build, 222 device-root checks. Vendor check and reference hashes pass. Re-verified by the orchestrator from clean builds, including `make_port.sh` (exit 0); the packaged binary's hash equals the tested build's.
+- Review: no blocking findings; 17 of 18 injected bugs caught (the other was in dead code, since removed). Follow-ups applied: the FILE row names the file that is actually playing when a load is pending or failed; no exception can escape the input path; clearer failure reasons; non-ASCII file names shown with "?"; the folder scan is timed in the log. That round was verified by the orchestrator, not re-reviewed.
+
+Open after M2b-A:
+- Not yet on the device: folder scan time on the SD card, load times, the callback load with a file playing, legibility of the two small status lines in the FILE row.
+- For the human to judge: a file change fades out then in (a brief gap) where a crossfade is possible; X + left/right does not repeat while held.
+- Nothing about input is remembered between launches.
+
 ## Pitch range finding (2026-11-17, from the human's first play test)
 
 The human played M2-B on the Mac: generally working as expected, but the pitch range seemed limited to about an octave, unlike the hardware.
@@ -280,12 +300,22 @@ Cause: the port starts every control at the firmware's registry initial values, 
 
 Decision: choose a playable init patch by ear after the presets work (M5). Until then, raise body on the LOOP tab (hold Up) after starting the app.
 
+## Future features (requested, not scheduled)
+
+- **Streaming file input from the card** (human, 2026-11-18): removes the length cap on input files. Needs a reader thread feeding the audio thread, with the loop point and sample-rate conversion done on the fly. Until then files are loaded whole and cut at 10 minutes.
+- **Recording the output to a file** (human, 2026-11-18): see `docs/briefs/M2b.md`, "Recording". Planned after M2b.
+- **Modulation tab** (human, 2026-11-17): after the plain port is signed off.
+
 ## Log
 
+- 2026-11-18: The human tried file input on the Brick and asked for a 10-minute cap, a crossfade between files, a scrollable file list that does not auto-load, and LOOP / ONCE play modes. Brief M2b-A2 written and delegated.
+- 2026-11-18: M2b-A2 implemented and reviewed. The review found one blocking bug (a click when an ended ONCE file restarted during a file crossfade); fixed, with a random-operation fuzz test added. Also from the review: a superseded load is cancelled, no new load starts while the stage holds two buffers (at most two 10-minute buffers, 230 MB, alive at once), exact progress for equal-length files, a replaced file is reloaded. The fixes were verified by the orchestrator but not sent back for a second review. Orchestrator's clean runs: macOS Release 56/56, ASan/UBSan 56/56, TSan 48/48, no-SDL 42/42, Debian 13 containers 42/42 each (17 of 25 references matching), vendor and reference checks OK, `make_port.sh` exit 0 with 222 PASS and 0 FAIL. Stopped at commit point 15 (M2b-A and M2b-A2 together) for the device run.
+- 2026-11-18: The human found M2b-A2's in-tab list far too small and asked for X + left/right stepping with load on release, and X + up/down opening a pop-up list. Brief M2b-A3 written, implemented and reviewed (nothing blocking). Review follow-ups applied: returning to the playing file cancels a pending load, the counter matches the name shown, failures name the file, the press that opens the list does not load, no repeat backlog, the old buffer is freed before a new load starts, a status line in the pop-up. The follow-ups were verified by the orchestrator but not re-reviewed.
 - 2026-11-17: M0 source study completed. Docs written. `CLAUDE.md` given an "M0 corrections" block. Stopped for human approval.
 - 2026-11-17: Human answered D1 to D7, asked for stereo-summed input with a gain control, and for tabs on L1/R1. M1 approved. Stopped at commit point 1.
 - 2026-11-17: M1-A to M1-D implemented, reviewed and committed. The human listened to the renders and reports they sound great.
 - 2026-11-17: M2 (A, B, C) implemented, reviewed, played by the human and committed. The human chose to get it running on the Brick before the input path; the firmware image (Scarab 20260511) was downloaded and inspected, findings in `docs/PLATFORM_NOTES.md` section 10.
+- 2026-11-18: The human asked for audio input next and for output recording to be added to the plan. M2b-A implemented, reviewed and verified. Stopped at commit point 15 for the device run.
 - 2026-11-18: Third device run: Menu + Start quits cleanly; KNULLI screenshots are clean. The human asked for the quit hint to be removed; done. Stopped at commit point 13.
 - 2026-11-18: Second device run: buttons, keep-awake, screenshots and the governor question all settled. The human chose Menu + Start for quitting and no in-app screenshot. M3-C in progress.
 - 2026-11-18: The human ran the package on the Brick: it works. M3-B (button swaps, frequency logging, opt-in governor, signal hardening) implemented, reviewed and verified. Stopped at commit point 12 for the second run.

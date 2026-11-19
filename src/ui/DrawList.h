@@ -51,6 +51,9 @@ enum class PanelKind : std::uint8_t
     CpuCell,
     StatusLine,
     FooterCell, // index = footer entry 0..7
+    InputRow,   // M2b-A: a row of the INPUT tab (index 0 SOURCE, 1 GAIN, 2 FILE); active = usable now
+    InputMeter, // M2b-A: the INPUT tab's large input meter
+    InputPopup, // M2b-A3: the pop-up file list (an overlay panel)
 };
 
 struct PanelItem
@@ -65,6 +68,8 @@ struct PanelItem
     bool      active = false; // Row: bound in the current X state; StripCell: on the current tab; FooterCell: held
     bool      xBinding  = false; // Row: an X binding
     bool      leftRight = false; // Row: left/right (false = up/down)
+    bool      overlay   = false; // M2b-A3: drawn over the other panels (the pop-up list); its
+                                 // items may cover the base layer, not each other
 };
 
 // What a text item is, so tests can find it.
@@ -90,6 +95,12 @@ enum class TextRole : std::uint8_t
     Status,         // audio spec, controller, dropped commands
     KeyLabel,       // a button name inside a key cap (L1, R1, A, SELECT, ...)
     Footer,         // footer descriptions
+    InputName,      // M2b-A: SOURCE, GAIN, FILE on the INPUT tab
+    InputValue,     // M2b-A: the source choices, the gain in dB, the file name, "n OF m", the length
+    InputStatus,    // M2b-A: the FILE row's status line (LOADING.., CANNOT LOAD: .., NO FILES IN data/input, ..)
+    InputPlaying,   // M2b-A: the FILE row's "PLAYING: <name>" / "LOADED: <name>" / "NOTHING PLAYING" line
+    InputMeterText, // M2b-A: the input meters' labels (IN, the scale, the peak value)
+    PopupText,      // M2b-A3: the pop-up list's header, names, marks and hints
 };
 
 struct TextItem
@@ -115,6 +126,7 @@ enum class RectTag : std::uint8_t
     UnityTick,    // the 0 dB tick under the feedback bar
     StoredMarker, // the stored-feedback marker while maximum is held
     UnityMark,    // the unity-gain tick on the REPEATS bars; never under text
+    GainUnityMark, // M2b-A: the unity (0 dB) tick on the INPUT tab's gain bar; never under text
 };
 
 struct RectItem

@@ -35,7 +35,8 @@ if(AB_HAVE_SDL)
         SdlDiagnostics.cpp
         InputRouter.cpp
     )
-    target_link_libraries(audrey_app_sdl PUBLIC audrey_app_core audrey_platform_sdl)
+    # M2b-A: the input panel (InputController, src/input), which InputRouter feeds.
+    target_link_libraries(audrey_app_sdl PUBLIC audrey_app_core audrey_platform_sdl audrey_input)
     # InputMap.h -> Buttons.h only; no DSP headers, but the same options as the app.
     target_compile_options(audrey_app_sdl PRIVATE ${AB_DSP_OPT_OPTIONS} ${AB_WARNING_OPTIONS})
 

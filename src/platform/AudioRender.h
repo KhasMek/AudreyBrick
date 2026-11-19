@@ -12,15 +12,22 @@
 //      recreates (for example after a device change); the cost is one register
 //      read per callback.
 //   2. Reads the clock (if one was given).
-//   3. In chunks of at most capacity() frames: AudreyVoice::process with the
-//      control source and no input into the two preallocated channel buffers,
-//      then interleaves them into the output and takes the per-channel peaks.
+//   3. In chunks of at most capacity() frames: InputStage::pull() for the chunk
+//      if a stage is attached (M2b-A), then AudreyVoice::process with the control
+//      source and what pull() returned as the input (nullptr without a stage, or
+//      while the stage has nothing to give: the voice then runs exactly as with
+//      no input) into the two preallocated channel buffers, then interleaves them
+//      into the output and takes the per-channel peaks.
 //   4. Reads the clock again and records the load (time / buffer duration); a
 //      callback that took longer than its buffer lasts (load above 1, a likely
 //      underrun) also increments the overrun counter (one relaxed atomic add).
 //   5. Publishes peaks, load and counters through atomics (the load also goes
 //      into CpuMeter's histogram: one relaxed counter store, M3-B).
 // No allocation, lock, I/O, logging, exception or wait.
+//
+// The input stage (M2b-A): attachInput() before prepare(); prepare() also
+// prepares the stage for the same capacity. The stage must outlive every
+// render() call.
 //
 // Threads: prepare() and the constructor on the main thread before audio starts;
 // render() on the audio thread only (one thread at a time); the meter getters from
@@ -35,6 +42,7 @@
 
 #include "core/AudreyVoice.h"
 #include "core/ControlSource.h"
+#include "input/InputStage.h"
 #include "platform/Meters.h"
 
 namespace audreybrick
@@ -75,6 +83,11 @@ class AudioRender
     void prepare(std::size_t frames);
     std::size_t capacity() const noexcept { return capacity_; }
 
+    // Feeds the voice from `stage` (nullptr: no input, as before M2b). Call before
+    // prepare(), never while render() may run.
+    void attachInput(InputStage* stage) noexcept { input_ = stage; }
+    InputStage* input() const noexcept { return input_; }
+
     // Audio thread. Writes `frames` interleaved stereo float frames (2 * frames
     // floats). Before prepare(), writes silence.
     void render(float* interleaved, std::size_t frames) noexcept;
@@ -98,6 +111,7 @@ class AudioRender
     FlushToZero    ftzMode_;
     ClockFn        clock_;
     double         ticksPerSecond_;
+    InputStage*    input_ = nullptr;
 
     std::unique_ptr<float[]> left_;
     std::unique_ptr<float[]> right_;

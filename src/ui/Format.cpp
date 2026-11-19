@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "input/InputTypes.h"
+
 namespace audreybrick
 {
 namespace ui
@@ -152,6 +154,32 @@ std::size_t formatCpu(char* out, std::size_t size, float load) noexcept
     if(std::fabs(roundTo(p, 1)) < 10.0)
         return finish(out, size, std::snprintf(out, size, "%.1f %%", p));
     return finish(out, size, std::snprintf(out, size, "%.0f %%", p));
+}
+
+std::size_t formatInputGain(char* out, std::size_t size, float norm) noexcept
+{
+    if(!std::isfinite(norm))
+        return notFinite(out, size);
+    if(!(inputGainFromNorm(norm) > 0.0f))
+        return finish(out, size, std::snprintf(out, size, "-inf dB"));
+    return formatDb(out, size, inputGainDb(norm));
+}
+
+std::size_t formatClock(char* out, std::size_t size, float seconds) noexcept
+{
+    if(!std::isfinite(seconds) || seconds < 0.0f)
+        return notFinite(out, size);
+    const long tenths = std::lround(static_cast<double>(seconds) * 10.0);
+    return finish(out, size,
+                  std::snprintf(out, size, "%ld:%02ld.%ld", tenths / 600, (tenths / 10) % 60, tenths % 10));
+}
+
+std::size_t formatMinSec(char* out, std::size_t size, float seconds) noexcept
+{
+    if(!std::isfinite(seconds) || seconds < 0.0f)
+        return notFinite(out, size);
+    const long s = static_cast<long>(std::floor(static_cast<double>(seconds) + 1e-6));
+    return finish(out, size, std::snprintf(out, size, "%ld:%02ld", s / 60, s % 60));
 }
 
 std::size_t formatEngineValue(char* out, std::size_t size, float engine, const char* unit) noexcept

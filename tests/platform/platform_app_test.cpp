@@ -52,6 +52,25 @@ int main()
                   o.audioDriver == "dummy",
               "--buffer and --audio-driver");
         check(parse({"--list-audio"}, o, err) && o.listAudio, "--list-audio");
+        // M2b-A: the input folder and the input-peak expectation.
+        {
+            AppOptions in;
+            check(parse({"--input-dir", "/userdata/roms/ports/audreybrick/data/input"}, in, err) &&
+                      in.inputDir == "/userdata/roms/ports/audreybrick/data/input",
+                  "--input-dir <dir>");
+            AppOptions none;
+            check(parse({}, none, err) && none.inputDir.empty(), "no --input-dir: no folder");
+            check(fails({"--input-dir"}) && fails({"--input-dir", ""}), "--input-dir needs a non-empty value");
+            AppOptions st;
+            check(parse({"--selftest", "x.txt", "--seconds", "1", "--expect-input-peak-min", "0.4"}, st, err) &&
+                      st.hasInputPeakMin && st.inputPeakMin == 0.4,
+                  "--expect-input-peak-min with --selftest");
+            check(fails({"--expect-input-peak-min", "0.4"}) && fails({"--selftest", "x", "--seconds", "1",
+                                                                    "--expect-input-peak-min", "x"}),
+                  "--expect-input-peak-min only with --selftest, and only a number");
+            check(usageText("audreybrick").find("--input-dir <dir>") != std::string::npos,
+                  "the usage text lists --input-dir");
+        }
         check(parse({"--help"}, o, err) && o.help, "--help");
         check(parse({"--selftest", "x.txt", "--seconds", "2.5"}, o, err) && o.selftest() &&
                   o.selftestScript == "x.txt" && o.selftestSeconds == 2.5,

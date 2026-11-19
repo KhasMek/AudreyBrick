@@ -168,6 +168,31 @@ int main()
     expect(formatCpu, 0.85f, "85 %", "cpu");
     expect(formatCpu, 1.0f, "100 %", "cpu");
 
+    // M2b-A: the input gain (gain = (2n)^2) and file lengths.
+    expect(formatInputGain, 0.0f, "-inf dB", "input gain at 0");
+    expect(formatInputGain, 0.5f, "0.0 dB", "input gain at unity");
+    expect(formatInputGain, 1.0f, "+12.0 dB", "input gain at the top");
+    expect(formatInputGain, 0.25f, "-12.0 dB", "input gain at a quarter (gain 0.25)");
+    expect(formatInputGain, 0.35355f, "-6.0 dB", "input gain at 0.354 (gain 0.5)");
+    expect(formatInputGain, 0.62f, "+3.7 dB", "input gain");
+    expect(formatInputGain, 1.0e-6f, "-228.0 dB", "input gain just above 0 (not -inf)");
+    expect(formatInputGain, NAN, "--", "input gain not finite");
+    expect(formatClock, 0.0f, "0:00.0", "length 0");
+    expect(formatClock, 2.0f, "0:02.0", "length 2 s");
+    expect(formatClock, 83.44f, "1:23.4", "length 1:23.4");
+    expect(formatClock, 59.96f, "1:00.0", "length rounding into the next minute");
+    expect(formatClock, 300.0f, "5:00.0", "length 5 minutes");
+    expect(formatClock, -1.0f, "--", "negative length");
+    expect(formatClock, INFINITY, "--", "infinite length");
+    expect(formatClock, 600.0f, "10:00.0", "length 10 minutes (M2b-A2)");
+    // M2b-A2: the progress line's elapsed / total.
+    expect(formatMinSec, 0.0f, "0:00", "minutes:seconds 0");
+    expect(formatMinSec, 83.9f, "1:23", "minutes:seconds rounds down");
+    expect(formatMinSec, 599.99f, "9:59", "minutes:seconds just under 10 minutes");
+    expect(formatMinSec, 600.0f, "10:00", "minutes:seconds 10 minutes");
+    expect(formatMinSec, -0.5f, "--", "minutes:seconds negative");
+    expect(formatMinSec, NAN, "--", "minutes:seconds not finite");
+
     // --- Every knob at its range ends, through ParamTable ------------------------------------------
     expectKnob(Knob::Frequency, 0.0f, false, "E0 20.6 Hz");
     expectKnob(Knob::Frequency, 1.0f, false, "C5 523 Hz");

@@ -16,6 +16,9 @@
 # system where chmod works; on the Mac's shared folder it does not).
 # M3-B: the CPU governor handling, the A/B swap setting and the settings line are
 # tested against a fake sysfs tree in /tmp/fakesys (AUDREY_SYSFS_CPU, a testing aid).
+# M2b-A: the package's data/input folder, the launcher's --input-dir, a FILE
+# self-test through the launcher with a WAV file written here with bash's printf
+# (the device root has no tool of ours), and a data/input that cannot be created.
 #
 # Only the device's loader, libraries and standard tools (bash, ldd, coreutils,
 # grep, sed, procps) run here, plus our app.
@@ -107,6 +110,44 @@ ms="$(sed -n 's/^launcher: device state took \([0-9]*\) ms$/\1/p' "$DATA/stdout.
 [ -n "$ms" ] && [ "$ms" -lt 1500 ] && pass "device-state block took $ms ms" || fail "device-state block time: '$ms'"
 cp "$DATA/audreybrick.log" /ab/out/launcher-audreybrick.log
 cp "$DATA/stdout.log" /ab/out/launcher-stdout.log
+
+section "M2b-A: the input folder, --input-dir, and FILE through the launcher"
+[ -d /ab/pkg/audreybrick/data/input ] && [ -z "$(ls -A /ab/pkg/audreybrick/data/input)" ] \
+    && pass "the package ships an empty audreybrick/data/input/" || fail "no empty data/input in the package"
+grep -qF "launcher: input folder: $PORTS/audreybrick/data/input (0 WAV file(s);" "$DATA/stdout.log" \
+    && pass "the launcher notes the input folder (0 WAV files)" || fail "no input folder note in stdout.log"
+grep -qF "input: source OFF at start; folder $PORTS/audreybrick/data/input" "$DATA/audreybrick.log" \
+    && pass "the app got --input-dir (the path has a space) and starts with the source OFF" || fail "app input folder line"
+# A 2 s, 1 kHz square wave at amplitude 0.25 (0x2000), 48 kHz mono 16-bit PCM.
+hi=""; lo=""
+for i in $(seq 24); do hi+='\x00\x20'; lo+='\x00\xe0'; done
+SQ="$DATA/input/square.wav"
+{ printf 'RIFF\x24\xee\x02\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80\xbb\x00\x00\x00\x77\x01\x00\x02\x00\x10\x00data\x00\xee\x02\x00'
+  for i in $(seq 2000); do printf "$hi$lo"; done; } > "$SQ"
+[ "$(wc -c < "$SQ")" -eq 192044 ] && pass "wrote square.wav (192044 bytes) into data/input" || fail "square.wav size $(wc -c < "$SQ")"
+# Entries the app ignores must not be counted by the launcher either: a link to
+# the file, an AppleDouble "._" file, a hidden file and a directory named .wav.
+ln -s square.wav "$DATA/input/link.wav"
+cp "$SQ" "$DATA/input/._square.wav"
+cp "$SQ" "$DATA/input/.hidden.wav"
+mkdir -p "$DATA/input/folder.wav"
+# M2b-A3: FILE (no automatic load), then hold X, d-pad right, release X: the file loads.
+printf '0.10 L1 down\n0.15 L1 up\n0.30 DpadRight down\n0.35 DpadRight up\n0.40 X down\n0.45 DpadRight down\n0.50 DpadRight up\n0.55 X up\n' > /tmp/input_file.txt
+launch AUDREY_ARGS="--selftest /tmp/input_file.txt --seconds 3 --no-video --expect-knob FeedbackGain 0 0 --expect-input-peak-min 0.2 --expect-peak-min 0.02 --expect-peak-max 1.0"
+rc=$?
+grep -E "^launcher: input folder|^input:|^selftest: (ok|FAIL|PASSED|FAILED)|^output peak" "$DATA/stdout.log" | sed 's/^/  /'
+grep -E "input: " "$DATA/audreybrick.log" | sed 's/^\[[ 0-9.]*\] /  log: /'
+[ "$rc" -eq 0 ] && grep -q 'self-test: PASSED' "$DATA/audreybrick.log" \
+    && pass "FILE through the launcher: the self-test passed (input above 0.2, output above 0.02 at minimum feedback)" \
+    || fail "FILE self-test through the launcher (rc $rc)"
+grep -qF "launcher: input folder: $PORTS/audreybrick/data/input (1 WAV file(s);" "$DATA/stdout.log" \
+    && grep -q "input: loaded 'square.wav': 1 channel(s), 48000 Hz, PCM 16-bit, 96000 frames" "$DATA/audreybrick.log" \
+    && pass "the launcher counted 1 WAV file; the app logged the load" || fail "input load lines"
+grep -q "input: scan of $PORTS/audreybrick/data/input: 5 entries, 1 WAV file(s), 4 other entries ignored" "$DATA/audreybrick.log" \
+    && pass "the launcher and the app agree: 1 WAV file (the link, ._, hidden file and folder are ignored by both)" \
+    || fail "launcher/app file counts differ"
+cp "$DATA/audreybrick.log" /ab/out/launcher-input-audreybrick.log
+rm -rf "$SQ" "$DATA/input/link.wav" "$DATA/input/._square.wav" "$DATA/input/.hidden.wav" "$DATA/input/folder.wav"
 
 section "M3-C: the launcher reports KNULLI's input helpers; no .keys file is shipped"
 [ ! -e "$PORTS/AudreyBrick.sh.keys" ] && pass "no AudreyBrick.sh.keys in the package (the app handles Menu + Start itself)" \
@@ -493,6 +534,7 @@ rc=$?
     && pass "missing binary: exit 1, in data/stdout.log and on stderr" || fail "missing binary (rc $rc)"
 cp -r /ab/pkg/audreybrick/audreybrick "$F/audreybrick/audreybrick"
 rm -rf /tmp/audreybrick-data
+rmdir "$F/audreybrick/data/input" # M2b-A: so the launcher cannot create it either
 chmod a-w "$F/audreybrick/data"
 ( cd / && SDL_AUDIODRIVER=dummy AUDREY_ARGS="$QUICK" /bin/bash "$F/AudreyBrick.sh" ) 2> /tmp/fail-stderr.txt
 rc=$?
@@ -500,6 +542,9 @@ chmod u+w "$F/audreybrick/data"
 [ "$rc" -eq 0 ] && grep -q 'data is not writable; logs for this run are in /tmp/audreybrick-data' /tmp/audreybrick-data/stdout.log \
     && grep -q 'not writable' /tmp/fail-stderr.txt && [ -f /tmp/audreybrick-data/audreybrick.log ] \
     && pass "data/ not writable: logs in /tmp/audreybrick-data, stated there and on stderr" || fail "read-only data/ (rc $rc)"
+grep -qF "launcher: input folder: could not create $F/audreybrick/data/input; the INPUT tab will show no files (not fatal)" /tmp/audreybrick-data/stdout.log \
+    && grep -qF "input: scan of $F/audreybrick/data/input: NO FOLDER (" /tmp/audreybrick-data/audreybrick.log \
+    && pass "data/input cannot be created: noted, the app runs and logs NO FOLDER (not fatal)" || fail "uncreatable data/input"
 
 section "Log rotation over 10 runs (2 of them with no usable clock)"
 RT="/tmp/rotation test"
