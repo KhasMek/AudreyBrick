@@ -101,6 +101,10 @@ void Renderer::draw(SDL_Renderer* r, const UiSnapshot& s) noexcept
     meterView_.inLevel = inMeter_.level();
     meterView_.inHold  = inMeter_.hold();
     meterView_.inClip  = inMeter_.clipped();
+    // M2b-B: the live input's pre-gain level, same ballistics.
+    preMeter_.update(s.input.prePeak, s.timeSeconds);
+    meterView_.preLevel = preMeter_.level();
+    meterView_.preHold  = preMeter_.hold();
     buildLayout(s, meterView_, list_);
     drawList(r, list_);
 }

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: MIT
 //
 // InputStage: the audio-thread end of the instrument's input (docs/briefs/M2b.md,
-// M2b-A, and since M2b-A2 the crossfade between files and the play modes).
+// M2b-A, and since M2b-A2 the crossfade between files and the play modes, since
+// M2b-B the live input: see "Live" below).
 // AudioRender calls pull() once per chunk, just before AudreyVoice::process, and
 // passes what it returns as `inMono`: either a pointer to `frames` input
 // samples, or nullptr.
@@ -88,6 +89,86 @@
 //   - The crossfade's largest step for two full-scale DC files of opposite sign
 //     (+1 new, -1 old) is (pi/2)/(F+1) * sqrt(2) = 4.6e-4 per sample.
 //
+// Live (M2b-B; the source LIVE reads the capture ring, input/LiveInput.h):
+//   - The fade level belongs to one source at a time, the one that sounds
+//     (FILE or LIVE): while it is above 0 that source is read; once it is 0 the
+//     chosen source takes over. So FILE -> LIVE and LIVE -> FILE are the 10 ms
+//     fade-out, the switch, and the fade-in; the two never sound together. A
+//     file that takes over starts from its beginning; a file handed over while
+//     the live input sounds is simply switched to (nothing of it is audible).
+//   - The target: setLiveTargetBuffers() output buffers (1..32, default 2; the
+//     buffer size comes from prepare()). Start-up: silence (nullptr) until the
+//     ring holds the target; then the read position jumps to that many samples
+//     behind the writer (older ones are dropped), the gain snaps to its target
+//     (read again at that moment; the level is 0: no click; a gain set to 0
+//     just before a device opened is exactly 0 for its first sample) and the
+//     level fades in over 10 ms.
+//   - Underrun, i.e. the ring cannot supply the chunk (a stall, a lost device,
+//     or bursts larger than the target): counted (only while the source is
+//     LIVE); what is there is played, then the last output value is held while
+//     the level fades out over 10 ms (no hard edge); then silence until the ring
+//     holds the target again, then the start above. Two underruns within a
+//     second (of output), or one underrun after the settled minimum left no
+//     room for a repeat (see Repeat), double the target, up to kLiveMaxAutoBuffers (never a
+//     configured target above that); liveTargetRaises() counts the raises. It
+//     never lowers by itself; a new session resets it to the configured target.
+//   - Overfill (capture fast; more than target + margin, the margin being four
+//     output buffers or twice the target, whichever is more): counted; the read
+//     position skips to the target behind the writer, with a linear crossfade
+//     of min(kLiveSkipCrossfadeFrames, target) samples from the old position to
+//     the new one, x = old * (1 - w) + new * w, w = (k + 1) / (L + 1).
+//   - Repeat (capture slow): after a start or a skip the stage records the
+//     smallest fill over kLiveBaselineFrames (the settled minimum, which
+//     includes the device's burstiness). Once the fill sinks half a repeat
+//     below it (and below the chunk size plus a quarter repeat at most), the
+//     read position jumps back by the repeat length R = min(output buffer,
+//     kLiveMaxRepeatFrames) with the same linear crossfade (min(480, R)
+//     samples), adding R to the fill before the ring runs dry. Counted
+//     separately (LiveInput::repeats()). At most one per kLiveBaselineFrames of
+//     output, only while the writer advances (a stalled device runs dry, one
+//     underrun, instead of looping), never reaching before the first sample of
+//     the session (or of the last discard, below), and never when half a
+//     repeat below the settled minimum is at or under the chunk size (then a
+//     slow device underruns and the target is raised). Repeats never raise
+//     the target.
+//   - The index published to the writer stays R behind the earliest position
+//     in use (and never moves back), so the samples a repeat goes back to and
+//     both regions of a crossfade are never overwritten.
+//   - Leaving LIVE: once the level has reached 0 with another source chosen,
+//     the stage stops reading and keeps skipping whatever is written (a
+//     discard every chunk, and once more in the chunk where LIVE is chosen
+//     again), so a return to LIVE always buffers afresh from the writer's
+//     position at that moment and snaps the gain; nothing written before is read.
+//   - A new session (the UI opened or closed a device): reading stops at once,
+//     everything written so far is skipped, and the level fades out on the
+//     held last output value; nothing of the new device is read before the
+//     level is 0 and the ring has buffered to the target again. Not counted as
+//     an underrun.
+//   - The hold is the last value after the gain (M2b-B review, S2): it is
+//     multiplied by the falling level only, so a hold fade can only decay, even
+//     if the gain is raised meanwhile.
+//   - Step bound: with a steady gain every output step is at most the signal's
+//     own step plus |x| / 480 (the level) plus, during a skip or repeat,
+//     |new - old| / (L + 1); tests/input/input_live_test.cpp checks it.
+//   - Published (LiveInput's reader statistics): the fill at the start of each
+//     chunk while LIVE is chosen or sounds (and its range), underruns, skips,
+//     repeats, frames read, whether the ring is being played; here the target,
+//     margin and raises.
+//   - Still no allocation, lock, I/O, logging or wait; per sample one ring read
+//     (two during a crossfade).
+//   Memory order (M2b-B review 2, S3): the writer's index (acquire) is read
+//   first, then the session (acquire); when the session is new, the writer's
+//   index is read again and everything up to it is skipped. A session advanced
+//   between the two loads is either seen (and the skip covers everything
+//   written so far) or not seen yet, in which case only samples written before
+//   the first load can be read, and the UI advances the session before it
+//   opens a device, so none of those belongs to the new device. A start reads
+//   the gain target after these loads. The UI sets the gain to zero before it
+//   closes the old device and before it advances the session (a release), so a
+//   start after a new session sees that gain (or a newer one). The raise count
+//   is incremented with release after the new target is stored; a reader that
+//   loads the count with acquire, then the target, sees the raised target.
+//
 // Buffer lifetime (the hand-over):
 //   - The UI thread owns a buffer until it calls offer(). offer() swaps it into
 //     the single pending slot (an atomic exchange). If the slot already held a
@@ -139,6 +220,7 @@
 
 #include "control/SpscQueue.h"
 #include "input/InputTypes.h"
+#include "input/LiveInput.h"
 #include "platform/Meters.h"
 
 namespace audreybrick
@@ -162,10 +244,26 @@ class InputStage
     InputStage& operator=(const InputStage&) = delete;
 
     // Allocates the output buffer for `frames` frames and the crossfade table.
-    // Call before audio starts, never while pull() may run. pull() before
-    // prepare() returns nullptr.
-    void        prepare(std::size_t frames);
+    // `blockFrames` (M2b-B): the output device's buffer size, which sets the live
+    // target (kLiveTargetBuffers x) and overfill margin (kLiveOverfillMarginBuffers
+    // x); 0 = kLiveDefaultTargetFrames and its margin. Call before audio starts,
+    // never while pull() may run. pull() before prepare() returns nullptr.
+    void        prepare(std::size_t frames, std::size_t blockFrames = 0);
     std::size_t capacity() const noexcept { return capacity_; }
+    // M2b-B: the live input's ring (nullptr: none, LIVE then stays silent). Call
+    // before audio starts, never while pull() may run. It must outlive pull().
+    void        attachLive(LiveInput* live) noexcept { live_ = live; }
+    LiveInput*  live() const noexcept { return live_; }
+    // The configured live target in output buffers (1..32, clamped; default 2).
+    // UI thread, before audio starts (or while nothing reads the ring).
+    void        setLiveTargetBuffers(std::size_t n) noexcept;
+    std::size_t liveTargetBuffersConfigured() const noexcept { return liveConfBuffers_; }
+    // The live target and overfill margin now (frames; any thread), and how often
+    // two underruns within a second have doubled the target since start.
+    std::size_t   liveTargetFrames() const noexcept { return liveTargetPub_.load(std::memory_order_relaxed); }
+    std::size_t   liveMarginFrames() const noexcept { return liveMarginPub_.load(std::memory_order_relaxed); }
+    std::uint64_t liveTargetRaises() const noexcept { return liveRaises_.load(std::memory_order_acquire); }
+    std::size_t   liveRepeatFrames() const noexcept { return liveRepeat_; }
 
     // --- UI thread ---------------------------------------------------------------
     void setSource(InputSource s) noexcept;
@@ -241,6 +339,13 @@ class InputStage
         }
     };
 
+    void  liveChunkStart(InputSource src, float& gt, std::size_t frames) noexcept; // M2b-B
+    float liveNext(bool& held) noexcept;
+    void  liveChunkEnd(std::size_t frames) noexcept;
+    void  livePublishRead() noexcept;
+    void  liveDiscard() noexcept; // stop reading, skip all written so far, mark the new start
+    void  liveResetBaseline() noexcept;
+    void  setLiveBuffers(std::size_t buffers) noexcept;
     void finishCrossfade() noexcept; // the old player stops being read; retire it (or hold it)
     void startFresh() noexcept;      // level 0, the current player at 0 (it will fade in)
     void requestRestart() noexcept;  // a fade-out first if it sounds, else startFresh()
@@ -278,6 +383,43 @@ class InputStage
     std::unique_ptr<float[]> out_;
     std::unique_ptr<float[]> xfTable_; // kInputFileCrossfadeFrames weights
     std::size_t              capacity_ = 0;
+
+    // M2b-B, the live input (audio thread only, apart from the pointer and the
+    // target, set before audio starts).
+    static constexpr std::uint64_t kNoUnderrun = ~std::uint64_t{0};
+    LiveInput*    live_            = nullptr;
+    std::size_t   liveConfBuffers_ = kLiveTargetBuffers; // configured (setLiveTargetBuffers)
+    std::size_t   liveBuffers_     = kLiveTargetBuffers; // now (raised by underruns)
+    std::size_t   liveBlock_       = kLiveDefaultTargetFrames / kLiveTargetBuffers;
+    std::size_t   liveTarget_      = kLiveDefaultTargetFrames;
+    std::size_t   liveMargin_      = kLiveOverfillMarginBuffers * (kLiveDefaultTargetFrames / kLiveTargetBuffers);
+    std::size_t   liveRepeat_      = kLiveDefaultTargetFrames / kLiveTargetBuffers;
+    InputSource   sounding_        = InputSource::Off; // what level_ applies to
+    bool          liveRunning_     = false;            // reading the ring (it had reached the target)
+    bool          liveHoldOnly_    = false;            // a new session: fade out on the hold, read nothing
+    std::uint64_t liveW_           = 0;                // the writer's index at the start of the chunk
+    std::uint64_t liveRead_        = 0;                // the read position
+    std::uint64_t liveOld_         = 0;                // the other read position during a skip or repeat
+    std::uint64_t livePub_         = 0;                // the read index published to the writer
+    InputSource   livePrevSrc_     = InputSource::Off; // the source chosen at the previous chunk
+    std::uint64_t liveStart_       = 0;                // nothing before this index is read (session or discard)
+    std::size_t   liveXf_          = 0;                // the crossfade: running while liveXf_ < liveXfLen_
+    std::size_t   liveXfLen_       = 0;
+    float         liveRaw_         = 0.0f;             // the last live sample read (before the gain)
+    float         liveHoldOut_     = 0.0f;             // the last live value after the gain (held when dry)
+    std::uint32_t liveSessionSeen_ = 0;
+    std::uint64_t liveClock_       = 0;                // frames pulled since start
+    std::uint64_t liveLastUnderrun_ = kNoUnderrun;     // liveClock_ at the last underrun
+    std::size_t   liveBaseMin_     = SIZE_MAX;         // the settled minimum fill
+    std::uint64_t liveBaseStart_   = 0;
+    bool          liveBaseReady_   = false;
+    bool          liveNoHeadroom_  = false;            // settled: half a repeat below the minimum is <= the chunk
+    std::uint64_t liveRepeatClock_ = 0;                // liveClock_ at the last repeat (or start)
+    std::uint64_t liveRepeatW_     = 0;                // the writer's index at the last repeat
+    std::atomic<std::size_t>   liveTargetPub_{kLiveDefaultTargetFrames};
+    std::atomic<std::size_t>   liveMarginPub_{kLiveOverfillMarginBuffers * (kLiveDefaultTargetFrames / kLiveTargetBuffers)};
+    std::atomic<std::uint64_t> liveRaises_{0};
+    std::size_t   liveReadCount_   = 0; // samples taken from the ring in this chunk
 
     static_assert(std::atomic<InputBuffer*>::is_always_lock_free, "the hand-over must be lock-free");
     static_assert(std::atomic<float>::is_always_lock_free, "the gain must be lock-free");

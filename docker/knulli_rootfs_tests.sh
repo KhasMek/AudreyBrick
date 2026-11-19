@@ -149,6 +149,43 @@ grep -q "input: scan of $PORTS/audreybrick/data/input: 5 entries, 1 WAV file(s),
 cp "$DATA/audreybrick.log" /ab/out/launcher-input-audreybrick.log
 rm -rf "$SQ" "$DATA/input/link.wav" "$DATA/input/._square.wav" "$DATA/input/.hidden.wav" "$DATA/input/folder.wav"
 
+section "M2b-B: LIVE with a simulated capture device through the launcher; the capture lines of the device state"
+# The self-test's simulated capture (no device is opened): LIVE, a failed open,
+# then usb (the gain forced to -inf dB), Y + up: unity; the tone reaches the
+# input meter and the output at minimum feedback.
+printf '%s\n' 'capture device usb 2 220 0.25 48000' 'capture device busy fail' \
+    '0.10 L1 down' '0.15 L1 up' '0.30 DpadRight down' '0.35 DpadRight up' '0.40 DpadRight down' '0.45 DpadRight up' \
+    '0.60 X down' '0.65 DpadRight down' '0.70 DpadRight up' '0.75 DpadRight down' '0.80 DpadRight up' '0.85 X up' \
+    '1.00 X down' '1.05 DpadLeft down' '1.10 DpadLeft up' '1.15 X up' \
+    '1.50 Y down' '1.55 DpadUp down' '1.60 DpadUp up' '1.65 Y up' '2.50 capture unplug usb' > /tmp/input_live.txt
+launch AUDREY_LIVE_TARGET=4 AUDREY_ARGS="--selftest /tmp/input_live.txt --seconds 3.5 --no-video --expect-knob FeedbackGain 0 0 --expect-input-peak-min 0.4 --expect-peak-min 0.02 --expect-peak-max 1.0 --expect-live-status lost"
+rc=$?
+grep -E "^live:|^selftest: (ok|FAIL|PASSED|FAILED)" "$DATA/stdout.log" | sed 's/^/  /'
+grep -E "input: (capture|gain|DEVICE|live)|stats:.*live:" "$DATA/audreybrick.log" | sed 's/^\[[ 0-9.]*\] /  log: /' | cut -c1-260
+[ "$rc" -eq 0 ] && grep -q 'self-test: PASSED' "$DATA/audreybrick.log" \
+    && pass "LIVE through the launcher: the self-test passed (input above 0.4, output above 0.02, DEVICE LOST at the end)" \
+    || fail "LIVE self-test through the launcher (rc $rc)"
+grep -q "input: capture device 'busy' could not be opened (asked for 'busy'): SIMULATED: DEVICE BUSY" "$DATA/audreybrick.log" \
+    && grep -q "input: gain 0.500 -> 0 (-inf dB) before opening a capture device" "$DATA/audreybrick.log" \
+    && grep -q "input: capture device opened: 'usb' (asked for 'usb'; asked 48000 Hz f32 2 ch 256 frames; obtained 48000 Hz f32 2 ch 256 frames)" "$DATA/audreybrick.log" \
+    && grep -q "input: DEVICE LOST: 'usb'" "$DATA/audreybrick.log" \
+    && pass "the log has the failed open, the gain reset, the open (asked and obtained) and the loss" \
+    || fail "LIVE log lines"
+grep -qE '^launcher: settings: .* AUDREY_LIVE_TARGET=4 ' "$DATA/stdout.log" \
+    && grep -q "input: live target 1024 frames (4 output buffers, --live-target-buffers)" "$DATA/audreybrick.log" \
+    && pass "AUDREY_LIVE_TARGET=4 reaches the app as --live-target-buffers 4 (a 1024-frame target)" \
+    || fail "AUDREY_LIVE_TARGET did not reach the app"
+launch AUDREY_LIVE_TARGET=99 AUDREY_ARGS="$QUICK"
+grep -q "AUDREY_LIVE_TARGET '99' is not a whole number from 1 to 32; using 2" "$DATA/stdout.log" \
+    && grep -q "input: live target 512 frames (2 output buffers" "$DATA/audreybrick.log" \
+    && pass "AUDREY_LIVE_TARGET=99: noted, 2 used" || fail "AUDREY_LIVE_TARGET=99 not handled"
+grep -qE '^launcher: (pactl list short sources|pactl not found|capture: pactl)' "$DATA/stdout.log" \
+    && grep -qE '^launcher: (arecord -L|arecord not found|arecord -L skipped)' "$DATA/stdout.log" \
+    && pass "the device state lists PipeWire's sources (pactl) and ALSA's capture PCMs (arecord -L)" \
+    || fail "no pactl / arecord -L lines in the device state"
+grep -E '^launcher: (pactl list|arecord -L|capture)' "$DATA/stdout.log" | head -n 8 | sed 's/^/  /'
+cp "$DATA/audreybrick.log" /ab/out/launcher-live-audreybrick.log
+
 section "M3-C: the launcher reports KNULLI's input helpers; no .keys file is shipped"
 [ ! -e "$PORTS/AudreyBrick.sh.keys" ] && pass "no AudreyBrick.sh.keys in the package (the app handles Menu + Start itself)" \
     || fail "the package holds an AudreyBrick.sh.keys"
@@ -280,7 +317,7 @@ grep -q 'cpu governor at start: policy0 performance; policy4 schedutil' "$DATA/a
     && pass "the app logs the governors at start and after its restore" || fail "governor lines in the app log"
 grep -qE 'stats: .*callback load .*p50 .*, cpu freq policy0 408 MHz \(window 408\.\.408 MHz, [0-9]+ samples\); policy4 1200 MHz' "$DATA/audreybrick.log" \
     && pass "the stats line carries the CPU frequency of both policies" || fail "no cpu freq on the stats line"
-grep -qE "^launcher: settings: AudreyBrick [^ ]+ \(built .*\); AUDREY_BUFFER=256 AUDREY_KEEP_AWAKE=1 AUDREY_SWAP_AB=1 AUDREY_SWAP_XY=1 AUDREY_GOVERNOR=performance AUDREY_SYSFS_CPU=$FAKE \(testing aid\)$" "$DATA/stdout.log" \
+grep -qE "^launcher: settings: AudreyBrick [^ ]+ \(built .*\); AUDREY_BUFFER=256 AUDREY_LIVE_TARGET=2 AUDREY_KEEP_AWAKE=1 AUDREY_SWAP_AB=1 AUDREY_SWAP_XY=1 AUDREY_GOVERNOR=performance AUDREY_SYSFS_CPU=$FAKE \(testing aid\)$" "$DATA/stdout.log" \
     && pass "one settings line with the app's version and the resolved settings" || fail "settings line"
 grep -q 'launcher: policy0 governor schedutil, cur 408000 kHz, min 408000 kHz, max 1416000 kHz, cpus 0 1 2 3' "$DATA/stdout.log" \
     && pass "device state lists each policy before the change" || fail "device state policy line"

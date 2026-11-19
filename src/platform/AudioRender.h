@@ -26,7 +26,8 @@
 // No allocation, lock, I/O, logging, exception or wait.
 //
 // The input stage (M2b-A): attachInput() before prepare(); prepare() also
-// prepares the stage for the same capacity. The stage must outlive every
+// prepares the stage for the same capacity (and, M2b-B, tells it the device's
+// buffer size, `frames`, which sets the live input's target fill). The stage must outlive every
 // render() call.
 //
 // Threads: prepare() and the constructor on the main thread before audio starts;

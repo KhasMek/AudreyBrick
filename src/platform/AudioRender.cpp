@@ -26,7 +26,7 @@ void AudioRender::prepare(std::size_t frames)
     left_     = std::make_unique<float[]>(capacity_);
     right_    = std::make_unique<float[]>(capacity_);
     if(input_ != nullptr)
-        input_->prepare(capacity_);
+        input_->prepare(capacity_, frames); // M2b-B: the live target from the device's buffer size
 }
 
 void AudioRender::render(float* out, std::size_t frames) noexcept

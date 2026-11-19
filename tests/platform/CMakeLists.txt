@@ -140,6 +140,41 @@ if(AB_HAVE_SDL)
         FAIL_REGULAR_EXPRESSION "ThreadSanitizer|AddressSanitizer|LeakSanitizer|runtime error|selftest: FAIL"
         TIMEOUT 60)
 
+    # M2b-B: the live input through the whole app with simulated capture devices
+    # (the script's `capture device` lines; input/LiveSim.h). A self-test never
+    # opens a real capture device.
+    #   platform_selftest_live: LIVE, a failed open (busy), then usb opens with
+    #     the gain forced to -inf dB, Y + up: unity. The tone (0.25 per channel,
+    #     L + R 0.5) reaches the input meter (above 0.4) and the output at minimum
+    #     feedback (above 0.05); a device is open at the end; at most a few
+    #     underruns (the simulated device is paced by the output's frames, but its
+    #     thread naps 1 ms, so a slow sanitizer build can starve it briefly).
+    #   platform_selftest_live_unplug: usb unplugged while it plays: DEVICE LOST
+    #     (status lost at the end, also after it is plugged in again).
+    #   platform_selftest_live_fast / _slow: a capture clock 2 % fast / 1 % slow:
+    #     skips (at least 3 in 6 s) / crossfaded repeats (at least 5; slow
+    #     capture is repeated, not left to run dry), with few underruns.
+    add_test(NAME platform_selftest_live
+             COMMAND audreybrick --selftest ${CMAKE_CURRENT_SOURCE_DIR}/input_live.txt --seconds 3
+                     --expect-knob FeedbackGain 0.0 0.0 --expect-input-peak-min 0.4 --expect-peak-min 0.05
+                     --expect-peak-max 1.0 --expect-live-status open --expect-live-underruns-max 10)
+    add_test(NAME platform_selftest_live_unplug
+             COMMAND audreybrick --selftest ${CMAKE_CURRENT_SOURCE_DIR}/input_live_unplug.txt --seconds 4
+                     --expect-input-peak-min 0.4 --expect-live-status lost --expect-peak-max 1.0)
+    add_test(NAME platform_selftest_live_fast
+             COMMAND audreybrick --selftest ${CMAKE_CURRENT_SOURCE_DIR}/input_live_fast.txt --seconds 6
+                     --expect-input-peak-min 0.3 --expect-live-overfills-min 3 --expect-live-underruns-max 3
+                     --expect-live-status open)
+    add_test(NAME platform_selftest_live_slow
+             COMMAND audreybrick --selftest ${CMAKE_CURRENT_SOURCE_DIR}/input_live_slow.txt --seconds 6
+                     --expect-input-peak-min 0.3 --expect-live-repeats-min 5 --expect-live-underruns-max 3
+                     --expect-live-status open)
+    set_tests_properties(platform_selftest_live platform_selftest_live_unplug platform_selftest_live_fast
+                         platform_selftest_live_slow PROPERTIES
+        ENVIRONMENT "SDL_AUDIODRIVER=dummy;SDL_VIDEODRIVER=dummy;${AB_PLATFORM_ENV}"
+        FAIL_REGULAR_EXPRESSION "ThreadSanitizer|AddressSanitizer|LeakSanitizer|runtime error|selftest: FAIL"
+        TIMEOUT 60)
+
     # M3-B: --version, --swap-ab, --restore-on-exit and the CPU frequency lines,
     # with a fake sysfs tree (AUDREY_SYSFS_CPU). See selftest_sysfs_check.cmake.
     add_test(NAME platform_selftest_sysfs

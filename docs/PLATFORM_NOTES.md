@@ -196,3 +196,17 @@ Decision by the human (2026-11-18): leave the default governor as it is for now;
 ### Third run (2026-11-18)
 
 Package `401ae63-dirty`, three sessions. **[confirmed, device log and the human's report]** One press of Menu + Start closes the app (`exit: Menu + Start`), in either press order, with the keep-awake file removed and a clean shutdown each time. KNULLI's Select + Start screenshot of the running app shows the normal screen; the file is a 1024x768 PNG of about 15 kB in the card's `screenshots` folder.
+
+### File input run (2026-11-19)
+
+Package built from the M2b-A3 tree (file input with the hold-X pop-up browser), default governor. **[confirmed, device log and the human's report]**
+
+| Item | Finding |
+|---|---|
+| Result | The human reports the browser, crossfade and play modes working as expected and the pop-up readable |
+| Folder scan | 7 entries on the card: 1.3 to 4.4 ms |
+| Load time, 48 kHz files | 523 s stereo 24-bit (100 MB as mono float): **2.1 s**. 19.5 s stereo: 0.12 s. One-second mono files: 7 to 20 ms |
+| Load time, converted | 197 s stereo 24-bit at 44.1 kHz: **5.4 s** (four loads, 5.41 to 5.49 s). Sample-rate conversion, not the card, dominates: about 27 ms per second of audio against about 4 ms per second unconverted |
+| Memory | `MemAvailable` 678 MB at start-up; 578 MB with the 100 MB file loaded. The 10-minute cap (115 MB per file, two at most) fits comfortably |
+| Callback load | Unchanged by a playing file: 33 to 36 % of a 256-frame buffer at the default governor; maxima up to 69 % while a file was loading. **0 overruns** in the run |
+

@@ -48,7 +48,7 @@ Always:
                    has no function in AudreyBrick; it is KNULLI's screenshot, see below)
   SELECT + B       latch the delay switch on or off
   X (hold)         the d-pad moves the tab's other parameter (DELAY: repeats;
-                   INPUT: choosing the file, see below)
+                   INPUT: choosing the file or the capture device, see below)
   Y + d-pad        reset that parameter to its default
   START            nothing by itself
   MENU + START     quit
@@ -59,10 +59,12 @@ Tabs (d-pad left/right, d-pad up/down):
   REVERB   dry/wet                            decay
   DELAY    time                               mix;  X + up/down: repeats
   OUT      -                                  volume
-  INPUT    source (OFF, FILE)                 input gain;  Y + up/down: gain to 0 dB
+  INPUT    source (OFF, FILE, LIVE)           input gain;  Y + up/down: gain to 0 dB
            with FILE: hold X to choose a file (X + left/right: one by one;
            X + up/down: the list), release X to load it; X + Y: LOOP/ONCE;
            X + SELECT: play the file again from the start
+           with LIVE: hold X to choose a capture device the same way,
+           release X to open it (the gain goes to -inf dB first)
 
 
 Audio input (INPUT tab)
@@ -70,7 +72,8 @@ Audio input (INPUT tab)
 The original instrument has an audio input: whatever comes in is added to the
 string, inside the feedback loop, so it sounds even with the feedback at its
 minimum and rings the string and the loop as you raise it. AudreyBrick can feed
-it from a WAV file (the microphone and USB audio come in a later version).
+it from a WAV file (FILE) or from a capture device (LIVE): the Brick's built-in
+microphone or a USB audio interface. LIVE is described further down.
 
   1. Put WAV files into the folder audreybrick/data/input on the SD card
      (roms/ports/audreybrick/data/input; on the device
@@ -107,7 +110,7 @@ it from a WAV file (the microphone and USB audio come in a later version).
      bottom of the meter panel shows the input level on every tab.
 
 The source is OFF at every start, the play mode LOOP; nothing about the input
-is remembered.
+is remembered (not the file, not the capture device).
 
 Files: mono or stereo (stereo is mixed as left + right), 16-bit, 24-bit, 32-bit
 or float, and the other formats dr_wav reads, at 8 to 384 kHz. Rates other than
@@ -132,6 +135,63 @@ Mind your ears: a loud file through the distortion and feedback can be very loud
 Start with the gain at 0 dB or below and the volume low.
 
 
+Live input: microphone and USB audio (INPUT tab, LIVE)
+------------------------------------------------------
+WARNING: the Brick's speaker and its microphone sit close together, and Audrey II
+is a feedback instrument. With the speaker on, the microphone hears the speaker,
+the instrument feeds that back into itself and it can howl, loudly. Use
+headphones, or keep the input gain low. AudreyBrick cannot tell whether
+headphones are plugged in, so it does not mute anything by itself; it sets the
+gain to -inf dB (silence) every time a device opens and leaves raising it to you.
+The INPUT tab shows SPEAKER + MIC CAN HOWL / USE HEADPHONES OR KEEP GAIN LOW
+whenever LIVE is selected.
+
+  1. On the INPUT tab press d-pad right until SOURCE shows LIVE. Nothing opens
+     by itself: the DEVICE row says NO DEVICE CHOSEN.
+  2. Hold X to choose a device, as with files:
+       X + left/right  the previous / next device; nothing opens yet
+       X + up/down     opens the list of devices (with nothing open, X, down,
+                       release opens the highlighted one)
+       release X       opens the device you went to
+     The list starts with SYSTEM DEFAULT (the system's default capture device,
+     on the Brick normally its built-in microphone), then every device the
+     system reports, by the names it gives them (the built-in codec is called
+     something like "audiocodec, "). A USB interface appears when it is plugged
+     in, also while AudreyBrick runs. X + Y and X + SELECT do nothing with LIVE.
+  3. When a device opens, the gain is set to -inf dB. The DEVICE row then shows
+     what the device delivers (for example "48000 Hz 1 CH 256 FR") and a PRE bar:
+     the level coming from the device before the gain, so you can see that the
+     microphone works while the gain is still at zero. Raise the gain with
+     d-pad up (or Y + up for 0 dB) and watch the large input meter.
+  4. Leaving LIVE (d-pad left) closes the device, so the microphone is never
+     open without you seeing it. Selecting LIVE again opens the same device
+     again, with the gain back at -inf dB.
+  5. If a device cannot be opened, the DEVICE row says CANNOT OPEN and the
+     reason. If the open device is unplugged, the sound may stop abruptly at
+     that moment (the system can hand over silence before it reports the
+     loss); where AudreyBrick sees the loss first, the input fades out over
+     10 ms. Then the device is closed and the row says DEVICE LOST: choose a
+     device again. A device that sends nothing for 3 seconds is treated the
+     same way.
+
+Stereo devices are mixed to one channel as left + right (as files are); devices
+with more channels use their first two. The sound is passed on with a small
+buffer (two audio buffers by default, about 11 ms at the default buffer size),
+so there is a short delay between what the microphone hears and what you hear.
+If the device's clock runs a little fast or slow against the Brick's output,
+the buffer is corrected now and then with a short crossfade: a few milliseconds
+are skipped (fast) or repeated (slow). If the device delivers its sound in
+large bursts and the buffer runs dry (an "underrun": a short fade out, a gap,
+a fade in), AudreyBrick doubles the buffer after two underruns within a
+second, up to 16 audio buffers; it goes back to the setting when you choose a
+device again. To start with a larger buffer, set AUDREY_LIVE_TARGET (1 to 32
+audio buffers, default 2) near the top of AudreyBrick.sh; more is steadier but
+adds delay. The log (data/audreybrick.log) has a "live:" part in every
+statistics line while LIVE is selected (buffer fill and target, underruns,
+skips, repeats, frames captured and played, levels), and a line for every
+device listed, opened, closed or lost and every time the buffer was doubled.
+
+
 Quitting
 --------
   - MENU + START: hold MENU and press START (or the other way round), once. The
@@ -154,7 +214,8 @@ Each run writes, in the audreybrick/data folder:
   audreybrick.log   what the app found (screen, sound, buttons, controller) and
                     statistics every 10 seconds
   stdout.log        the launcher's notes (including the device's power, CPU and
-                    sound settings at start) and everything the app printed
+                    sound settings at start, and the sound system's capture
+                    devices) and everything the app printed
 These two are always the latest run. Earlier runs are kept as
 audreybrick-NNNNNN-YYYYMMDD-HHMMSS.log and stdout-NNNNNN-YYYYMMDD-HHMMSS.log
 (NNNNNN is the run number, so they sort in order even if the clock was not set);
@@ -164,7 +225,8 @@ Replacing the audreybrick folder with a new version deletes data/: copy the logs
 off first.
 
 To change the audio buffer size, edit the number on the AUDREY_BUFFER line near the
-top of AudreyBrick.sh (default 256 frames; 16 to 32768).
+top of AudreyBrick.sh (default 256 frames; 16 to 32768). The live input's buffer,
+in audio buffers: AUDREY_LIVE_TARGET (default 2; 1 to 32).
 
 stdout.log has one line starting "launcher: settings:" with the app's version and
 the settings below as they were used for that run.

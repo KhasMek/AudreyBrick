@@ -212,7 +212,10 @@ int main()
                   !v.folderMissing && r.audible() == 0.0f,
               "FILE with an empty folder: NoFiles, nothing plays");
         r.tap(Button::DpadRight);
-        check(r.ctl->source() == InputSource::File, "right on the last source: no wrap");
+        check(r.ctl->source() == InputSource::Live, "right from FILE: LIVE (M2b-B)");
+        r.tap(Button::DpadRight);
+        check(r.ctl->source() == InputSource::Live, "right on the last source (LIVE): no wrap");
+        r.tap(Button::DpadLeft);
         r.tap(Button::DpadLeft);
         r.tap(Button::DpadLeft);
         check(r.ctl->source() == InputSource::Off && r.logHas("input: source FILE -> OFF"),

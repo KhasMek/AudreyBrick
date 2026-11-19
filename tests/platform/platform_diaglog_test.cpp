@@ -238,5 +238,51 @@ int main()
         check(std::strstr(buf, "input FILE peak 0.250, unmapped-key lines suppressed 3") != nullptr,
               "the input part comes before the suppressed-keys tail");
     }
+    // --- M2b-B: the live part of the statistics line ------------------------------------------------------
+    {
+        LiveWindowStats w;
+        w.deviceOpen   = true;
+        w.device       = "audiocodec, ";
+        w.running      = true;
+        w.fill         = 512;
+        w.minFill      = 256;
+        w.maxFill      = 768;
+        w.target       = 512;
+        w.underruns    = 1;
+        w.overfills    = 2;
+        w.repeats      = 4;
+        w.raises       = 1;
+        w.captured     = 482400;
+        w.read         = 480000;
+        w.dropped      = 3;
+        w.callbacks    = 1884;
+        w.outputFrames = 480000;
+        w.prePeak      = 0.5f;
+        w.postPeak     = 0.25f;
+        char live[400];
+        formatLiveStats(live, sizeof live, w);
+        const std::string want = "live: device 'audiocodec, ' (running), fill 512 (min 256, max 768, target 512, raised 1), "
+                                 "underruns 1, skips 2, repeats 4, captured 482400, read 480000, dropped 3, capture callbacks 1884, capture clock "
+                                 "1.0050x output, pre peak 0.500, post peak 0.250";
+        check(want == live, std::string("live statistics: ") + live);
+        LiveWindowStats none;
+        formatLiveStats(live, sizeof live, none);
+        check(std::string(live).rfind("live: no device open, fill 0", 0) == 0 &&
+                  std::string(live).find("capture clock n/a") != std::string::npos,
+              std::string("live statistics without a device: ") + live);
+        PeriodicStats st;
+        st.windowSeconds = 10.0;
+        st.sampleRate    = 48000;
+        st.audioFrames   = 480000;
+        st.inputSource   = "LIVE";
+        st.live          = "live: x";
+        char buf[1600];
+        formatStats(buf, sizeof buf, st);
+        check(std::string(buf).find(", input LIVE peak 0.000, live: x") != std::string::npos,
+              "the statistics line carries the live part after the input part");
+        char tiny[20];
+        check(formatLiveStats(tiny, sizeof tiny, w) == sizeof tiny - 1 && std::strlen(tiny) == sizeof tiny - 1,
+              "formatLiveStats cuts at the buffer's size");
+    }
     return ptest::finish();
 }

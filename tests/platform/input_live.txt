@@ -1,0 +1,29 @@
+# M2b-B self-test: the live input with simulated capture devices (input/LiveSim.h;
+# no real device is ever opened by a self-test). The device list is SYSTEM
+# DEFAULT, usb, busy.
+capture device usb 2 220 0.25 48000
+capture device busy fail
+# L1 from LOOP wraps to INPUT; right twice: OFF -> FILE -> LIVE (nothing opens).
+0.10  L1        down
+0.15  L1        up
+0.30  DpadRight down
+0.35  DpadRight up
+0.40  DpadRight down
+0.45  DpadRight up
+# Hold X, right twice (cursor on busy), release: the open fails (CANNOT OPEN).
+0.60  X         down
+0.65  DpadRight down
+0.70  DpadRight up
+0.75  DpadRight down
+0.80  DpadRight up
+0.85  X         up
+# Hold X, left (cursor on usb), release: it opens with the gain forced to -inf dB.
+1.00  X         down
+1.05  DpadLeft  down
+1.10  DpadLeft  up
+1.15  X         up
+# Y + up: unity gain (the tone's L + R mix, 0.5, reaches the input).
+1.50  Y         down
+1.55  DpadUp    down
+1.60  DpadUp    up
+1.65  Y         up

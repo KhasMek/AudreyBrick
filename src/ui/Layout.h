@@ -51,6 +51,24 @@
 //                  AGAIN. It covers the tab's rows and the first three columns
 //                  of the value strip, whole rows; the tab bar, feedback band,
 //                  switch box, meters and status line stay.
+//   INPUT, LIVE    (M2b-B) compact rows: SOURCE y 184 (52 px), GAIN y 242 (72
+//                  px, the dB value still at 40 px), DEVICE y 320 (94 px): "DEVICE",
+//                  "n OF m", the device name at 24 px (the cursor's while X is
+//                  held, else the open one, or NO DEVICE CHOSEN), and one 16 px
+//                  line: OPEN: <name> while choosing another device; else, with a
+//                  device open, what it delivers ("48000 Hz 1 CH 256 FR") and a
+//                  PRE bar (the pre-gain level, so a live device shows while the
+//                  gain is at zero); else CANNOT OPEN <name>: <reason> or DEVICE
+//                  LOST in inverse video; else HOLD X: CHOOSE DEVICE. Under the
+//                  rows and the input meter (shortened to y 184..414) the warning
+//                  panel, x 8..872 y 420..472: SPEAKER + MIC CAN HOWL and USE
+//                  HEADPHONES OR KEEP GAIN LOW at 24 px, bg on the clip colour
+//                  (as the errors), whether or not a device is open.
+//                  The SOURCE choices (OFF, FILE, LIVE) are boxes at 24 px on
+//                  every source since M2b-B (three no longer fit at 32 px).
+//                  The pop-up with the source LIVE lists the devices: DEVICES n
+//                  OF m, OPEN on the open device, status CANNOT OPEN / DEVICE
+//                  LOST / OPEN: <name>, one hint X RELEASE: OPEN.
 //   value strip    all eleven values (tab, name, value, small bar), the current
 //                  tab's cells framed; the twelfth cell is the CPU meter.
 //   status line    audio spec, dropped commands, controller / keyboard hint;
@@ -104,6 +122,9 @@ struct MeterView
     float inLevel = 0.0f;
     float inHold  = 0.0f;
     bool  inClip  = false;
+    // M2b-B: the live input's pre-gain level (the mono mix as captured).
+    float preLevel = 0.0f;
+    float preHold  = 0.0f;
 };
 
 // Display names: the long one is used in the current tab when it fits, the short

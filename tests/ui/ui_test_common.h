@@ -530,6 +530,146 @@ inline UiSnapshot inputPopupNoFilesSnapshot()
     return withPopup(inputNoFilesSnapshot());
 }
 
+// --- M2b-B: the source LIVE ----------------------------------------------------------------
+// The device list as InputController::fill() makes it with the source LIVE
+// (SYSTEM DEFAULT first; the Brick's built-in codec as SDL names it; a USB
+// interface): the list fields hold the devices, deviceCount their number.
+inline std::vector<std::string> threeDevices()
+{
+    return {"SYSTEM DEFAULT", "audiocodec, ", "USB Audio CODEC, USB Audio"};
+}
+
+inline void setLiveList(UiSnapshot& s, const std::vector<std::string>& names, int cursor, int openIndex)
+{
+    const int files = s.input.fileCount;
+    setInputList(s, names, cursor, openIndex);
+    s.input.fileCount   = files; // the file count stays the file count
+    s.input.deviceCount = static_cast<int>(names.size());
+}
+
+// LIVE selected, nothing chosen yet: the gain was forced to -inf, the warning shows.
+inline UiSnapshot inputLiveNoDeviceSnapshot()
+{
+    UiSnapshot s   = inputOffSnapshot();
+    s.input.source = InputSource::Live;
+    setInputGain(s, 0.0f);
+    setLiveList(s, threeDevices(), 0, -1);
+    return s;
+}
+
+// LIVE with the USB interface open and signal: gain -6 dB, input at -12 dB, the
+// mic level before the gain at -6 dB.
+inline UiSnapshot inputLiveOpenSnapshot()
+{
+    UiSnapshot s = inputLiveNoDeviceSnapshot();
+    setInputGain(s, 0.3536f);
+    setLiveList(s, threeDevices(), 2, 2);
+    s.input.deviceOpen      = true;
+    std::snprintf(s.input.deviceName, sizeof s.input.deviceName, "%s", "USB Audio CODEC, USB Audio");
+    s.input.grantedRate     = 48000;
+    s.input.grantedChannels = 2;
+    s.input.grantedFrames   = 256;
+    s.input.liveRunning     = true;
+    s.input.peak            = 0.25f;
+    s.input.prePeak         = 0.5f;
+    return s;
+}
+
+// LIVE, the built-in mic open, the gain still at zero (forced on open): the
+// input meter is silent but the PRE bar shows the mic is alive.
+inline UiSnapshot inputLiveGainZeroSnapshot()
+{
+    UiSnapshot s = inputLiveOpenSnapshot();
+    setInputGain(s, 0.0f);
+    setLiveList(s, threeDevices(), 1, 1);
+    std::snprintf(s.input.deviceName, sizeof s.input.deviceName, "%s", "audiocodec, ");
+    s.input.grantedChannels = 1;
+    s.input.peak            = 0.0f;
+    s.input.prePeak         = 0.08f;
+    return s;
+}
+
+// LIVE, X held with left/right: the cursor on another device than the open one.
+inline UiSnapshot inputLiveChoosingSnapshot()
+{
+    UiSnapshot s = inputLiveOpenSnapshot();
+    s.xHeld      = true;
+    setButton(s, Button::X, true);
+    setButton(s, Button::DpadLeft, true);
+    setLiveList(s, threeDevices(), 0, 2);
+    s.input.choosing = true;
+    return s;
+}
+
+// The device pop-up with three devices, the USB one open, the cursor on the mic.
+inline UiSnapshot inputLivePopupSnapshot()
+{
+    UiSnapshot s = inputLiveOpenSnapshot();
+    setLiveList(s, threeDevices(), 1, 2);
+    return withPopup(s);
+}
+
+// The device pop-up with nothing open yet.
+inline UiSnapshot inputLivePopupNothingSnapshot()
+{
+    UiSnapshot s = inputLiveNoDeviceSnapshot();
+    setLiveList(s, threeDevices(), 0, -1);
+    return withPopup(s);
+}
+
+// An open that failed (with SDL's reason, long).
+inline UiSnapshot inputLiveFailedSnapshot()
+{
+    UiSnapshot s = inputLiveNoDeviceSnapshot();
+    setLiveList(s, threeDevices(), 2, -1);
+    s.input.liveStatus = LiveStatus::Failed;
+    std::snprintf(s.input.liveFailName, sizeof s.input.liveFailName, "%s", "USB Audio CODEC, USB Audio");
+    std::snprintf(s.input.liveReason, sizeof s.input.liveReason, "%s",
+                  "ALSA: Couldn't open audio device: Device or resource busy");
+    return s;
+}
+
+inline UiSnapshot inputLivePopupFailedSnapshot()
+{
+    return withPopup(inputLiveFailedSnapshot());
+}
+
+// The open device was unplugged.
+inline UiSnapshot inputLiveLostSnapshot()
+{
+    UiSnapshot s = inputLiveNoDeviceSnapshot();
+    setLiveList(s, {"SYSTEM DEFAULT", "audiocodec, "}, 1, -1);
+    s.input.liveStatus = LiveStatus::Lost;
+    return s;
+}
+
+// A long, non-ASCII device name open; nine devices (the pop-up scrolls).
+inline UiSnapshot inputLiveLongNameSnapshot()
+{
+    UiSnapshot               s = inputLiveOpenSnapshot();
+    std::vector<std::string> names{"SYSTEM DEFAULT"};
+    for(int i = 1; i < 9; ++i)
+        names.push_back(i == 8 ? "Scarlett 2i2 4th Gen \xe2\x80\x93 Analogue In 1 + 2, very long interface name"
+                               : "Device " + std::to_string(i));
+    setLiveList(s, names, 8, 8);
+    std::snprintf(s.input.deviceName, sizeof s.input.deviceName, "%s", names[8].c_str());
+    s.input.prePeak = 1.2f; // clipping before the gain
+    return s;
+}
+
+inline UiSnapshot inputLivePopupLongSnapshot()
+{
+    return withPopup(inputLiveLongNameSnapshot(), Button::DpadUp);
+}
+
+// DELAY with the source LIVE: the IN indicator as with FILE.
+inline UiSnapshot inIndicatorLiveSnapshot()
+{
+    UiSnapshot s = inputLiveOpenSnapshot();
+    s.tab        = Tab::Delay;
+    return s;
+}
+
 struct NamedSnapshot
 {
     const char* name;
@@ -597,6 +737,18 @@ inline std::vector<NamedSnapshot> allSnapshots()
         {"input_loaded_unlisted", inputLoadedUnlistedSnapshot()},
         {"in_indicator_loop", inIndicatorSnapshot()},
         {"in_indicator_clip_delay", inIndicatorClipSnapshot()},
+        {"input_live_no_device", inputLiveNoDeviceSnapshot()},
+        {"input_live_open", inputLiveOpenSnapshot()},
+        {"input_live_gain_zero", inputLiveGainZeroSnapshot()},
+        {"input_live_choosing", inputLiveChoosingSnapshot()},
+        {"input_live_popup_3_devices", inputLivePopupSnapshot()},
+        {"input_live_popup_nothing_open", inputLivePopupNothingSnapshot()},
+        {"input_live_open_failed", inputLiveFailedSnapshot()},
+        {"input_live_popup_failed", inputLivePopupFailedSnapshot()},
+        {"input_live_device_lost", inputLiveLostSnapshot()},
+        {"input_live_long_name", inputLiveLongNameSnapshot()},
+        {"input_live_popup_long", inputLivePopupLongSnapshot()},
+        {"in_indicator_live_delay", inIndicatorLiveSnapshot()},
     };
 }
 
@@ -618,6 +770,10 @@ inline ui::MeterView firstFrameMeters(const UiSnapshot& s)
     v.inLevel = in.level();
     v.inHold  = in.hold();
     v.inClip  = in.clipped();
+    ui::PeakMeter pre; // M2b-B
+    pre.update(s.input.prePeak, s.timeSeconds);
+    v.preLevel = pre.level();
+    v.preHold  = pre.hold();
     return v;
 }
 

@@ -1,0 +1,19 @@
+# M2b-B self-test: the open device is unplugged while it plays (DEVICE LOST),
+# and comes back.
+capture device usb 2 220 0.25 48000
+0.10  L1        down
+0.15  L1        up
+0.30  DpadRight down
+0.35  DpadRight up
+0.40  DpadRight down
+0.45  DpadRight up
+0.60  X         down
+0.65  DpadRight down
+0.70  DpadRight up
+0.75  X         up
+1.00  Y         down
+1.05  DpadUp    down
+1.10  DpadUp    up
+1.15  Y         up
+2.00  capture unplug usb
+3.00  capture plug usb

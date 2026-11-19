@@ -10,6 +10,12 @@
 # input_memory_test (M2b-A2) replaces operator new to measure the loader's peak
 # memory for one load (it needs about 120 MB at a time).
 #
+# M2b-B: input_live_test (the capture ring and the stage's LIVE path, single
+# threaded and deterministic) and input_live_threads_test (the ring and the stage
+# with a real writer thread and the simulated capture system; the
+# ThreadSanitizer build runs it), and input_live_controller_test (the INPUT tab's
+# model with the source LIVE, against a fake capture system).
+#
 # input_make_tone: a helper (not a test) that writes the self-test's tone file;
 # tests/platform uses it as a fixture.
 find_package(Threads REQUIRED)
@@ -27,6 +33,9 @@ set(AB_INPUT_TESTS
     input_stress_test
     input_memory_test
     input_fuzz_test
+    input_live_test
+    input_live_threads_test
+    input_live_controller_test
 )
 foreach(_t ${AB_INPUT_TESTS})
     add_executable(${_t} ${_t}.cpp)

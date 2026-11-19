@@ -25,6 +25,13 @@
 // NaN and kept alive until the end of the run, so a read shows as a non-finite
 // output; every buffer offered is accounted for (back to the "UI", or among the
 // at most four the stage holds at the end).
+// M2b-B: a second fuzz with a live ring attached (fuzzLive): the source toggles
+// among OFF, FILE and LIVE, the ring is written in random amounts (a DC of +/-1,
+// whose sign changes only with a new session, as a new device would bring), new
+// sessions, and long stretches without writes (starvation: underruns). The live
+// path adds no step of its own above the same bound: the level moves by 1/480,
+// a held sample is constant, the skip's crossfade between two equal DC values is
+// constant, and FILE and LIVE never sound at once.
 // Plus the three scenarios of the review, each with the bound, the old buffer
 // retired exactly once and no frozen crossfade: a new file shorter than the
 // crossfade in ONCE, then (a) LOOP mid-crossfade, (b) OFF and FILE between two
@@ -43,6 +50,7 @@
 
 #include "input/InputStage.h"
 #include "input/InputTypes.h"
+#include "input/LiveInput.h"
 #include "input_test_common.h"
 
 using namespace audreybrick;
@@ -234,6 +242,77 @@ FuzzResult fuzz(std::uint64_t seed, int ops)
     f.restarts  = static_cast<long>(st.restarts());
     return f; // the stage frees what it holds; the graveyard after it
 }
+struct LiveFuzzResult
+{
+    double maxStep = 0.0;
+    long   frozen = 0, nonFinite = 0, dup = 0, underruns = 0, overfills = 0, liveSounding = 0;
+};
+
+LiveFuzzResult fuzzLive(std::uint64_t seed, int ops)
+{
+    LiveInput  live;
+    InputStage st;
+    st.attachLive(&live);
+    st.prepare(2048, 256);
+    Watch       w(st);
+    Rng         r{seed * 0x9E3779B97F4A7C15ull + 7};
+    LiveFuzzResult f;
+    float       dcv = 1.0f;
+    std::vector<float> block(4096, dcv);
+    for(int op = 0; op < ops; ++op)
+    {
+        const int k = r.range(0, 99);
+        if(k < 8)
+        {
+            std::unique_ptr<InputBuffer> b;
+            if(r.range(0, 7) == 0)
+                b = std::make_unique<InputBuffer>();
+            else
+                b = dc(static_cast<std::size_t>(r.range(960, 21000)), r.range(0, 1) == 0 ? 1.0f : -1.0f);
+            w.bury(st.offer(std::move(b)));
+        }
+        else if(k < 11)
+            st.setPlayMode(r.range(0, 1) == 0 ? InputPlayMode::Loop : InputPlayMode::Once);
+        else if(k < 13)
+            st.restart();
+        else if(k < 20)
+        {
+            const int s = r.range(0, 2);
+            st.setSource(s == 0 ? InputSource::Off : (s == 1 ? InputSource::File : InputSource::Live));
+            if(r.range(0, 3) == 0)
+                st.setSource(static_cast<InputSource>(r.range(0, 2))); // another one at once
+        }
+        else if(k < 22)
+        {
+            // A new device: a new session, then its (different) DC.
+            live.newSession();
+            dcv = -dcv;
+            std::fill(block.begin(), block.end(), dcv);
+        }
+        else if(k < 26)
+            w.reclaimAll();
+        else if(k < 50)
+        {
+            // The capture side: usually about what the output takes, sometimes a
+            // burst (overfill), sometimes nothing (starvation).
+            const int n = r.range(0, 9) == 0 ? r.range(1500, 4096) : r.range(0, 700);
+            live.write(block.data(), static_cast<std::size_t>(n));
+        }
+        else
+        {
+            w.pull(static_cast<std::size_t>(r.range(1, 1024)));
+            f.liveSounding += live.running() ? 1 : 0;
+        }
+    }
+    w.reclaimAll();
+    f.maxStep   = w.maxStep;
+    f.frozen    = w.frozen;
+    f.nonFinite = w.nonFinite;
+    f.dup       = w.dupReclaim;
+    f.underruns = static_cast<long>(live.underruns());
+    f.overfills = static_cast<long>(live.overfills());
+    return f;
+}
 } // namespace
 
 int main()
@@ -284,5 +363,30 @@ int main()
     check(dup == 0 && badHeld == 0, "fuzz: no buffer came back twice; every buffer offered came back, apart from at most "
                                     "four held by the stage at the end");
     check(switches > 1000 && restarts > 100, "fuzz: the runs switched and restarted often");
+
+    // M2b-B: with the live input.
+    double lworst = 0.0;
+    long   lfrozen = 0, lnonFinite = 0, ldup = 0, lunder = 0, lover = 0, lsound = 0;
+    for(std::uint64_t seed : seeds)
+    {
+        const LiveFuzzResult f = fuzzLive(seed, kOps);
+        lworst                 = std::max(lworst, f.maxStep);
+        lfrozen += f.frozen;
+        lnonFinite += f.nonFinite;
+        ldup += f.dup;
+        lunder += f.underruns;
+        lover += f.overfills;
+        lsound += f.liveSounding;
+        if(f.maxStep > kBound || f.frozen != 0 || f.nonFinite != 0 || f.dup != 0)
+            std::printf("  live seed %llu: step %.5f, frozen %ld, non-finite %ld, duplicate reclaims %ld\n",
+                        static_cast<unsigned long long>(seed), f.maxStep, f.frozen, f.nonFinite, f.dup);
+    }
+    std::printf("live fuzz: %zu seeds x %d operations: largest step %.5f (bound %.4f), underruns %ld, overfills %ld, "
+                "pulls with the ring playing %ld\n",
+                seeds.size(), kOps, lworst, kBound, lunder, lover, lsound);
+    check(lworst <= kBound && lfrozen == 0 && lnonFinite == 0 && ldup == 0,
+          "live fuzz (OFF / FILE / LIVE toggles, starvation, bursts, new sessions): no step above 0.0066, no frozen "
+          "crossfade, no reclaimed buffer read, none returned twice");
+    check(lunder > 100 && lover > 10 && lsound > 1000, "live fuzz: underruns, overfills and live playback all happened");
     return itest::finish();
 }

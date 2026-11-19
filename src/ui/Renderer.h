@@ -92,6 +92,7 @@ class Renderer
     char          atlasError_[160] = {};
     PeakMeter     meter_[2];
     PeakMeter     inMeter_; // M2b-A: the input meter
+    PeakMeter     preMeter_; // M2b-B: the live input's pre-gain level (the PRE bar)
     MeterView     meterView_;
     DrawList      list_;
 };

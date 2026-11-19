@@ -119,6 +119,33 @@
 //     buffers it still holds).
 //   - Self-test: the report prints the input state; --expect-input-peak-min <v>
 //     checks that the input meter (after gain) went above v during the run.
+//
+// Live input (docs/briefs/M2b.md, M2b-B):
+//   - --live-target-buffers <n> (1..32, default 2; the launcher passes
+//     AUDREY_LIVE_TARGET): the live input's target fill in output buffers
+//     (InputStage::setLiveTargetBuffers), before the output device opens.
+//   - A LiveInput (the capture ring) is attached to the stage before the output
+//     device opens. After it opens, the capture system is created with the
+//     output's buffer size and handed to the InputController: SDL's
+//     (platform/CaptureHost) normally; in self-test mode always the simulated one
+//     (input/LiveSim), with the devices the script declares (none: an empty
+//     list), so a self-test never opens a capture device. The script's timed
+//     capture plug / unplug lines are applied on the audio timeline like the
+//     button events.
+//   - Every SDL event goes to CaptureHost::onEvent() (capture devices added or
+//     removed: the controller lists them again; the open one removed: DEVICE
+//     LOST). The event logger logs them as before.
+//   - The statistics line carries the live part (formatLiveStats(): fill and its
+//     range, underruns, overfills, frames captured and read, the capture clock
+//     against the output, pre- and post-gain peaks) while the source is LIVE.
+//   - Shutdown: the capture device is closed first, then the output, then the
+//     controller, the capture system, the render, the stage and the ring.
+//   - The self-test report adds the live state; --expect-live-underruns-max <n>
+//     --expect-live-underruns-min <n>, --expect-live-repeats-min <n> and
+//     --expect-live-overfills-min <n> check
+//     the ring's counters (for the
+//     clock-drift self-tests); --expect-live-status none|failed|lost|open checks
+//     the INPUT tab's live status at the end (open: a device is open).
 
 #pragma once
 
@@ -144,6 +171,9 @@
 #include "core/ControlSource.h"
 #include "input/InputController.h"
 #include "input/InputStage.h"
+#include "input/LiveInput.h"
+#include "input/LiveSim.h"
+#include "platform/CaptureHost.h"
 #include "platform/AudioHost.h"
 #include "platform/AudioRender.h"
 #include "platform/InputMap.h"
@@ -175,6 +205,7 @@ struct AppOptions
     bool        swapXY    = false;   // --swap-xy: controller X and Y swapped (M3-B)
     bool        version   = false;   // --version: print the version and exit (M3-B)
     std::string inputDir;            // --input-dir <dir> (M2b-A): the FILE source's folder; empty = none
+    int         liveTargetBuffers = 2; // --live-target-buffers <n> (M2b-B review, S1): 1..32
     std::string selftestScript;      // --selftest; empty = normal mode
     double      selftestSeconds = 0; // --seconds (required with --selftest), seconds of audio
 
@@ -186,6 +217,15 @@ struct AppOptions
     double                       peakMax    = 0.0; // --expect-peak-max: each channel's peak below this
     bool                         hasInputPeakMin = false;
     double                       inputPeakMin    = 0.0; // --expect-input-peak-min (M2b-A): the input meter went above this
+    bool                         hasLiveUnderrunsMax = false;
+    double                       liveUnderrunsMax    = 0.0; // --expect-live-underruns-max (M2b-B)
+    bool                         hasLiveUnderrunsMin = false;
+    double                       liveUnderrunsMin    = 0.0; // --expect-live-underruns-min (M2b-B)
+    bool                         hasLiveRepeatsMin   = false;
+    double                       liveRepeatsMin      = 0.0; // --expect-live-repeats-min (M2b-B review, S3)
+    bool                         hasLiveOverfillsMin = false;
+    double                       liveOverfillsMin    = 0.0; // --expect-live-overfills-min (M2b-B)
+    std::string                  expectLiveStatus;          // --expect-live-status none|failed|lost|open (M2b-B)
 
     bool selftest() const noexcept { return !selftestScript.empty(); }
 };
@@ -235,6 +275,7 @@ class App
     void   exitActions(); // --remove-on-exit and --restore-on-exit, once per run
     void   logGovernors(const char* when);
     void   drainInputLog(); // M2b-A: the input controller's lines into the diagnostic log
+    void   formatLiveWindow(char* out, std::size_t size, std::uint64_t outputFrames); // M2b-B
     // A stop signal during start-up: true (with `error` set) if one has arrived.
     bool   stopAt(const char* stage, std::string& error);
     // Leaves through the normal shutdown with the exit actions; returns the exit code.
@@ -260,15 +301,20 @@ class App
     std::unique_ptr<AudreyVoice>         voice_;
     std::unique_ptr<ButtonControlSource> source_;
     std::unique_ptr<ControlModel>        model_;
+    std::unique_ptr<LiveInput>           live_;     // M2b-B: the capture ring (outlives stage_ and the capture systems)
     std::unique_ptr<InputStage>          stage_;    // M2b-A: the input (outlives audio_)
     std::unique_ptr<AudioRender>         audio_;
     std::unique_ptr<AudioHost>           host_;
+    std::unique_ptr<CaptureHost>         captureHost_; // M2b-B: SDL's capture devices (not in self-test mode)
+    std::unique_ptr<LiveSim>             captureSim_;  // M2b-B: the self-test's simulated capture devices
     std::unique_ptr<InputController>     inputCtl_; // M2b-A: the INPUT tab's model and the loader thread
     std::vector<std::string>             inputLog_; // its log lines, drained every iteration
     InputMap                             input_;
 
     // Self-test.
     std::vector<TimedButtonEvent> script_;
+    CaptureScript                 captureScript_;         // M2b-B: the script's simulated capture devices and events
+    std::size_t                   nextCaptureEvent_ = 0;
     std::size_t                   nextEvent_        = 0;
     double                        maxEventLateness_ = 0.0; // seconds (audio clock)
     double                        longestFrame_     = 0.0; // seconds of work in one loop iteration
@@ -304,6 +350,16 @@ class App
     float      peakSessionMax_[2]      = {0.0f, 0.0f};
     float      inputPeakSessionMax_    = 0.0f; // M2b-A
     float      statsInputPeak_         = 0.0f; // M2b-A: input peak in the statistics window
+    // M2b-B: the live input in the statistics window (counters at its start).
+    float         statsPrePeak_        = 0.0f;
+    float         prePeakSessionMax_   = 0.0f;
+    std::uint64_t statsLiveUnderruns_  = 0;
+    std::uint64_t statsLiveRepeats_    = 0;
+    std::uint64_t statsLiveOverfills_  = 0;
+    std::uint64_t statsLiveCaptured_   = 0;
+    std::uint64_t statsLiveRead_       = 0;
+    std::uint64_t statsLiveDropped_    = 0;
+    std::uint64_t statsLiveCallbacks_  = 0;
 };
 
 } // namespace audreybrick

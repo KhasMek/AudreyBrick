@@ -53,7 +53,8 @@ enum class PanelKind : std::uint8_t
     FooterCell, // index = footer entry 0..7
     InputRow,   // M2b-A: a row of the INPUT tab (index 0 SOURCE, 1 GAIN, 2 FILE); active = usable now
     InputMeter, // M2b-A: the INPUT tab's large input meter
-    InputPopup, // M2b-A3: the pop-up file list (an overlay panel)
+    InputPopup, // M2b-A3: the pop-up file list (an overlay panel); M2b-B: also the device list
+    InputWarning, // M2b-B: the howl warning on the INPUT tab while the source is LIVE
 };
 
 struct PanelItem
@@ -101,6 +102,7 @@ enum class TextRole : std::uint8_t
     InputPlaying,   // M2b-A: the FILE row's "PLAYING: <name>" / "LOADED: <name>" / "NOTHING PLAYING" line
     InputMeterText, // M2b-A: the input meters' labels (IN, the scale, the peak value)
     PopupText,      // M2b-A3: the pop-up list's header, names, marks and hints
+    InputWarning,   // M2b-B: SPEAKER + MIC CAN HOWL / USE HEADPHONES OR KEEP GAIN LOW
 };
 
 struct TextItem

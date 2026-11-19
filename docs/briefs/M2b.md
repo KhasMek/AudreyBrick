@@ -330,3 +330,64 @@ Screenshots (BMP, in the scratchpad, paths in the report): the tab with a file p
 ## Rules and verification
 
 As M2b-A2: no git state changes, nothing under `third_party/`, no `docs/STATUS.md` edits, `SDL_AUDIODRIVER=dummy`, no background processes left. Run the whole verification list (macOS Release, ASan + UBSan, TSan, no-SDL, `verify_vendor.sh`, the reference check, `scripts/build_linux_arm64.sh`, `scripts/make_port.sh` with the Scarab image) and report the numbers, the deviations and what you are unsure about.
+
+---
+
+# M2b-B: live input (microphone, USB audio)
+
+Written 2026-11-19. File input (M2b-A to A3) is committed and confirmed on the Brick. The human has a USB audio device to test with. Read the header comments in `src/input/` first; the stage's contracts (off is bit-identical, no allocation / lock / I/O / logging in `pull()`, fades, gain law, meters) all continue to hold.
+
+## What is known and unknown about the device
+
+- SDL on the Brick has only the `alsa` audio driver; ALSA's default PCM is PipeWire, for capture too. With nothing plugged in SDL lists one capture device, named `audiocodec, ` (the built-in codec; the mono mic). PipeWire's default source is the built-in card's capture.
+- **Unknown, to be learned from the first device run:** what SDL lists when a USB interface is plugged in; whether opening a listed device by name works while PipeWire runs, or only the default device does; what format, channel count and buffer the capture side grants; the mic's level; capture-to-output latency; whether capture and playback clocks drift.
+- So the design must not assume names. It lists whatever SDL reports and logs everything.
+
+## Design
+
+### Sources
+
+`InputSource` becomes OFF, FILE, **LIVE** (left/right on the tab, in that order, no wrap). With LIVE selected, the capture device is chosen the same way a file is: hold X, left/right to step, up/down for the pop-up list, release X to open the choice. The list is: `SYSTEM DEFAULT` (SDL device `NULL`) first, then every name from `SDL_GetAudioDeviceName(i, 1)`, re-enumerated when LIVE is selected, when the INPUT tab is entered, when X is pressed, and on `SDL_AUDIODEVICEADDED` / `SDL_AUDIODEVICEREMOVED` for capture devices. Reuse the file chooser's code and pop-up rather than writing a second one; X + Y and X + Select do nothing in LIVE.
+
+No device is opened until the user releases X on a choice (nothing opens by itself, as with files). The device stays open while the source is LIVE and is **closed when the source leaves LIVE** (so the mic is never open unseen) and reopened, same device, when LIVE is selected again in the same run.
+
+### Capture path
+
+- SDL-free core, `src/input/LiveInput.{h,cpp}`: a preallocated lock-free SPSC ring of mono float samples at 48 kHz (capacity about 1 s), written by the capture callback, read by `InputStage::pull()`.
+- Thin SDL part in `src/platform/` (next to `AudioHost`): opens the capture device with `SDL_OpenAudioDevice(name, 1, ...)`, float32, 48000 Hz, 2 channels requested, `SDL_AUDIO_ALLOW_CHANNELS_CHANGE` only (SDL converts rate and format; we mix the channels ourselves), samples = the output buffer size. The capture callback mixes its channels to mono (**L + R** for stereo, as the human decided; mono as it is; more than two: the first two), clamps to +-8 as files are, and writes to the ring. It follows the audio-thread rules: no allocation, lock, logging or I/O. Opening and closing happen on the UI thread; log how long each took. If opening proves slow on the device it can move to a thread later; do not build that now.
+- **Reading the ring (the stage, source LIVE):**
+  - Start: output silence until the ring holds a target fill (`kLiveTargetFrames`, default two output buffers' worth, set from the output buffer size in `prepare()`), then fade in over the usual 10 ms.
+  - Underrun (the ring cannot supply a whole chunk): play what is there, fade to silence without a click (hold a short fade state; do not output a hard zero edge), count it, and re-buffer to the target before fading back in.
+  - Overfill (fill above target + a margin of about four output buffers, meaning the capture side runs fast or the output stalled): skip ahead to the target with a short crossfade (reuse the fade machinery), count it.
+  - Publish atomics: current fill, minimum and maximum fill since last read, underruns, overfills, frames captured, frames read. The app logs them in the 10-second stats line while the source is LIVE. These numbers are how drift and latency get judged on the device. **Do not build adaptive resampling**; if the device shows steady drift it becomes a later task.
+- LIVE and FILE never sound together. FILE -> LIVE and LIVE -> FILE use the existing 10 ms source fades (fade out, switch, fade in). A loaded file stays loaded while LIVE is selected.
+- Device lost (unplugged; SDL reports the device removed, or the callback stops): the ring runs dry, the stage fades to silence as for an underrun; the UI shows `DEVICE LOST`, closes the device, and returns to "no device chosen". No crash, no stuck sound.
+
+### Howl safeguards (CLAUDE.md, "Audio input")
+
+- **Whenever a capture device is opened** (first choice, a new choice, or reopening on LIVE selected again), the **input gain is set to zero (-inf dB)** before the first sample can sound. The user raises it with up/down. Y + up/down still resets the gain to unity, as on FILE; keep that, it is a deliberate press. When the source goes back to FILE or OFF the gain is not restored (the user sees the value and sets it).
+- The INPUT tab shows a warning while the source is LIVE: `SPEAKER + MIC CAN HOWL` and `USE HEADPHONES OR KEEP GAIN LOW`, readable (not the smallest text), in the warning colour already used for errors or an equally strong one that passes the contrast test.
+- The input meter and the IN bar work for LIVE as for FILE (after gain). In addition show a small **pre-gain** level indicator on the LIVE row or meter so the user can see that the mic is alive while the gain is still at zero. Without it the user cannot tell a dead device from zero gain.
+- No automatic muting based on the speaker: the app cannot tell whether headphones are in. Say so in the README.
+
+### Screen (source LIVE)
+
+The FILE row's place shows a DEVICE row in the same style: `n OF m`, the device name (the chosen one, or the cursor's while X is held, or `NO DEVICE CHOSEN` + `HOLD X: CHOOSE DEVICE`), then a line with what was granted (`48000 Hz 1 CH 256 FR`) and the pre-gain level, and a status line when needed (`CANNOT OPEN <name>: <SDL's reason, cut>`, `DEVICE LOST`). The warning lines sit on the tab while LIVE is selected whether or not a device is open. The pop-up is the file pop-up with device names and a header `DEVICES n OF m`; its hint row shows only what applies.
+
+### Logging (this run is mainly for learning)
+
+At start-up and at every re-enumeration that changes the list: every capture device name. On open: the name asked for, the spec asked for and the spec obtained (rate, format, channels, samples), the time taken, or SDL's error text. On close: the reason. Every 10 s while LIVE: the ring statistics above plus pre-gain and post-gain peaks. Add to the launcher's device-state block (keep its time limits and its no-command-substitution rule): `pactl list short sources` and `arecord -L` (first 30 lines), so the PipeWire and ALSA names of a USB interface are in the log.
+
+### Host and tests
+
+- **Never open a real capture device on the Mac** (it would prompt for microphone access and is not what we test). All automated tests run with `SDL_AUDIODRIVER=dummy` or without SDL. Give `LiveInput` a way to be fed directly by tests, and the app's self-test script language a way to simulate a capture stream (for example a scripted tone written into the ring at a given rate), so the whole path stage -> voice can be exercised end to end, including in `docker/knulli_rootfs_tests.sh`.
+- Tests required at least: ring read/write under two threads (TSan; remember the project's note that TSan on Apple arm64 misses races in struct copies of 32 bytes or more, so keep shared things scalar); start-up buffering; underrun fade and recovery with a step bound; overfill skip with a step bound; capture slightly fast and slightly slow relative to output (for example +-0.5 %) for a long simulated run: bounded fill, counted corrections, no step above the bound; FILE <-> LIVE <-> OFF switching in every order, also mid-crossfade and mid-load; gain forced to zero on every open; device lost; off still bit-identical; LOOP file playback still sample-exact; the allocation test extended to LIVE; the fuzz test extended with LIVE source toggles and ring starvation; controller tests for the device chooser (list changes while X is held, chosen device disappears from the list, open failure, reopen on returning to LIVE); layout tests and snapshots for every LIVE state including the pop-up.
+- Screenshots (BMP, scratchpad, paths in the report): LIVE with no device chosen; LIVE with a device open and signal; the device pop-up with three devices; open failed; device lost.
+
+### Docs to write or update
+
+`packaging/README.txt`; `docs/CONTROL_SCHEME_PROPOSAL.md` section 000; a new numbered checklist for the human, `docs/LIVE_INPUT_RUN_BRICK.md` (short steps; headphones first, then speaker at low volume; internal mic via SYSTEM DEFAULT and via the listed name; plug in the USB device before starting and also while running; choose it; clap or tap test to judge the delay by ear; unplug while playing; five minutes of LIVE with feedback up to gather drift statistics; what to send back); header comments. Not `docs/STATUS.md`, not `docs/PLATFORM_NOTES.md` (the orchestrator updates those from the device results).
+
+## Rules and verification
+
+As before: no git state changes; nothing under `third_party/`, `src/core`, `src/shim`; nothing newer than the SDL 2.0.18 API in non-test code; warning-free; no background processes left. Run the whole list (macOS Release, ASan + UBSan, TSan, no-SDL, `scripts/verify_vendor.sh`, `scripts/make_reference.sh --check`, `scripts/build_linux_arm64.sh`, `scripts/make_port.sh ~/.cache/audreybrick-device/knulli-scarab-20260511.sqfs`) and report the numbers, the cost of `pull()` in LIVE, every deviation and its reason, and what you could not verify off the device.

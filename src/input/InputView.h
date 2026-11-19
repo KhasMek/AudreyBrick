@@ -6,7 +6,10 @@
 // allocation to copy or fill. Filled by InputController::fill() on the UI thread,
 // plus the peak from the stage. M2b-A2 added the file browser (a window of
 // kInputListRows names around the cursor, the loaded file's place), the play
-// mode and the playback position.
+// mode and the playback position. M2b-B added the live input: with the source
+// LIVE the list fields (cursor, listFirst, listRows, listNames, loadedIndex)
+// describe the capture devices instead of the files, and the live fields below
+// say what is open.
 
 #pragma once
 
@@ -65,9 +68,28 @@ struct UiInputView
     InputLoadState state      = InputLoadState::Idle;
     char           reason[32] = {}; // Failed: the short reason ("NOT A WAV FILE")
 
+    // M2b-B: the live input (the source LIVE). listNames[i] are device names,
+    // loadedIndex is the open device's position (as listed), cursor the chooser's.
+    int        deviceCount      = 0;     // devices listed, SYSTEM DEFAULT included
+    bool       deviceListFailed = false; // the capture system could not list its devices
+    bool       deviceOpen       = false;
+    char       deviceName[96]   = {};    // the open device as listed ("SYSTEM DEFAULT"), "" if none
+    int        grantedRate      = 0;     // what the open device delivers (as opened)
+    int        grantedChannels  = 0;
+    int        grantedFrames    = 0;
+    LiveStatus liveStatus       = LiveStatus::None;
+    char       liveFailName[96] = {};    // Failed: the device that could not be opened; Lost: the one lost
+    char       liveReason[64]   = {};    // Failed: the capture system's reason
+    bool       liveRunning      = false; // the stage plays the ring (it had buffered to its target)
+    // The pre-gain level (the mono mix as captured) since the previous snapshot.
+    float prePeak = 0.0f;
+
     // The input level: the largest |in| (after gain) since the previous snapshot.
     float peak = 0.0f;
 };
+
+// The name the device list shows for the capture system's default device.
+inline constexpr const char* kLiveDefaultDeviceName = "SYSTEM DEFAULT";
 
 // Copies `src` (`n` bytes, or up to its NUL if n is SIZE_MAX) into `dst` for
 // display: printable ASCII as it is; every UTF-8 character outside it (a lead

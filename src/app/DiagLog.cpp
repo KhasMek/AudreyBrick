@@ -200,6 +200,9 @@ std::size_t formatStats(char* out, std::size_t size, const PeriodicStats& s) noe
     char input[64] = "";
     if(s.inputSource != nullptr && s.inputSource[0] != '\0')
         std::snprintf(input, sizeof input, ", input %.16s peak %.3f", s.inputSource, static_cast<double>(s.inputPeak));
+    char live[400] = "";
+    if(s.live != nullptr && s.live[0] != '\0')
+        std::snprintf(live, sizeof live, ", %s", s.live);
     char tail[64] = "";
     if(s.keysSuppressed > 0)
         std::snprintf(tail, sizeof tail, ", unmapped-key lines suppressed %llu",
@@ -207,12 +210,40 @@ std::size_t formatStats(char* out, std::size_t size, const PeriodicStats& s) noe
     const int n = std::snprintf(
         out, size,
         "stats: window %.1f s, callback load %.1f %% (max %.1f %%%s), callbacks %llu, overruns %llu, largest %llu frames, "
-        "audio clock %.3fx real time, peak L %.3f R %.3f, dropped %llu, frames %llu (%.1f fps)%s%s%s",
+        "audio clock %.3fx real time, peak L %.3f R %.3f, dropped %llu, frames %llu (%.1f fps)%s%s%s%s",
         s.windowSeconds, 100.0 * static_cast<double>(s.cpuSmoothed), 100.0 * static_cast<double>(s.cpuMax), hist,
         static_cast<unsigned long long>(s.callbacks), static_cast<unsigned long long>(s.overruns),
         static_cast<unsigned long long>(s.largestCallback), ratio,
         static_cast<double>(s.peakL), static_cast<double>(s.peakR), static_cast<unsigned long long>(s.dropped),
-        static_cast<unsigned long long>(s.framesDrawn), fps, freq, input, tail);
+        static_cast<unsigned long long>(s.framesDrawn), fps, freq, input, live, tail);
+    return n < 0 ? 0 : (static_cast<std::size_t>(n) < size ? static_cast<std::size_t>(n) : size - 1);
+}
+
+std::size_t formatLiveStats(char* out, std::size_t size, const LiveWindowStats& s) noexcept
+{
+    if(out == nullptr || size == 0)
+        return 0;
+    char dev[96];
+    if(s.deviceOpen)
+        std::snprintf(dev, sizeof dev, "device '%.60s' (%s)", s.device != nullptr ? s.device : "", s.running ? "running" : "buffering");
+    else
+        std::snprintf(dev, sizeof dev, "no device open");
+    char clock[40];
+    if(s.outputFrames > 0)
+        std::snprintf(clock, sizeof clock, "%.4fx output",
+                      static_cast<double>(s.captured) / static_cast<double>(s.outputFrames));
+    else
+        std::snprintf(clock, sizeof clock, "n/a");
+    const int n = std::snprintf(
+        out, size,
+        "live: %s, fill %zu (min %zu, max %zu, target %zu, raised %llu), underruns %llu, skips %llu, repeats %llu, "
+        "captured %llu, read %llu, dropped %llu, capture callbacks %llu, capture clock %s, pre peak %.3f, post peak %.3f",
+        dev, s.fill, s.minFill, s.maxFill, s.target, static_cast<unsigned long long>(s.raises),
+        static_cast<unsigned long long>(s.underruns), static_cast<unsigned long long>(s.overfills),
+        static_cast<unsigned long long>(s.repeats), static_cast<unsigned long long>(s.captured),
+        static_cast<unsigned long long>(s.read), static_cast<unsigned long long>(s.dropped),
+        static_cast<unsigned long long>(s.callbacks), clock, static_cast<double>(s.prePeak),
+        static_cast<double>(s.postPeak));
     return n < 0 ? 0 : (static_cast<std::size_t>(n) < size ? static_cast<std::size_t>(n) : size - 1);
 }
 

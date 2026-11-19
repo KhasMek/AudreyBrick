@@ -106,6 +106,12 @@ std::uint64_t performanceCounter()
 {
     return SDL_GetPerformanceCounter();
 }
+
+// M2b-B: the simulated capture's pacing clock (the output's frames rendered).
+std::uint64_t renderedFrames(const void* ctx)
+{
+    return static_cast<const AudioRender*>(ctx)->framesRendered();
+}
 } // namespace
 
 std::string keyboardHelpText()
@@ -149,6 +155,9 @@ std::string usageText(const char* program)
            "  --swap-ab                game controller A and B swapped: SDL 'a' acts as B, 'b' as A\n"
            "                           (KNULLI on the TrimUI Brick); keyboard and other buttons unaffected\n"
            "  --swap-xy                game controller X and Y swapped: SDL 'x' acts as Y, 'y' as X\n"
+           "  --live-target-buffers <n>\n"
+           "                           the live input's buffer in audio buffers, 1 to 32 (default 2); more\n"
+           "                           is steadier with bursty capture devices but delays the input\n"
            "  --input-dir <dir>        the folder the INPUT tab's FILE source lists (*.wav); a missing\n"
            "                           or empty folder is not an error (the launcher passes data/input)\n"
            "  --version                print the version and exit\n"
@@ -167,6 +176,16 @@ std::string usageText(const char* program)
            "  --expect-peak-max <v>    self-test: each channel's output peak must be below v\n"
            "  --expect-input-peak-min <v>\n"
            "                           self-test: the input meter (after the input gain) must go above v\n"
+           "  --expect-live-underruns-max <n>\n"
+           "                           self-test: the live input's ring underran at most n times\n"
+           "  --expect-live-underruns-min <n>\n"
+           "                           self-test: the live input's ring underran at least n times\n"
+           "  --expect-live-repeats-min <n>\n"
+           "                           self-test: the live input repeated (slow capture) at least n times\n"
+           "  --expect-live-overfills-min <n>\n"
+           "                           self-test: the live input's ring overfilled at least n times\n"
+           "  --expect-live-status <none|failed|lost|open>\n"
+           "                           self-test: the live input's status at the end (open: a device is open)\n"
            "  --help                   print this text and exit\n"
            "\n" +
            keyboardHelpText();
@@ -263,6 +282,16 @@ bool parseOptions(int argc, const char* const* argv, AppOptions& out, std::strin
                 return false;
             }
         }
+        else if(a == "--live-target-buffers")
+        {
+            if(!value(v))
+                return false;
+            if(!parseInt(v, o.liveTargetBuffers) || o.liveTargetBuffers < 1 || o.liveTargetBuffers > 32)
+            {
+                error = std::string("--live-target-buffers: expected a whole number from 1 to 32, got '") + v + "'";
+                return false;
+            }
+        }
         else if(a == "--input-dir")
         {
             if(!value(v))
@@ -273,6 +302,50 @@ bool parseOptions(int argc, const char* const* argv, AppOptions& out, std::strin
                 return false;
             }
             o.inputDir = v;
+        }
+        else if(a == "--expect-live-status")
+        {
+            if(!value(v))
+                return false;
+            const std::string st = v;
+            if(st != "none" && st != "failed" && st != "lost" && st != "open")
+            {
+                error = "--expect-live-status: expected none, failed, lost or open, got '" + st + "'";
+                return false;
+            }
+            o.expectLiveStatus = st;
+        }
+        else if(a == "--expect-live-underruns-max" || a == "--expect-live-underruns-min" ||
+                a == "--expect-live-repeats-min" || a == "--expect-live-overfills-min")
+        {
+            if(!value(v))
+                return false;
+            double x = 0.0;
+            if(!parseNumber(v, x) || x < 0.0)
+            {
+                error = a + ": expected a count of 0 or more, got '" + v + "'";
+                return false;
+            }
+            if(a == "--expect-live-underruns-max")
+            {
+                o.hasLiveUnderrunsMax = true;
+                o.liveUnderrunsMax    = x;
+            }
+            else if(a == "--expect-live-repeats-min")
+            {
+                o.hasLiveRepeatsMin = true;
+                o.liveRepeatsMin    = x;
+            }
+            else if(a == "--expect-live-underruns-min")
+            {
+                o.hasLiveUnderrunsMin = true;
+                o.liveUnderrunsMin    = x;
+            }
+            else
+            {
+                o.hasLiveOverfillsMin = true;
+                o.liveOverfillsMin    = x;
+            }
         }
         else if(a == "--expect-input-peak-min")
         {
@@ -384,10 +457,12 @@ bool parseOptions(int argc, const char* const* argv, AppOptions& out, std::strin
         error = "--seconds is only used with --selftest";
         return false;
     }
-    if(!o.selftest() && (!o.expectKnobs.empty() || o.hasPeakMin || o.hasPeakMax || o.hasInputPeakMin))
+    if(!o.selftest() && (!o.expectKnobs.empty() || o.hasPeakMin || o.hasPeakMax || o.hasInputPeakMin ||
+                         o.hasLiveUnderrunsMax || o.hasLiveUnderrunsMin || o.hasLiveRepeatsMin || o.hasLiveOverfillsMin ||
+                         !o.expectLiveStatus.empty()))
     {
-        error = "--expect-knob, --expect-peak-min, --expect-peak-max and --expect-input-peak-min are only used with "
-                "--selftest";
+        error = "--expect-knob, --expect-peak-min, --expect-peak-max, --expect-input-peak-min and --expect-live-* are "
+                "only used with --selftest";
         return false;
     }
     out = std::move(o);
@@ -577,6 +652,40 @@ void App::drainInputLog()
         log_.line(logTime(), "%s", l.c_str());
 }
 
+void App::formatLiveWindow(char* out, std::size_t size, std::uint64_t outputFrames)
+{
+    LiveWindowStats w;
+    w.deviceOpen = inputCtl_->deviceOpen();
+    w.device     = inputCtl_->deviceOpenName().c_str();
+    w.running    = live_->running();
+    w.fill       = live_->fill();
+    live_->takeFillRange(w.minFill, w.maxFill);
+    w.target = stage_->liveTargetFrames();
+    w.raises = stage_->liveTargetRaises();
+    const std::uint64_t rp = live_->repeats();
+    w.repeats              = rp - statsLiveRepeats_;
+    statsLiveRepeats_      = rp;
+    const std::uint64_t un = live_->underruns(), ov = live_->overfills(), ca = live_->framesCaptured(),
+                        rd = live_->framesRead(), dr = live_->framesDropped(), cb = live_->callbacks();
+    w.underruns    = un - statsLiveUnderruns_;
+    w.overfills    = ov - statsLiveOverfills_;
+    w.captured     = ca - statsLiveCaptured_;
+    w.read         = rd - statsLiveRead_;
+    w.dropped      = dr - statsLiveDropped_;
+    w.callbacks    = cb - statsLiveCallbacks_;
+    w.outputFrames = outputFrames;
+    w.prePeak      = statsPrePeak_;
+    w.postPeak     = statsInputPeak_;
+    formatLiveStats(out, size, w);
+    statsLiveUnderruns_ = un;
+    statsLiveOverfills_ = ov;
+    statsLiveCaptured_  = ca;
+    statsLiveRead_      = rd;
+    statsLiveDropped_   = dr;
+    statsLiveCallbacks_ = cb;
+    statsPrePeak_       = 0.0f;
+}
+
 void App::videoFailure(double t, bool fatal, const char* fmt, ...)
 {
     char         buf[512];
@@ -653,7 +762,11 @@ bool App::startUp(std::string& error)
     audio_  = std::make_unique<AudioRender>(*voice_, *source_, AudioRender::FlushToZero::Enable, &performanceCounter,
                                            counterFreq_);
     // M2b-A: the input stage, prepared with the render buffers when the device opens.
+    // M2b-B: with the live input's ring.
+    live_  = std::make_unique<LiveInput>();
     stage_ = std::make_unique<InputStage>();
+    stage_->attachLive(live_.get());
+    stage_->setLiveTargetBuffers(static_cast<std::size_t>(opts_.liveTargetBuffers));
     audio_->attachInput(stage_.get());
     inputCtl_ = std::make_unique<InputController>(*stage_, opts_.inputDir);
     log_.line(logTime(), "input: source OFF at start; folder %s",
@@ -686,6 +799,26 @@ bool App::startUp(std::string& error)
     snap_.flushToZeroSupported = kFlushToZeroSupported;
 
     logAudioDevices(log_, logTime());
+
+    // M2b-B: the capture system, with the output's buffer size. The self-test
+    // never touches SDL's capture devices: it has the simulated ones (if any).
+    if(opts_.selftest())
+    {
+        captureSim_ = std::make_unique<LiveSim>(*live_, captureScript_.devices, &renderedFrames, audio_.get(),
+                                                a.bufferFrames);
+        inputCtl_->setLive(live_.get(), captureSim_.get());
+    }
+    else
+    {
+        captureHost_ = std::make_unique<CaptureHost>(*live_, a.bufferFrames);
+        inputCtl_->setLive(live_.get(), captureHost_.get());
+    }
+    log_.line(logTime(),
+              "input: live target %zu frames (%zu output buffers, --live-target-buffers), overfill above %zu frames, "
+              "repeats of %zu frames; ring %zu frames",
+              stage_->liveTargetFrames(), stage_->liveTargetBuffersConfigured(),
+              stage_->liveTargetFrames() + stage_->liveMarginFrames(), stage_->liveRepeatFrames(), LiveInput::kCapacity);
+    drainInputLog();
     logJoysticks(log_, logTime());
     input_.setSwapAB(opts_.swapAB);
     input_.setSwapXY(opts_.swapXY);
@@ -711,17 +844,28 @@ bool App::stopAt(const char* stage, std::string& error)
 
 void App::shutDown() noexcept
 {
-    // 1. Audio first: after close() the callback no longer runs.
+    // 1. Audio first: the capture device (M2b-B), then the output; after close()
+    //    their callbacks no longer run.
+    if(inputCtl_)
+        inputCtl_->stop(); // closes the capture device (and joins the loader)
+    if(captureHost_)
+        captureHost_->close();
+    if(captureSim_)
+        captureSim_->close();
     if(host_)
         host_->close();
     host_.reset();
-    // 2. The input controller (joins the loader thread), then the instrument; the
-    //    stage last (it frees the buffers it still holds; the render points at it).
+    // 2. The input controller (joins the loader thread), the capture systems, then
+    //    the instrument; the stage after the render (it frees the buffers it still
+    //    holds; the render points at it), the ring last (M2b-B).
     if(inputCtl_)
         drainInputLog();
     inputCtl_.reset();
+    captureHost_.reset();
+    captureSim_.reset();
     audio_.reset();
     stage_.reset();
+    live_.reset();
     model_.reset();
     source_.reset();
     voice_.reset();
@@ -778,6 +922,10 @@ void App::fillSnapshot(double t)
     snap_.input.peak     = stage_->peak().take();
     inputPeakSessionMax_ = std::max(inputPeakSessionMax_, snap_.input.peak);
     statsInputPeak_      = std::max(statsInputPeak_, snap_.input.peak);
+    // M2b-B: the live input's pre-gain level.
+    snap_.input.prePeak = live_->prePeak().take();
+    prePeakSessionMax_  = std::max(prePeakSessionMax_, snap_.input.prePeak);
+    statsPrePeak_       = std::max(statsPrePeak_, snap_.input.prePeak);
 
 }
 
@@ -840,7 +988,11 @@ void App::logStats(double wall, const char* label)
     st.keysSuppressed  = events_.takeKeysSuppressed();
     st.inputSource     = inputCtl_->source() != InputSource::Off ? inputSourceName(inputCtl_->source()) : nullptr;
     st.inputPeak       = statsInputPeak_;
-    char buf[1200];
+    char live[400]     = "";
+    formatLiveWindow(live, sizeof live, st.audioFrames); // M2b-B: also resets its window
+    if(inputCtl_->source() == InputSource::Live)
+        st.live = live;
+    char buf[1600];
     formatStats(buf, sizeof buf, st);
     log_.line(logTime(), "%s%s", label, buf);
 
@@ -959,7 +1111,7 @@ int App::run()
     if(opts_.selftest())
     {
         std::string err;
-        if(!loadButtonScriptFile(opts_.selftestScript, script_, err))
+        if(!loadButtonScriptFile(opts_.selftestScript, script_, captureScript_, err))
         {
             std::fprintf(stderr, "audreybrick: self-test script %s: %s\n", opts_.selftestScript.c_str(), err.c_str());
             log_.line(logTime(), "self-test script %s: %s", opts_.selftestScript.c_str(), err.c_str());
@@ -969,6 +1121,14 @@ int App::run()
         }
         std::printf("selftest: script %s, %zu events, %.3f s\n", opts_.selftestScript.c_str(), script_.size(),
                     opts_.selftestSeconds);
+        if(captureScript_.any())
+        {
+            std::printf("selftest: %zu simulated capture device(s), %zu capture event(s)\n",
+                        captureScript_.devices.size(), captureScript_.events.size());
+            for(const SimCaptureDevice& d : captureScript_.devices)
+                log_.line(logTime(), "self-test: simulated capture device '%s': %s", d.name.c_str(),
+                          d.fails ? "opening fails" : "a tone");
+        }
     }
     if(stopRequested())
         return stopEarly("after loading the self-test script");
@@ -1035,6 +1195,8 @@ int App::run()
             ButtonEvent                 be{};
             const InputMap::Action action = input_.handle(e, be);
             events_.onEvent(e, action, be, input_, logTime());
+            if(captureHost_)
+                captureHost_->onEvent(e); // M2b-B: capture devices added / removed
             if(e.type == SDL_RENDER_TARGETS_RESET || e.type == SDL_RENDER_DEVICE_RESET)
                 ui_.onRenderReset(); // the atlas is rebuilt on the next draw
             // M3-C: the model, MenuQuit and self-test filtering in one place
@@ -1069,6 +1231,18 @@ int App::run()
                 std::printf("selftest: t=%.3f s (audio) %s %s (script %.3f s)\n", t, buttonName(ev.event.button),
                             ev.event.pressed ? "down" : "up", ev.timeSeconds);
                 router.deliver(ev.event, t); // the model and the INPUT tab's panel (M2b-A)
+            }
+            // M2b-B: simulated capture devices plugged or unplugged.
+            while(captureSim_ && nextCaptureEvent_ < captureScript_.events.size() &&
+                  captureScript_.events[nextCaptureEvent_].timeSeconds <= t &&
+                  captureScript_.events[nextCaptureEvent_].timeSeconds <= n)
+            {
+                const SimCaptureEvent& ev = captureScript_.events[nextCaptureEvent_++];
+                std::printf("selftest: t=%.3f s (audio) capture %s %s (script %.3f s)\n", t, ev.plug ? "plug" : "unplug",
+                            ev.name.c_str(), ev.timeSeconds);
+                log_.line(logTime(), "self-test: simulated capture device '%s' %s", ev.name.c_str(),
+                          ev.plug ? "plugged in" : "unplugged");
+                captureSim_->setPresent(ev.name, ev.plug);
             }
         }
 
@@ -1244,6 +1418,19 @@ int App::finishSelftest(double wallSeconds, bool timedOut)
         if(in.state() == InputLoadState::Failed)
             std::printf(", last failure: %s", in.reason());
         std::printf("; input peak max %.4f (after gain)\n", static_cast<double>(inPeak));
+        // M2b-B: the live input.
+        const LiveInput& lv = *live_;
+        std::printf("live: device %s%s%s, status %s, opens %llu, gain %.3f, target %zu frames (raised %llu time(s)), fill "
+                    "%zu, underruns %llu, overfills %llu, repeats %llu, captured %llu, read %llu, dropped %llu, pre-gain peak "
+                    "max %.4f\n",
+                    in.deviceOpen() ? "'" : "", in.deviceOpen() ? in.deviceOpenName().c_str() : "(none open)",
+                    in.deviceOpen() ? "'" : "", liveStatusName(in.liveStatus()),
+                    static_cast<unsigned long long>(in.deviceOpens()), static_cast<double>(in.gainNorm()),
+                    stage_->liveTargetFrames(), static_cast<unsigned long long>(stage_->liveTargetRaises()), lv.fill(),
+                    static_cast<unsigned long long>(lv.underruns()), static_cast<unsigned long long>(lv.overfills()),
+                    static_cast<unsigned long long>(lv.repeats()), static_cast<unsigned long long>(lv.framesCaptured()),
+                    static_cast<unsigned long long>(lv.framesRead()), static_cast<unsigned long long>(lv.framesDropped()),
+                    static_cast<double>(std::max(prePeakSessionMax_, live_->prePeak().take())));
     }
 
     // --- Checks ------------------------------------------------------------------
@@ -1310,6 +1497,51 @@ int App::finishSelftest(double wallSeconds, bool timedOut)
         std::snprintf(buf, sizeof buf, "input peak: expected above %.6f, actual %.6f", opts_.inputPeakMin,
                       static_cast<double>(inPeak));
         if(inPeak > opts_.inputPeakMin)
+            std::printf("selftest: ok: %s\n", buf);
+        else
+            fail(buf);
+    }
+    if(opts_.hasLiveUnderrunsMax)
+    {
+        const auto u = static_cast<double>(live_->underruns());
+        std::snprintf(buf, sizeof buf, "live underruns: expected at most %.0f, actual %.0f", opts_.liveUnderrunsMax, u);
+        if(u <= opts_.liveUnderrunsMax)
+            std::printf("selftest: ok: %s\n", buf);
+        else
+            fail(buf);
+    }
+    if(opts_.hasLiveRepeatsMin)
+    {
+        const auto r = static_cast<double>(live_->repeats());
+        std::snprintf(buf, sizeof buf, "live repeats: expected at least %.0f, actual %.0f", opts_.liveRepeatsMin, r);
+        if(r >= opts_.liveRepeatsMin)
+            std::printf("selftest: ok: %s\n", buf);
+        else
+            fail(buf);
+    }
+    if(opts_.hasLiveUnderrunsMin)
+    {
+        const auto u = static_cast<double>(live_->underruns());
+        std::snprintf(buf, sizeof buf, "live underruns: expected at least %.0f, actual %.0f", opts_.liveUnderrunsMin, u);
+        if(u >= opts_.liveUnderrunsMin)
+            std::printf("selftest: ok: %s\n", buf);
+        else
+            fail(buf);
+    }
+    if(!opts_.expectLiveStatus.empty())
+    {
+        const char* actual = inputCtl_->deviceOpen() ? "open" : liveStatusName(inputCtl_->liveStatus());
+        std::snprintf(buf, sizeof buf, "live status: expected %s, actual %s", opts_.expectLiveStatus.c_str(), actual);
+        if(opts_.expectLiveStatus == actual)
+            std::printf("selftest: ok: %s\n", buf);
+        else
+            fail(buf);
+    }
+    if(opts_.hasLiveOverfillsMin)
+    {
+        const auto o = static_cast<double>(live_->overfills());
+        std::snprintf(buf, sizeof buf, "live overfills: expected at least %.0f, actual %.0f", opts_.liveOverfillsMin, o);
+        if(o >= opts_.liveOverfillsMin)
             std::printf("selftest: ok: %s\n", buf);
         else
             fail(buf);

@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include "input/LiveInput.h"
+
 namespace audreybrick
 {
 namespace
@@ -42,9 +44,14 @@ InputStage::~InputStage()
         delete b;
 }
 
-void InputStage::prepare(std::size_t frames)
+void InputStage::prepare(std::size_t frames, std::size_t blockFrames)
 {
     capacity_ = frames > 0 ? frames : 1;
+    // M2b-B: the output buffer (the live target, margin and repeat length are
+    // counted in it), the configured target, and the target itself.
+    liveBlock_  = blockFrames > 0 ? blockFrames : kLiveDefaultTargetFrames / kLiveTargetBuffers;
+    liveRepeat_ = std::min<std::size_t>(liveBlock_, kLiveMaxRepeatFrames);
+    setLiveBuffers(liveConfBuffers_);
     out_      = std::make_unique<float[]>(capacity_);
     if(!xfTable_)
     {
@@ -53,6 +60,29 @@ void InputStage::prepare(std::size_t frames)
         for(std::size_t k = 0; k < kXf; ++k)
             xfTable_[k] = static_cast<float>(std::sin(kHalfPi * static_cast<double>(k + 1) / static_cast<double>(kXf + 1)));
     }
+}
+
+void InputStage::setLiveTargetBuffers(std::size_t n) noexcept
+{
+    liveConfBuffers_ = n < kLiveMinTargetBuffers ? kLiveMinTargetBuffers : (n > kLiveMaxTargetBuffers ? kLiveMaxTargetBuffers : n);
+    setLiveBuffers(liveConfBuffers_);
+}
+
+void InputStage::setLiveBuffers(std::size_t buffers) noexcept
+{
+    // The target, and the overfill margin (four buffers, or twice the target if
+    // that is more); both fit in half the ring with the repeat's keep.
+    liveBuffers_ = buffers;
+    liveTarget_  = buffers * liveBlock_;
+    liveMargin_  = std::max(kLiveOverfillMarginBuffers * liveBlock_, 2 * liveTarget_);
+    const std::size_t most = LiveInput::kCapacity / 2 - kLiveMaxRepeatFrames;
+    if(liveTarget_ + liveMargin_ > most)
+    {
+        liveTarget_ = std::min(liveTarget_, most / 3);
+        liveMargin_ = most - liveTarget_;
+    }
+    liveTargetPub_.store(liveTarget_, std::memory_order_relaxed);
+    liveMarginPub_.store(liveMargin_, std::memory_order_relaxed);
 }
 
 void InputStage::setSource(InputSource s) noexcept
@@ -145,12 +175,15 @@ void InputStage::finishCrossfade() noexcept
 
 void InputStage::startFresh() noexcept
 {
-    // Only called while the output is silent: level 0, or nothing that sounds
-    // (the current player ended or empty, no crossfade running). A crossfade
-    // still under way is ended first, so it can never be left frozen.
+    // Only called while the file is silent: level 0, or nothing of the file that
+    // sounds (the current player ended or empty, no crossfade running), or the
+    // level belongs to the live input (M2b-B: then it is left alone; the file
+    // starts from 0 when it becomes the sounding source). A crossfade still under
+    // way is ended first, so it can never be left frozen.
     if(old_.buf != nullptr && xf_ < kXf)
         finishCrossfade();
-    level_ = 0.0f;
+    if(sounding_ != InputSource::Live)
+        level_ = 0.0f;
     cur_.rewind();
     restartFade_ = false;
 }
@@ -160,7 +193,7 @@ void InputStage::requestRestart() noexcept
     // Never cuts what sounds: audible (the level up and the current player or a
     // crossfade sounding) -> the 10 ms fade-out first; else at once.
     const bool xfading = old_.buf != nullptr && xf_ < kXf;
-    if(level_ > 0.0f && (cur_.playable() || xfading))
+    if(sounding_ == InputSource::File && level_ > 0.0f && (cur_.playable() || xfading))
     {
         restartFade_ = true;
     }
@@ -169,6 +202,215 @@ void InputStage::requestRestart() noexcept
         startFresh();
         restartsDone_.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+// --- Live (M2b-B) ---------------------------------------------------------------------------
+void InputStage::livePublishRead() noexcept
+{
+    // The slots from `keep` (the repeat length) behind the earliest position in
+    // use stay unwritten, so a repeat can read them; never moves back.
+    const std::uint64_t pos  = liveXf_ < liveXfLen_ ? std::min(liveOld_, liveRead_) : liveRead_;
+    const std::uint64_t cand = pos >= liveRepeat_ ? pos - liveRepeat_ : 0;
+    if(cand > livePub_)
+        livePub_ = cand;
+    live_->setReadIndex(livePub_);
+}
+
+void InputStage::liveDiscard() noexcept
+{
+    // Everything written so far is skipped; nothing before this point is ever
+    // read again (a repeat may not reach before liveStart_).
+    liveRunning_ = false;
+    liveXf_      = 0;
+    liveXfLen_   = 0;
+    liveRead_    = liveW_;
+    liveStart_   = liveW_;
+    livePublishRead();
+}
+
+void InputStage::liveResetBaseline() noexcept
+{
+    liveNoHeadroom_  = false;
+    liveRepeatClock_ = liveClock_;
+    liveBaseReady_ = false;
+    liveBaseMin_   = SIZE_MAX;
+    liveBaseStart_ = liveClock_;
+}
+
+void InputStage::liveChunkStart(InputSource src, float& gt, std::size_t frames) noexcept
+{
+    // A new session (a device opened or closed): stop reading at once, skip
+    // everything written so far, and fade out on the last output value (the
+    // hold, after the gain: it can only decay). The target goes back to the
+    // configured one.
+    // The writer's index first, then the session (both acquire): if the session
+    // is new, the index is read again, so the new start counts from after it.
+    // A session seen late (the thread preempted between the two loads during a
+    // whole device open) can therefore only make the stage skip more, never read
+    // a new device's samples as if they were the old one's.
+    liveW_                  = live_->writeIndex();
+    const std::uint32_t ses = live_->session();
+    if(ses != liveSessionSeen_)
+    {
+        liveSessionSeen_  = ses;
+        liveW_            = live_->writeIndex();
+        liveHoldOnly_     = true;
+        liveLastUnderrun_ = kNoUnderrun;
+        setLiveBuffers(liveConfBuffers_);
+        liveDiscard();
+    }
+    else if(sounding_ != InputSource::Live && src != InputSource::Live && (liveRunning_ || liveRead_ != liveW_))
+    {
+        // The live input has faded out and LIVE is not chosen (M2b-B review 2,
+        // S1): stop reading and skip whatever is written meanwhile, so a return
+        // to LIVE always buffers afresh from the writer's position (and snaps
+        // the gain); nothing from before is ever read.
+        liveDiscard();
+    }
+    else if(src == InputSource::Live && livePrevSrc_ != InputSource::Live && !liveRunning_)
+    {
+        // LIVE chosen again (and not still sounding): whatever was written before
+        // this moment is skipped too, so buffering starts here.
+        liveDiscard();
+    }
+    livePrevSrc_ = src;
+    if(sounding_ == InputSource::Live && liveRunning_)
+    {
+        const std::uint64_t fill = liveW_ - liveRead_;
+        if(fill < frames)
+        {
+            // A real underrun (the ring cannot supply the chunk: a stall, a lost
+            // device, or bursts larger than the target): play what is there, then
+            // hold, while the level fades out; buffer to the target again. Two
+            // within a second (while LIVE is chosen) double the target, at most
+            // kLiveMaxAutoBuffers buffers.
+            liveRunning_ = false;
+            liveXf_      = liveXfLen_; // a running crossfade ends; what is left plays straight
+            if(src == InputSource::Live)
+            {
+                live_->countUnderrun();
+                // Also raised when the settled minimum left no room for a repeat
+                // (half a repeat below it is at or under the chunk size): then
+                // drift can only end in underruns, so the target must grow.
+                const bool burst = liveLastUnderrun_ != kNoUnderrun && liveClock_ - liveLastUnderrun_ < kInputSampleRate;
+                if((burst || liveNoHeadroom_) && liveBuffers_ < kLiveMaxAutoBuffers)
+                {
+                    setLiveBuffers(std::min(liveBuffers_ * 2, kLiveMaxAutoBuffers));
+                    liveRaises_.fetch_add(1, std::memory_order_release); // after the new target is stored
+                }
+                liveLastUnderrun_ = liveClock_;
+            }
+        }
+        else if(liveXf_ >= liveXfLen_)
+        {
+            if(fill > liveTarget_ + liveMargin_)
+            {
+                // Overfill (capture fast, or the output stalled): skip ahead to the
+                // target with a linear crossfade from the old position to the new.
+                live_->countOverfill();
+                liveOld_   = liveRead_;
+                liveRead_  = liveW_ - liveTarget_;
+                liveXfLen_ = std::min(kLiveSkipCrossfadeFrames, liveTarget_);
+                liveXf_    = 0;
+                liveResetBaseline();
+            }
+            else if(liveBaseReady_)
+            {
+                // Capture slow: repeat the last `liveRepeat_` samples with a
+                // crossfade, before the ring runs dry.
+                const std::size_t low = liveBaseMin_ > liveRepeat_ / 2 ? liveBaseMin_ - liveRepeat_ / 2 : 0;
+                liveNoHeadroom_       = !(low > frames);
+                // Half a repeat below the settled minimum, never at it (M2b-B
+                // review 2, S2). If that is at or under the chunk size, a slow
+                // device underruns first and the target is raised instead. At
+                // most one repeat per kLiveBaselineFrames of output, only while
+                // the device delivers (a stalled device runs dry instead of
+                // looping), and never reaching before the session's (or the
+                // last discard's) first sample.
+                if(low > frames && fill < low && liveRead_ >= livePub_ + liveRepeat_ &&
+                   liveRead_ >= liveStart_ + liveRepeat_ && liveW_ != liveRepeatW_ &&
+                   liveClock_ - liveRepeatClock_ >= kLiveBaselineFrames)
+                {
+                    liveRepeatW_     = liveW_;
+                    liveRepeatClock_ = liveClock_;
+                    live_->countRepeat();
+                    liveOld_   = liveRead_;
+                    liveRead_  = liveRead_ - liveRepeat_;
+                    liveXfLen_ = std::min(kLiveSkipCrossfadeFrames, liveRepeat_);
+                    liveXf_    = 0;
+                }
+            }
+            else
+            {
+                // The settled minimum: the smallest fill over kLiveBaselineFrames.
+                liveBaseMin_ = std::min(liveBaseMin_, static_cast<std::size_t>(fill));
+                if(liveClock_ - liveBaseStart_ >= kLiveBaselineFrames)
+                    liveBaseReady_ = true;
+            }
+        }
+    }
+    // Start (and restart after an underrun or a new session): only from silence,
+    // the source LIVE, and the ring holding the target. The read position jumps
+    // to the target behind the writer (older samples are dropped), and the gain
+    // snaps to its target, read again here (after the session and the writer's
+    // index): the level is 0, so nothing clicks; a gain set to zero before a
+    // device opened is exactly zero for its first sample.
+    if(sounding_ == InputSource::Live && src == InputSource::Live && !liveRunning_ && !(level_ > 0.0f) &&
+       liveW_ - liveRead_ >= liveTarget_)
+    {
+        liveRead_     = liveW_ - liveTarget_;
+        liveRunning_  = true;
+        liveHoldOnly_ = false;
+        liveXf_       = 0;
+        liveXfLen_    = 0;
+        liveHoldOut_  = 0.0f;
+        gt            = gainTarget_.load(std::memory_order_relaxed);
+        gain_         = gt;
+        liveResetBaseline();
+        livePublishRead();
+    }
+    if(src == InputSource::Live || sounding_ == InputSource::Live)
+        live_->publishFill(static_cast<std::size_t>(liveW_ - liveRead_));
+    liveReadCount_ = 0;
+}
+
+float InputStage::liveNext(bool& held) noexcept
+{
+    held = false;
+    float s;
+    if(liveXf_ < liveXfLen_)
+    {
+        // A skip (overfill) or a repeat (slow capture): old * (1 - w) + new * w,
+        // w = (k + 1) / (L + 1). A side that has run dry contributes the last
+        // value read.
+        const float a = liveOld_ < liveW_ ? live_->at(liveOld_++) : liveRaw_;
+        const float b = liveRead_ < liveW_ ? live_->at(liveRead_++) : liveRaw_;
+        const float w = static_cast<float>(liveXf_ + 1) / static_cast<float>(liveXfLen_ + 1);
+        s             = a * (1.0f - w) + b * w;
+        ++liveXf_;
+        ++liveReadCount_;
+    }
+    else if(!liveHoldOnly_ && liveRead_ < liveW_)
+    {
+        s = live_->at(liveRead_++);
+        ++liveReadCount_;
+    }
+    else
+    {
+        held = true; // ran dry (or a new session): the caller holds the last output value
+        return liveRaw_;
+    }
+    liveRaw_ = s;
+    return s;
+}
+
+void InputStage::liveChunkEnd(std::size_t frames) noexcept
+{
+    livePublishRead();
+    if(liveReadCount_ > 0)
+        live_->addRead(liveReadCount_);
+    live_->setRunning(liveRunning_);
+    liveClock_ += frames;
 }
 
 const float* InputStage::pull(std::size_t frames) noexcept
@@ -185,9 +427,14 @@ const float* InputStage::pull(std::size_t frames) noexcept
     //    before it.
     const std::uint32_t gen  = sourceGen_.load(std::memory_order_acquire);
     const auto          src  = static_cast<InputSource>(source_.load(std::memory_order_acquire));
-    const float         gt   = gainTarget_.load(std::memory_order_relaxed);
+    float               gt   = gainTarget_.load(std::memory_order_relaxed);
     const auto          mode = static_cast<InputPlayMode>(mode_.load(std::memory_order_relaxed));
     const std::uint32_t rq   = restartReq_.load(std::memory_order_relaxed);
+
+    // M2b-B: the level belongs to the source that sounds (FILE or LIVE); while
+    // it is 0 nothing sounds and the chosen source is the one in force.
+    if(!(level_ > 0.0f))
+        sounding_ = src;
 
     // 2a. An old buffer held because the retire queue was full.
     if(old_.buf != nullptr && xf_ >= kXf && retired_.push(old_.buf))
@@ -220,8 +467,9 @@ const float* InputStage::pull(std::size_t frames) noexcept
         next_ = pending_.exchange(nullptr, std::memory_order_acq_rel);
     if(next_ != nullptr)
     {
-        const bool empty = next_->samples.empty();
-        if(!empty && level_ > 0.0f && cur_.playable())
+        const bool empty   = next_->samples.empty();
+        const bool audible = sounding_ == InputSource::File && level_ > 0.0f; // the level is the file's
+        if(!empty && audible && cur_.playable())
         {
             // Audible: crossfade from the current buffer to the new one.
             old_         = cur_;
@@ -233,7 +481,7 @@ const float* InputStage::pull(std::size_t frames) noexcept
             playingFrames_.store(cur_.buf->samples.size(), std::memory_order_relaxed);
             switches_.fetch_add(1, std::memory_order_relaxed);
         }
-        else if(!empty || !(level_ > 0.0f))
+        else if(!empty || !audible)
         {
             // Nothing audible (or an empty buffer once the fade-out is over):
             // switch, if the buffer it replaces can be retired.
@@ -251,7 +499,16 @@ const float* InputStage::pull(std::size_t frames) noexcept
         // else: an empty buffer while the current one sounds: fade out first.
     }
 
+    // 2e. The live input (M2b-B): a new session, then underrun, overfill and the
+    //     start, at the start of the chunk.
+    if(live_ != nullptr)
+        liveChunkStart(src, gt, frames);
+
     auto targetNow = [&]() noexcept {
+        if(sounding_ == InputSource::Live)
+            return (src == InputSource::Live && liveRunning_) ? 1.0f : 0.0f;
+        if(sounding_ != InputSource::File)
+            return 0.0f;
         const bool xfading = old_.buf != nullptr && xf_ < kXf;
         return (next_ == nullptr && !restartFade_ && src == InputSource::File && (cur_.playable() || xfading)) ? 1.0f
                                                                                                               : 0.0f;
@@ -272,6 +529,8 @@ const float* InputStage::pull(std::size_t frames) noexcept
             restartsDone_.fetch_add(1, std::memory_order_relaxed);
         }
         active_.store(false, std::memory_order_relaxed);
+        if(live_ != nullptr)
+            liveChunkEnd(frames);
         position_.store(cur_.pos, std::memory_order_relaxed);
         ended_.store(cur_.ended, std::memory_order_relaxed);
         crossfading_.store(old_.buf != nullptr && xf_ < kXf, std::memory_order_relaxed); // false: ended above
@@ -280,7 +539,7 @@ const float* InputStage::pull(std::size_t frames) noexcept
             settled_.store(switches_.load(std::memory_order_relaxed), std::memory_order_release);
         return nullptr;
     }
-    if(!(level_ > 0.0f))
+    if(!(level_ > 0.0f) && sounding_ == InputSource::File)
         cur_.rewind(); // a fresh start plays the file from its beginning
 
     // 4. Per sample: fade, smoothed gain, the player(s).
@@ -302,7 +561,23 @@ const float* InputStage::pull(std::size_t frames) noexcept
         gain_ = (std::fabs(d) < kGainSnap || next == gain_) ? gt : next;
 
         float v = 0.0f;
-        if(level_ > 0.0f)
+        if(level_ > 0.0f && sounding_ == InputSource::Live)
+        {
+            // M2b-B. A held value is the last output value after the gain, so
+            // the hold fade only decays, whatever the gain does meanwhile.
+            bool        held = false;
+            const float x    = liveNext(held);
+            if(held)
+            {
+                v = liveHoldOut_ * level_;
+            }
+            else
+            {
+                liveHoldOut_ = x * gain_;
+                v            = liveHoldOut_ * level_;
+            }
+        }
+        else if(level_ > 0.0f)
         {
             float s;
             if(old_.buf != nullptr && xf_ < kXf)
@@ -337,6 +612,17 @@ const float* InputStage::pull(std::size_t frames) noexcept
                 restartsDone_.fetch_add(1, std::memory_order_relaxed);
                 target = targetNow();
             }
+            if(sounding_ != src)
+            {
+                // M2b-B: the fade-out of one source is over; the other one takes
+                // over (FILE <-> LIVE, or either -> OFF). A file starts from its
+                // beginning; the live input once the ring holds the target (the
+                // next chunk checks).
+                sounding_ = src;
+                if(sounding_ == InputSource::File)
+                    cur_.rewind();
+                target = targetNow();
+            }
         }
         out[i]        = v;
         const float a = std::fabs(v);
@@ -344,6 +630,8 @@ const float* InputStage::pull(std::size_t frames) noexcept
     }
 
     // 5. Meters and status.
+    if(live_ != nullptr)
+        liveChunkEnd(frames);
     peak_.offer(peak);
     active_.store(true, std::memory_order_relaxed);
     position_.store(cur_.pos, std::memory_order_relaxed);

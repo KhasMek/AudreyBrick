@@ -70,6 +70,28 @@ int main()
                   "--expect-input-peak-min only with --selftest, and only a number");
             check(usageText("audreybrick").find("--input-dir <dir>") != std::string::npos,
                   "the usage text lists --input-dir");
+            // M2b-B: the live input's expectations.
+            AppOptions lv;
+            check(parse({"--selftest", "x.txt", "--seconds", "1", "--expect-live-underruns-max", "3",
+                         "--expect-live-overfills-min", "2", "--expect-live-repeats-min", "4", "--expect-live-status", "lost"},
+                        lv, err) &&
+                      lv.hasLiveUnderrunsMax && lv.liveUnderrunsMax == 3 && lv.hasLiveOverfillsMin &&
+                      lv.liveOverfillsMin == 2 && lv.hasLiveRepeatsMin && lv.liveRepeatsMin == 4 && lv.expectLiveStatus == "lost",
+                  "--expect-live-underruns-max, --expect-live-overfills-min, --expect-live-status with --selftest");
+            check(fails({"--expect-live-status", "open"}) && fails({"--expect-live-underruns-max", "1"}) &&
+                      fails({"--selftest", "x", "--seconds", "1", "--expect-live-status", "maybe"}) &&
+                      fails({"--selftest", "x", "--seconds", "1", "--expect-live-overfills-min", "-1"}),
+                  "the live expectations only with --selftest, and only valid values");
+            AppOptions lt;
+            check(parse({"--live-target-buffers", "8"}, lt, err) && lt.liveTargetBuffers == 8 &&
+                      parse({}, none, err) && none.liveTargetBuffers == 2,
+                  "--live-target-buffers 8; default 2");
+            check(fails({"--live-target-buffers", "0"}) && fails({"--live-target-buffers", "33"}) &&
+                      fails({"--live-target-buffers", "x"}) && fails({"--live-target-buffers"}),
+                  "--live-target-buffers: only 1 to 32");
+            check(usageText("audreybrick").find("--expect-live-status") != std::string::npos &&
+                      usageText("audreybrick").find("--live-target-buffers <n>") != std::string::npos,
+                  "the usage text lists the live expectations");
         }
         check(parse({"--help"}, o, err) && o.help, "--help");
         check(parse({"--selftest", "x.txt", "--seconds", "2.5"}, o, err) && o.selftest() &&

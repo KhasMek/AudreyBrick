@@ -89,5 +89,49 @@ int main()
         std::string                   err;
         check(!loadButtonScriptFile("/nonexistent/script.txt", ev, err) && !err.empty(), "a missing file is an error");
     }
+    // --- M2b-B: simulated capture lines ---------------------------------------------------------------------
+    {
+        const std::string text = "capture device usb 2 220 0.25 48240\n"
+                                 "capture device late 1 440.5 1 47760\n"
+                                 "CAPTURE DEVICE busy FAIL\n"
+                                 "0.5 A down\n"
+                                 "2.0 capture unplug usb\n"
+                                 "1.0 capture plug late\n"
+                                 "3 capture plug usb\n";
+        std::vector<TimedButtonEvent> ev;
+        CaptureScript                 cap;
+        std::string                   err;
+        const bool                    ok = parseButtonScript(text, ev, cap, err);
+        check(ok && ev.size() == 1 && cap.devices.size() == 3 && cap.devices[0].name == "usb" &&
+                  cap.devices[0].channels == 2 && cap.devices[0].toneHz == 220.0 && cap.devices[0].amplitude == 0.25 &&
+                  cap.devices[0].rateHz == 48240.0 && cap.devices[0].present && !cap.devices[0].fails &&
+                  cap.devices[1].toneHz == 440.5 && !cap.devices[1].present && cap.devices[2].fails && cap.devices[2].present,
+              "capture lines: devices in order with their values; 'fail'; a device whose first event is a plug starts absent");
+        check(ok && cap.events.size() == 3 && cap.events[0].plug && cap.events[0].name == "late" && cap.events[0].timeSeconds == 1.0 &&
+                  !cap.events[1].plug && cap.events[1].line == 5 && cap.events[2].plug && cap.any(),
+              "capture events sorted by time with their lines");
+        std::vector<TimedButtonEvent> ev2;
+        check(!parseButtonScript(text, ev2, err) && err.find("only accepted by the app's self-test") != std::string::npos,
+              "without the capture argument a capture line is rejected");
+        auto bad = [](const std::string& t, const char* what) {
+            std::vector<TimedButtonEvent> e;
+            CaptureScript                 c;
+            std::string                   er;
+            const bool                    r = parseButtonScript(t, e, c, er);
+            std::printf("  %s: %s\n", what, r ? "(accepted)" : er.c_str());
+            return !r && er.rfind("line ", 0) == 0;
+        };
+        check(bad("capture device a 2 220 0.25\n", "too few values") && bad("capture device a 0 220 0.25 48000\n", "0 channels") &&
+                  bad("capture device a 9 220 0.25 48000\n", "9 channels") &&
+                  bad("capture device a 1.5 220 0.25 48000\n", "fractional channels") &&
+                  bad("capture device a 2 24000 0.25 48000\n", "tone at Nyquist") &&
+                  bad("capture device a 2 220 9 48000\n", "amplitude 9") && bad("capture device a 2 220 0.2 20000\n", "rate 20000") &&
+                  bad("capture device a 2 220 0.2 -48000\n", "a sign") &&
+                  bad("capture device a fail\ncapture device a fail\n", "declared twice") &&
+                  bad("capture mic a\n", "not 'device'") && bad("1 capture unplug nobody\n", "undeclared device") &&
+                  bad("1 capture remove a\ncapture device a fail\n", "neither plug nor unplug") &&
+                  bad("1 capture plug\n", "no name"),
+              "capture lines with bad values, a duplicate, an undeclared device or a bad form are rejected with the line");
+    }
     return ctest::finish();
 }

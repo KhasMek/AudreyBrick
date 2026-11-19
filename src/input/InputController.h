@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: MIT
 //
 // InputController: the UI-thread model of the INPUT tab (docs/briefs/M2b.md,
-// M2b-A and M2b-A2, and docs/CONTROL_SCHEME_PROPOSAL.md section 000). Button
+// M2b-A to M2b-A3 and M2b-B (the live input, below), and
+// docs/CONTROL_SCHEME_PROPOSAL.md section 000). Button
 // events and time go in; the source, gain, play mode and restarts go to the
 // InputStage through its atomics, file loads go to the InputLoader, finished
 // buffers are handed to the stage and old ones freed here. No SDL. Time is
@@ -10,7 +11,7 @@
 //
 // Buttons (only presses made while the INPUT tab is current act; InputRouter
 // sends every button event here after the ControlModel has seen it):
-//   - d-pad left / right: the source, OFF <-> FILE, one step per press, no wrap,
+//   - d-pad left / right: the source, OFF, FILE, LIVE (M2b-B), one step per press, no wrap,
 //     no repeat while held.
 //   - d-pad up / down: the input gain. A press steps it by tuning::kTapStep (1/128
 //     of travel; tuning::kTapStepFine with Select held); held longer than
@@ -52,7 +53,8 @@
 //         the gain reset). Select held still means FINE for L2 / R2.
 //       - L1 / R1 while X is held, or releaseAll(): the choice is cancelled, the
 //         pop-up closes, nothing loads.
-//     With the source OFF (or X pressed on another tab) X + any direction does
+//     With the source LIVE the same gestures choose a capture device (see "The
+//     live input" below). With the source OFF (or X pressed on another tab) X + any direction does
 //     nothing here.
 //   - Y + d-pad up / down: the gain back to unity (n = 0.5, 0 dB). Y + left/right
 //     does nothing.
@@ -108,6 +110,48 @@
 // from /proc/meminfo after every finished load where that file exists) are
 // collected for the app's diagnostic log; takeLog() hands them over.
 //
+// The live input (M2b-B; source LIVE, docs/briefs/M2b.md "M2b-B"):
+//   - setLive() gives the controller the capture ring (LiveInput) and a capture
+//     system (LiveBackend: SDL's in the app, a simulated one in its self-test, a
+//     fake in the tests). Without them LIVE lists only SYSTEM DEFAULT and every
+//     open fails with NO CAPTURE SUPPORT.
+//   - The device list is SYSTEM DEFAULT (the backend's default device, SDL's
+//     NULL) followed by every name the backend lists (at most kLiveMaxDevices
+//     entries in all). It is listed again when LIVE is selected, when the INPUT
+//     tab is entered, when X is pressed with the source LIVE, and in tick()
+//     whenever the backend's listChanges() has grown (SDL_AUDIODEVICEADDED /
+//     REMOVED for capture devices). A list that changed is logged in full. After
+//     a listing the cursor stays on the same name, else on the nearest position.
+//   - Choosing a device: exactly as choosing a file (hold X, left/right step,
+//     up/down open the pop-up and move, release X opens the device under the
+//     cursor if a d-pad direction was pressed and it is not the open device; with
+//     no device open X, up, release opens the cursor's device). X + Y and X +
+//     Select do nothing with the source LIVE. Nothing opens by itself.
+//   - Opening (howl safeguard): the input gain is set to 0 (-inf dB) first, then
+//     the ring's session is advanced, then the backend opens the device. So the
+//     stage never plays a sample of the new device before it has faded to
+//     silence and buffered, and its gain then snaps to the target, which is 0.
+//     Every open (a first choice, another choice, or the reopen below) does this.
+//     The player raises the gain with up/down (or Y + up/down, unity).
+//   - The device stays open while the source is LIVE. Leaving LIVE closes it (so
+//     the mic is never open unseen); selecting LIVE again in the same run
+//     reopens the same device (gain to 0 again) if it is still listed.
+//   - A failed open: CANNOT OPEN <name>: <the backend's reason> until the next
+//     open or a source change; no device is chosen.
+//   - A lost device (the backend's lost(): SDL removed or stopped it; or no frame
+//     captured for kLiveStallSeconds): it is closed, DEVICE LOST shows, and no
+//     device is chosen. What is heard: the capture callback stops writing as
+//     soon as SDL marks the device stopped (platform/CaptureHost.h), so the ring
+//     runs dry and the stage fades out over 10 ms from the last sample; if the
+//     system delivers silence before SDL notices, that silence plays (the sound
+//     can cut at the moment of unplugging); the close then fades out what is left.
+//   - The stage doubles its live target after two underruns within a second
+//     (InputStage, "Live"); tick() logs each raise with the new target.
+//   - Log lines: every listing that changed (all names), every open (the name
+//     asked for, the spec asked for and obtained, the time taken, or the
+//     backend's error), every close with its reason, every gain reset to zero,
+//     and every loss.
+//
 // Exceptions (M2b-A review): no public function throws. Each catches everything
 // at its boundary: a failed folder scan (for example out of memory) leaves the
 // list empty with "CANNOT READ FOLDER"; a request the loader cannot take (the
@@ -133,6 +177,7 @@
 #include "input/InputStage.h"
 #include "input/InputTypes.h"
 #include "input/InputView.h"
+#include "input/LiveInput.h"
 
 namespace audreybrick
 {
@@ -159,10 +204,16 @@ class InputController
     // As if every button had been released (focus loss, controller removed).
     void releaseAll() noexcept;
     void tick(double t) noexcept;
-    // Stops the loader thread (joins it). The destructor calls it.
+    // Stops the loader thread (joins it) and closes the live device. The
+    // destructor calls it.
     void stop() noexcept;
 
-    // Everything but the peak.
+    // M2b-B: the live input's ring and capture system (either may be nullptr).
+    // Call before the first button event; both must outlive the controller (or
+    // call stop() first, which closes the device).
+    void setLive(LiveInput* live, LiveBackend* backend) noexcept;
+
+    // Everything but the peaks.
     void fill(UiInputView& v) const noexcept;
     // One log line "input: MemAvailable <n> kB (<when>)" if /proc/meminfo (or the
     // path set for tests) has it; nothing otherwise. The app calls it at start-up.
@@ -194,6 +245,16 @@ class InputController
     // superseded in its pending slot.
     std::uint64_t buffersFreed() const noexcept { return freed_; }
     const InputLoader& loader() const noexcept { return loader_; }
+    // M2b-B, the live input.
+    const std::vector<std::string>& devices() const noexcept { return devices_; } // [0] SYSTEM DEFAULT
+    int                deviceCursor() const noexcept { return devCursor_; }
+    bool               deviceOpen() const noexcept { return devOpen_; }
+    const std::string& deviceOpenName() const noexcept { return devOpenName_; } // as listed
+    int                deviceOpenIndex() const noexcept { return devOpenIndex_; }
+    LiveStatus         liveStatus() const noexcept { return liveStatus_; }
+    const char*        liveReason() const noexcept { return liveReason_; }
+    std::uint64_t      deviceOpens() const noexcept { return opens_; } // open attempts
+    const LiveOpenResult& lastOpen() const noexcept { return lastOpen_; }
 
   private:
     struct Press
@@ -207,7 +268,25 @@ class InputController
     static std::size_t idx(Button b) noexcept { return static_cast<std::size_t>(b); }
     bool down(Button b) const noexcept { return press_[idx(b)].down; }
 
+    struct ListRef
+    {
+        const std::vector<std::string>& names;
+        int&                            cursor;
+        std::string&                    cursorName;
+    };
+    ListRef activeList() noexcept; // the devices with the source LIVE, else the files
+
     void handleButton(const ButtonEvent& e, double t, bool onInputTab);
+    // M2b-B.
+    void listDevices() noexcept;
+    void selectLiveSource();
+    void beginDeviceChoice();
+    void endDeviceChoice();
+    void openDevice(int index);
+    void closeDevice(const char* reason) noexcept;
+    void deviceLost(const char* why) noexcept;
+    void checkLive(double t) noexcept;
+    int  indexOfDevice(const std::string& name) const noexcept; // among the system's names (1..)
     void handleTick(double t);
     void makeDpadInert() noexcept;
     void setSource(InputSource s);
@@ -236,6 +315,7 @@ class InputController
 #endif
         ;
     void setReason(const char* r) noexcept;
+    void setReasonLive(const char* r) noexcept;
     // An exception reached a public function: a visible failure, nothing thrown.
     void failSafe(const char* reason) noexcept;
 
@@ -277,6 +357,32 @@ class InputController
     std::uint64_t            freed_        = 0;
     std::string              memInfoPath_  = "/proc/meminfo";
     std::vector<std::string> log_;
+
+    // M2b-B, the live input.
+    LiveInput*               live_    = nullptr;
+    LiveBackend*             backend_ = nullptr;
+    std::vector<std::string> devices_;               // [0] SYSTEM DEFAULT, then the system's names
+    bool                     devicesListed_  = false;
+    bool                     devicesOk_      = true; // the last listing worked
+    std::uint64_t            listSeen_       = 0;    // backend listChanges() at the last listing
+    int                      devCursor_      = -1;
+    std::string              devCursorName_;
+    bool                     devOpen_        = false;
+    bool                     devOpenDefault_ = false; // the open (or chosen) device is SYSTEM DEFAULT
+    std::string              devOpenName_;            // as listed ("SYSTEM DEFAULT" for the default)
+    int                      devOpenIndex_   = -1;
+    bool                     devChosen_      = false; // reopen it when LIVE is selected again
+    bool                     devChosenDefault_ = false;
+    std::string              devChosenName_;
+    LiveStatus               liveStatus_     = LiveStatus::None;
+    std::string              liveFailName_;
+    char                     liveReason_[64] = {};
+    LiveOpenResult           lastOpen_;
+    std::uint64_t            opens_          = 0;
+    std::uint64_t            lastCaptured_   = 0;   // stall detection
+    double                   lastCaptureT_   = 0.0;
+    bool                     stallClock_     = false; // lastCaptureT_ not set yet
+    std::uint64_t            raisesSeen_     = 0;     // the stage's target raises already logged
 };
 
 } // namespace audreybrick

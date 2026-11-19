@@ -80,6 +80,26 @@ InputController::~InputController()
 void InputController::stop() noexcept
 {
     loader_.stop();
+    closeDevice("shutting down");
+}
+
+void InputController::setLive(LiveInput* live, LiveBackend* backend) noexcept
+{
+    live_    = live;
+    backend_ = backend;
+    if(backend_ != nullptr)
+        logf("input: live capture through %s", backend_->kind());
+    else
+        log("input: no capture system: LIVE lists SYSTEM DEFAULT only and cannot open it");
+    devicesListed_ = false; // the next listing is logged
+    listDevices();
+}
+
+InputController::ListRef InputController::activeList() noexcept
+{
+    if(source_ == InputSource::Live)
+        return ListRef{devices_, devCursor_, devCursorName_};
+    return ListRef{files_, cursor_, cursorName_};
 }
 
 void InputController::log(const std::string& line) noexcept
@@ -246,16 +266,20 @@ void InputController::handleButton(const ButtonEvent& e, double t, bool onInputT
         makeDpadInert();
         if(onInputTab && source_ == InputSource::File)
             beginChoice();
+        else if(onInputTab && source_ == InputSource::Live)
+            beginDeviceChoice(); // M2b-B
         return;
     }
     if(choosing_ && onInputTab && e.button == Button::Y)
     {
-        toggleMode(); // X + Y (not a d-pad press)
+        if(source_ == InputSource::File)
+            toggleMode(); // X + Y (not a d-pad press); nothing with the source LIVE
         return;
     }
     if(choosing_ && onInputTab && e.button == Button::Select)
     {
-        playAgain(); // X + Select (not a d-pad press)
+        if(source_ == InputSource::File)
+            playAgain(); // X + Select (not a d-pad press); nothing with the source LIVE
         return;
     }
     if(!isDpad(e.button))
@@ -288,6 +312,13 @@ void InputController::handleButton(const ButtonEvent& e, double t, bool onInputT
             // nothing is loaded (or the loaded file is not listed): then the
             // file under the cursor is the obvious choice (M2b-A3 review, M2).
             popup_ = true;
+            if(source_ == InputSource::Live)
+            {
+                if(!devOpen_ || devOpenIndex_ < 0)
+                    choiceMoved_ = true; // nothing open: X, up, release opens the cursor's device
+                logf("input: device list opened (cursor %d of %zu)", devCursor_ + 1, devices_.size());
+                return;
+            }
             if(!loaded_ || loadedIndex_ < 0)
                 choiceMoved_ = true;
             logf("input: file list opened (cursor %d of %zu)", cursor_ + 1, files_.size());
@@ -344,7 +375,8 @@ void InputController::beginChoice()
 void InputController::cancelChoice() noexcept
 {
     if(choosing_ && popup_)
-        log("input: file list closed, choice cancelled");
+        log(source_ == InputSource::Live ? "input: device list closed, choice cancelled"
+                                         : "input: file list closed, choice cancelled");
     choosing_    = false;
     popup_       = false;
     choiceMoved_ = false;
@@ -352,6 +384,11 @@ void InputController::cancelChoice() noexcept
 
 void InputController::endChoice()
 {
+    if(source_ == InputSource::Live)
+    {
+        endDeviceChoice(); // M2b-B
+        return;
+    }
     const bool moved  = choiceMoved_;
     const bool wasPop = popup_;
     choosing_         = false;
@@ -486,6 +523,9 @@ void InputController::handleTick(double t)
         startLoad(std::move(name));
     }
 
+    // 6. M2b-B: the live device (lost, stalled) and the device list (changed).
+    checkLive(t);
+
     stage_.setGainNorm(gain_);
 }
 
@@ -504,9 +544,27 @@ void InputController::setSource(InputSource s)
     if(s == source_)
         return;
     logf("input: source %s -> %s", inputSourceName(source_), inputSourceName(s));
-    source_ = s;
-    if(s == InputSource::File)
-        selectFileSource();
+    const InputSource was = source_;
+    source_               = s;
+    if(was == InputSource::Live)
+    {
+        closeDevice("the source left LIVE"); // the mic is never open unseen
+        liveStatus_ = LiveStatus::None;
+    }
+    // The stage follows source_ on every exit path, also if listing or
+    // reopening throws (out of memory; M2b-B review 2, M2).
+    try
+    {
+        if(s == InputSource::File)
+            selectFileSource();
+        if(s == InputSource::Live)
+            selectLiveSource(); // may reopen the device chosen before (gain to 0 first)
+    }
+    catch(...)
+    {
+        stage_.setSource(s);
+        throw;
+    }
     stage_.setSource(s);
 }
 
@@ -520,14 +578,15 @@ void InputController::toggleMode() noexcept
 
 void InputController::moveCursor(long delta)
 {
-    if(files_.empty())
+    ListRef l = activeList(); // the files, or the devices with the source LIVE
+    if(l.names.empty())
         return;
-    const long n  = static_cast<long>(files_.size());
-    const long at = cursor_ >= 0 ? cursor_ : 0;
+    const long n  = static_cast<long>(l.names.size());
+    const long at = l.cursor >= 0 ? l.cursor : 0;
     const long to = ((at + delta) % n + n) % n;
-    std::string name = files_[static_cast<std::size_t>(to)]; // may throw: nothing has changed yet
-    cursor_          = static_cast<int>(to);
-    cursorName_.swap(name);
+    std::string name = l.names[static_cast<std::size_t>(to)]; // may throw: nothing has changed yet
+    l.cursor         = static_cast<int>(to);
+    l.cursorName.swap(name);
 }
 
 void InputController::playAgain()
@@ -610,6 +669,7 @@ void InputController::rescan() noexcept
 void InputController::onTabEntered() noexcept
 {
     rescan();
+    listDevices(); // M2b-B
 }
 
 void InputController::selectFileSource()
@@ -739,6 +799,256 @@ void InputController::handleResult(InputLoadResult& r)
     logMemory("after a load");
 }
 
+// --- M2b-B: the live input ------------------------------------------------------------------
+int InputController::indexOfDevice(const std::string& name) const noexcept
+{
+    for(std::size_t i = 1; i < devices_.size(); ++i)
+        if(devices_[i] == name)
+            return static_cast<int>(i);
+    return -1;
+}
+
+void InputController::listDevices() noexcept
+{
+    try
+    {
+        std::vector<std::string> names;
+        bool                     ok = true;
+        if(backend_ != nullptr)
+        {
+            listSeen_ = backend_->listChanges(); // before listing: a change during it is seen next time
+            ok        = backend_->listDevices(names);
+        }
+        std::vector<std::string> list;
+        list.reserve(names.size() + 1);
+        list.emplace_back(kLiveDefaultDeviceName);
+        for(std::string& n : names)
+            if(list.size() < kLiveMaxDevices)
+                list.push_back(std::move(n));
+        const bool changed = !devicesListed_ || list != devices_ || ok != devicesOk_;
+        devices_.swap(list);
+        devicesListed_ = true;
+        devicesOk_     = ok;
+        // The cursor: the same name if still listed, else the nearest position.
+        int at = -1;
+        for(std::size_t i = 0; i < devices_.size(); ++i)
+            if(devices_[i] == devCursorName_)
+                at = static_cast<int>(i);
+        if(at < 0)
+            at = devCursor_ < 0 ? 0 : std::min(devCursor_, static_cast<int>(devices_.size()) - 1);
+        devCursor_ = at;
+        if(devices_[static_cast<std::size_t>(at)] != devCursorName_)
+        {
+            std::string n = devices_[static_cast<std::size_t>(at)];
+            devCursorName_.swap(n);
+        }
+        devOpenIndex_ = !devOpen_ ? -1 : (devOpenDefault_ ? 0 : indexOfDevice(devOpenName_));
+        if(changed && backend_ != nullptr)
+        {
+            std::string line = "input: capture devices";
+            if(!ok)
+                line += " (the capture system cannot list them)";
+            line += ": " + std::to_string(devices_.size() - 1) + " listed besides SYSTEM DEFAULT";
+            for(std::size_t i = 1; i < devices_.size(); ++i)
+                line += "; [" + std::to_string(i) + "] '" + devices_[i] + "'";
+            log(line);
+        }
+    }
+    catch(...)
+    {
+        // Out of memory: the list stays as it was (the cursor is valid in it).
+        log("input: listing the capture devices failed (out of memory)");
+    }
+}
+
+void InputController::selectLiveSource()
+{
+    listDevices();
+    if(!devChosen_)
+        return; // nothing chosen yet in this run: nothing opens by itself
+    const int at = devChosenDefault_ ? 0 : indexOfDevice(devChosenName_);
+    if(at < 0)
+    {
+        logf("input: the device chosen before, '%s', is no longer listed: nothing reopened", devChosenName_.c_str());
+        devChosen_ = false;
+        return;
+    }
+    logf("input: LIVE selected again: reopening '%s'", devices_[static_cast<std::size_t>(at)].c_str());
+    openDevice(at);
+}
+
+void InputController::beginDeviceChoice()
+{
+    listDevices(); // X pressed: list again
+    choosing_    = true;
+    popup_       = false;
+    choiceMoved_ = false;
+    if(devices_.empty())
+        return;
+    int at = devOpen_ && devOpenIndex_ >= 0 ? devOpenIndex_ : (devCursor_ >= 0 ? devCursor_ : 0);
+    if(at >= static_cast<int>(devices_.size()))
+        at = 0;
+    std::string name = devices_[static_cast<std::size_t>(at)]; // may throw: nothing has changed yet
+    devCursor_       = at;
+    devCursorName_.swap(name);
+}
+
+void InputController::endDeviceChoice()
+{
+    const bool moved  = choiceMoved_;
+    const bool wasPop = popup_;
+    choosing_         = false;
+    popup_            = false;
+    choiceMoved_      = false;
+    if(wasPop)
+        log("input: device list closed");
+    if(!moved || devices_.empty() || devCursor_ < 0)
+        return; // a hold without a d-pad press never opens anything
+    if(devOpen_ && devCursor_ == devOpenIndex_)
+        return; // the open device: nothing
+    openDevice(devCursor_);
+}
+
+void InputController::closeDevice(const char* reason) noexcept
+{
+    if(!devOpen_)
+        return;
+    const auto t0 = std::chrono::steady_clock::now();
+    if(backend_ != nullptr)
+        backend_->close();
+    if(live_ != nullptr)
+        live_->newSession(); // the stage stops reading and fades out on its last sample
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    logf("input: capture device '%s' closed (%s), %.1f ms", devOpenName_.c_str(), reason, ms);
+    devOpen_      = false;
+    devOpenIndex_ = -1;
+}
+
+void InputController::openDevice(int index)
+{
+    if(index < 0 || static_cast<std::size_t>(index) >= devices_.size())
+        return;
+    const bool def = index == 0;
+    // Everything that may throw first (copies), before anything changes; after
+    // the open only swaps, moves and fixed-size formatting (M2b-B review, M4).
+    std::string    name   = devices_[static_cast<std::size_t>(index)];
+    std::string    open   = name;
+    std::string    chosen = name;
+    LiveOpenResult r;
+    r.askedName = def ? std::string() : name;
+    r.error.reserve(64);
+    char asked[160];
+    if(def)
+        std::snprintf(asked, sizeof asked, "the system default (NULL)");
+    else
+        std::snprintf(asked, sizeof asked, "'%.150s'", name.c_str());
+    // The howl safeguard, in this order: the gain to zero, then the old device
+    // closed (which advances the ring's session), then a new session, then the
+    // open. So the gain is zero before any session the stage can see.
+    if(gain_ > 0.0f)
+        logf("input: gain %.3f -> 0 (-inf dB) before opening a capture device", static_cast<double>(gain_));
+    setGain(0.0f);
+    closeDevice("another device chosen");
+    if(live_ != nullptr)
+        live_->newSession();
+    ++opens_;
+    bool ok = false;
+    if(backend_ == nullptr || live_ == nullptr)
+        r.error = "NO CAPTURE SUPPORT";
+    else
+        ok = backend_->open(def ? nullptr : name.c_str(), r);
+    if(ok)
+    {
+        devOpen_          = true;
+        devOpenDefault_   = def;
+        devOpenIndex_     = index;
+        devChosen_        = true;
+        devChosenDefault_ = def;
+        devOpenName_.swap(open);
+        devChosenName_.swap(chosen);
+        liveStatus_ = LiveStatus::None;
+        setReasonLive("");
+        lastCaptured_ = live_->framesCaptured();
+        stallClock_   = true;
+        raisesSeen_   = stage_.liveTargetRaises();
+        logf("input: capture device opened: '%s' (asked for %s; asked %d Hz %s %d ch %d frames; obtained %d Hz %s %d ch "
+             "%d frames) in %.1f ms",
+             devOpenName_.c_str(), asked, r.askedRate, r.askedFormat.c_str(), r.askedChannels, r.askedFrames, r.rate,
+             r.format.c_str(), r.channels, r.frames, 1000.0 * r.seconds);
+    }
+    else
+    {
+        devChosen_  = false;
+        liveStatus_ = LiveStatus::Failed;
+        liveFailName_.swap(name);
+        setReasonLive(r.error.c_str());
+        logf("input: capture device '%s' could not be opened (asked for %s): %s, %.1f ms", liveFailName_.c_str(), asked,
+             r.error.c_str(), 1000.0 * r.seconds);
+    }
+    lastOpen_ = std::move(r);
+}
+
+void InputController::deviceLost(const char* why) noexcept
+{
+    logf("input: DEVICE LOST: '%s' (%s)", devOpenName_.c_str(), why);
+    try
+    {
+        liveFailName_ = devOpenName_;
+    }
+    catch(...)
+    {
+        liveFailName_.clear();
+    }
+    closeDevice("lost");
+    devChosen_  = false;
+    liveStatus_ = LiveStatus::Lost;
+    listDevices();
+}
+
+void InputController::checkLive(double t) noexcept
+{
+    if(backend_ != nullptr && backend_->listChanges() != listSeen_)
+        listDevices(); // SDL_AUDIODEVICEADDED / REMOVED
+    // The stage doubled its target after two underruns within a second.
+    // The count first (acquire; the stage stores the target, then increments it
+    // with release), then the target: at least the raised one (M2b-B review 2, M3).
+    const std::uint64_t raises = stage_.liveTargetRaises();
+    if(raises != raisesSeen_)
+    {
+        raisesSeen_          = raises;
+        const std::size_t to = stage_.liveTargetFrames();
+        logf("input: live target raised to %zu frames (two underruns within a second; %llu raise(s) since start)", to,
+             static_cast<unsigned long long>(raises));
+    }
+    if(!devOpen_)
+        return;
+    if(backend_ != nullptr && backend_->lost())
+    {
+        deviceLost("the capture system reports it removed or stopped");
+        return;
+    }
+    if(live_ == nullptr)
+        return;
+    const std::uint64_t c = live_->framesCaptured();
+    if(stallClock_ || c != lastCaptured_)
+    {
+        stallClock_   = false;
+        lastCaptured_ = c;
+        lastCaptureT_ = t;
+    }
+    else if(t - lastCaptureT_ > kLiveStallSeconds)
+    {
+        char why[64];
+        std::snprintf(why, sizeof why, "no audio from it for %.0f s", kLiveStallSeconds);
+        deviceLost(why);
+    }
+}
+
+void InputController::setReasonLive(const char* r) noexcept
+{
+    copyText(liveReason_, sizeof liveReason_, r);
+}
+
 void InputController::fill(UiInputView& v) const noexcept
 {
     v.source        = source_;
@@ -762,21 +1072,38 @@ void InputController::fill(UiInputView& v) const noexcept
     copyText(v.reason, sizeof v.reason, reason_);
 
     // The browser window: kInputListRows names with the cursor kept in view
-    // (centred where the list allows).
-    const int n   = static_cast<int>(files_.size());
+    // (centred where the list allows). M2b-B: the capture devices with the
+    // source LIVE.
+    const bool                      liveList = source_ == InputSource::Live;
+    const std::vector<std::string>& names    = liveList ? devices_ : files_;
+    const int                       cur      = liveList ? devCursor_ : cursor_;
+    const int n   = static_cast<int>(names.size());
     const int rows = n < kInputListRows ? n : kInputListRows;
-    int       first = cursor_ - kInputListRows / 2;
+    int       first = cur - kInputListRows / 2;
     if(first > n - rows)
         first = n - rows;
     if(first < 0)
         first = 0;
-    v.cursor    = cursor_;
+    v.cursor    = cur;
     v.listFirst = first;
     v.listRows  = rows;
     for(int i = 0; i < kInputListRows; ++i)
         copyDisplayName(v.listNames[i], sizeof v.listNames[i],
-                        i < rows ? files_[static_cast<std::size_t>(first + i)].c_str() : "");
-    v.loadedIndex = loaded_ ? loadedIndex_ : -1;
+                        i < rows ? names[static_cast<std::size_t>(first + i)].c_str() : "");
+    v.loadedIndex = liveList ? devOpenIndex_ : (loaded_ ? loadedIndex_ : -1);
+
+    // M2b-B: the live input.
+    v.deviceCount      = static_cast<int>(devices_.size());
+    v.deviceListFailed = !devicesOk_;
+    v.deviceOpen       = devOpen_;
+    copyDisplayName(v.deviceName, sizeof v.deviceName, devOpen_ ? devOpenName_.c_str() : "");
+    v.grantedRate     = devOpen_ ? lastOpen_.rate : 0;
+    v.grantedChannels = devOpen_ ? lastOpen_.channels : 0;
+    v.grantedFrames   = devOpen_ ? lastOpen_.frames : 0;
+    v.liveStatus      = liveStatus_;
+    copyDisplayName(v.liveFailName, sizeof v.liveFailName, liveStatus_ != LiveStatus::None ? liveFailName_.c_str() : "");
+    copyDisplayName(v.liveReason, sizeof v.liveReason, liveStatus_ == LiveStatus::Failed ? liveReason_ : "");
+    v.liveRunning = live_ != nullptr && live_->running();
 
     // Playback, from the stage's status atomics (for the loaded file only).
     v.playMode = mode_;

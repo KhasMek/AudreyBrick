@@ -64,6 +64,10 @@
 # Settings (environment variables, or edit the defaults below):
 #   AUDREY_BUFFER      audio buffer in frames, 16 to 32768 (default 256). Anything
 #                      else: 256 is used and stdout.log says so.
+#   AUDREY_LIVE_TARGET the live input's buffer, in audio buffers, 1 to 32 (default
+#                      2; passed as --live-target-buffers). More: steadier with a
+#                      device that delivers in large bursts, but a longer delay.
+#                      Anything else: 2 is used and stdout.log says so.
 #   AUDREY_KEEP_AWAKE  1 (default): while the app runs, a file
 #                      /var/run/battery-saver/audreybrick.pause exists; KNULLI's
 #                      idle watcher skips dimming, muting and suspend while any
@@ -121,6 +125,7 @@ set -u
 DEFAULT_SWAP_AB=1
 DEFAULT_SWAP_XY=1
 AUDREY_BUFFER="${AUDREY_BUFFER:-256}"
+AUDREY_LIVE_TARGET="${AUDREY_LIVE_TARGET:-2}"
 AUDREY_KEEP_AWAKE="${AUDREY_KEEP_AWAKE:-1}"
 AUDREY_GOVERNOR="${AUDREY_GOVERNOR:-keep}"
 
@@ -326,6 +331,18 @@ main() {
         buffer=256
     fi
 
+    live_target="$AUDREY_LIVE_TARGET"
+    case "$live_target" in
+        '' | *[!0-9]* | ???*) live_ok=0 ;;
+        *) if [ $((10#$live_target)) -ge 1 ] && [ $((10#$live_target)) -le 32 ]; then live_ok=1; else live_ok=0; fi ;;
+    esac
+    if [ "$live_ok" -eq 1 ]; then
+        live_target=$((10#$live_target))
+    else
+        note "AUDREY_LIVE_TARGET '$AUDREY_LIVE_TARGET' is not a whole number from 1 to 32; using 2"
+        live_target=2
+    fi
+
     case "$AUDREY_KEEP_AWAKE" in 0) keep_awake=0 ;; *) keep_awake=1 ;; esac
 
     # The swaps: an explicit environment value wins; otherwise KNULLI's own layout
@@ -465,6 +482,18 @@ main() {
             elif have "$tool"; then $TO 0.3 "$tool" -l 2>&1 | head -n 12 | sed "s/^/launcher: $tool -l: /"
             else echo "launcher: $tool not found"; fi
         done
+        # M2b-B: the capture side's names, so a USB interface's PipeWire and ALSA
+        # names are in the log next to what SDL lists.
+        if [ -z "$TO" ]; then echo "launcher: pactl list short sources skipped (no timeout)"
+        elif have pactl; then
+            echo "launcher: pactl list short sources (PipeWire's capture sources, at most 12 lines):"
+            $TO 0.4 pactl list short sources 2>&1 | head -n 12 | sed 's/^/launcher: pactl list short sources: /'
+        else echo "launcher: pactl not found (no PipeWire source list)"; fi
+        if [ -z "$TO" ]; then echo "launcher: arecord -L skipped (no timeout)"
+        elif have arecord; then
+            echo "launcher: arecord -L (ALSA's capture PCMs, at most 30 lines):"
+            $TO 0.3 arecord -L 2>&1 | head -n 30 | sed 's/^/launcher: arecord -L: /'
+        else echo "launcher: arecord not found (no ALSA capture list)"; fi
         t1="$(date +%s%N 2>/dev/null)"
         case "$t0$t1" in *[!0-9]*) ;; ?*) echo "launcher: device state took $(( (t1 - t0) / 1000000 )) ms" ;; esac
         echo "launcher: --- end of device state ---"
@@ -477,7 +506,7 @@ main() {
     fi
     [ "${#extra[@]}" -gt 0 ] && note "extra arguments: ${extra[*]}"
     note "buttons: A/B swap $swap_ab ($swap_ab_rule); X/Y swap $swap_xy ($swap_xy_rule)"
-    note "settings: $appver; AUDREY_BUFFER=$buffer AUDREY_KEEP_AWAKE=$keep_awake AUDREY_SWAP_AB=$swap_ab AUDREY_SWAP_XY=$swap_xy AUDREY_GOVERNOR=$governor${AUDREY_SYSFS_CPU:+ AUDREY_SYSFS_CPU=$AUDREY_SYSFS_CPU (testing aid)}"
+    note "settings: $appver; AUDREY_BUFFER=$buffer AUDREY_LIVE_TARGET=$live_target AUDREY_KEEP_AWAKE=$keep_awake AUDREY_SWAP_AB=$swap_ab AUDREY_SWAP_XY=$swap_xy AUDREY_GOVERNOR=$governor${AUDREY_SYSFS_CPU:+ AUDREY_SYSFS_CPU=$AUDREY_SYSFS_CPU (testing aid)}"
     stop_point "after the device-state block"
 
     # =====================================================================================
@@ -549,7 +578,7 @@ main() {
     # If this script is killed with SIGKILL its EXIT trap does not run; the app then
     # removes the pause file itself (--remove-on-exit) and restores the governors
     # (--restore-on-exit <file> <found> <set>, one per policy).
-    args=(--fullscreen --exit-with-parent --buffer "$buffer" --log "$LOG" --input-dir "$INPUT_DIR")
+    args=(--fullscreen --exit-with-parent --buffer "$buffer" --live-target-buffers "$live_target" --log "$LOG" --input-dir "$INPUT_DIR")
     [ "$swap_ab" -eq 1 ] && args+=(--swap-ab)
     [ "$swap_xy" -eq 1 ] && args+=(--swap-xy)
     [ "$PAUSE_MADE" -eq 1 ] && args+=(--remove-on-exit "$PAUSE_FILE")

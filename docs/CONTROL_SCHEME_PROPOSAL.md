@@ -12,9 +12,9 @@ These override section 0 where they differ.
 - No in-app screenshot: KNULLI's own works.
 - The screen shows no quit hint (the human's choice; Menu + Start is the system default).
 
-## 000. The INPUT tab as built (M2b-A, M2b-A2 and M2b-A3, 2026-11-18)
+## 000. The INPUT tab as built (M2b-A, M2b-A2, M2b-A3 and M2b-B, 2026-11-18/19)
 
-INPUT is the sixth tab, after OUT. Left/right: source (OFF, FILE; live sources come with M2b-B). Up/down: input gain, silence to +12 dB with unity in the middle. Y + up/down: gain back to unity. The global buttons work as everywhere. A slim IN bar under the output meters shows input level on every tab while a source is active.
+INPUT is the sixth tab, after OUT. Left/right: source (OFF, FILE, LIVE; no wrap). Up/down: input gain, silence to +12 dB with unity in the middle. Y + up/down: gain back to unity. The global buttons work as everywhere. A slim IN bar under the output meters shows input level on every tab while a source is active.
 
 Since M2b-A3 (2026-11-18; it replaces M2b-A2's in-tab list, which the human found too small), with the source FILE nothing loads by itself and a file is chosen by holding X:
 
@@ -24,6 +24,12 @@ Since M2b-A3 (2026-11-18; it replaces M2b-A2's in-tab list, which the human foun
 - X + Y: play mode LOOP (default) or ONCE (to the end with a 10 ms fade, then silence). X + Select: play the file again from its start.
 - L1/R1 while X is held (or losing focus): the choice is cancelled.
 - The FILE row shows "n OF m", the name, a progress bar with elapsed and total time, LOOP/ONCE, ENDED, CUT TO 10 MIN, and LOADING / CANNOT LOAD / PLAYING when needed. Files are cut at 10 minutes.
+
+With the source LIVE (M2b-B, 2026-11-19) a capture device is chosen the same way, from a list of SYSTEM DEFAULT plus every capture device SDL reports (listed again when LIVE is selected, the tab is entered, X is pressed, or a device is plugged in or out):
+
+- X + left/right steps, X + up/down opens the same pop-up (header DEVICES n OF m, the open device marked OPEN, one hint X RELEASE: OPEN), releasing X opens the cursor's device if a direction was pressed and it is not the open one. X + Y and X + Select do nothing. Nothing opens by itself.
+- Every open sets the input gain to -inf dB first (howl safeguard); the player raises it with up/down or Y + up/down. Leaving LIVE closes the device; selecting LIVE again reopens the same device (gain to -inf again) if it is still listed.
+- The tab's rows are compact with LIVE: SOURCE, GAIN (value still 40 px), DEVICE ("n OF m", the name, what the device delivers and a PRE bar with the level before the gain, or CANNOT OPEN / DEVICE LOST / HOLD X: CHOOSE DEVICE), and below them, across the rows and the input meter, the warning SPEAKER + MIC CAN HOWL / USE HEADPHONES OR KEEP GAIN LOW in inverse video. The SOURCE choices are drawn at 24 px on every source (three do not fit at 32 px).
 
 With the source OFF, X + any direction does nothing on INPUT.
 

@@ -152,7 +152,40 @@ struct PeriodicStats
     // the largest input peak (after gain) in the window.
     const char*   inputSource     = nullptr;
     float         inputPeak       = 0.0f;
+    // M2b-B: the live input's part (formatLiveStats()), or nullptr/empty: none.
+    const char*   live            = nullptr;
 };
+
+// M2b-B: the live input over one statistics window (while the source is LIVE).
+struct LiveWindowStats
+{
+    bool          deviceOpen    = false;
+    const char*   device        = "";  // the open device as listed
+    bool          running       = false; // the stage plays the ring
+    std::size_t   fill          = 0;   // frames in the ring at the last output chunk
+    std::size_t   minFill       = 0;   // smallest / largest fill in the window
+    std::size_t   maxFill       = 0;
+    std::size_t   target        = 0;   // the stage's target fill (now)
+    std::uint64_t raises        = 0;   // times the target was doubled since start
+    std::uint64_t underruns     = 0;   // in the window
+    std::uint64_t overfills     = 0;   // skips (capture fast)
+    std::uint64_t repeats       = 0;   // crossfaded repeats (capture slow)
+    std::uint64_t captured      = 0;   // frames the device delivered in the window
+    std::uint64_t read          = 0;   // frames the stage took from the ring
+    std::uint64_t dropped       = 0;   // frames lost to a full ring
+    std::uint64_t callbacks     = 0;   // capture callbacks
+    std::uint64_t outputFrames  = 0;   // frames the output rendered in the window (for the clock ratio)
+    float         prePeak       = 0.0f; // largest pre-gain peak
+    float         postPeak      = 0.0f; // largest input peak after the gain
+};
+
+// "live: device 'audiocodec, ' (running), fill 512 (min 256, max 768, target 512,
+//  raised 0), underruns 0, skips 0, repeats 0, captured 480000, read 480000,
+//  dropped 0, capture callbacks 1875, capture clock 1.0000x output, pre peak
+//  0.500, post peak 0.250"
+// ("live: no device open, ..." without one). The capture clock is captured /
+// output frames in the window (n/a without output).
+std::size_t formatLiveStats(char* out, std::size_t size, const LiveWindowStats& s) noexcept;
 
 // "stats: window 10.0 s, callback load 3.4 % (max 5.2 %, p50 <10 %, p95 <10 %,
 //  histogram 1870/5/0/0/0/0), callbacks 1875, overruns 0, largest 256 frames,

@@ -19,12 +19,14 @@
 namespace audreybrick
 {
 
-// The sources of M2b-A. M2b-B adds the live sources (internal mic, USB) between
-// OFF and FILE; the order here is the order on the screen.
+// The sources. M2b-B added LIVE (a capture device: the internal mic, a USB
+// interface, whatever SDL lists); the order here is the order on the screen
+// (left/right on the INPUT tab, no wrap).
 enum class InputSource : std::uint8_t
 {
     Off,
     File,
+    Live,
     Count
 };
 
@@ -36,6 +38,7 @@ constexpr const char* inputSourceName(InputSource s) noexcept
     {
         case InputSource::Off: return "OFF";
         case InputSource::File: return "FILE";
+        case InputSource::Live: return "LIVE";
         case InputSource::Count: break;
     }
     return "?";
@@ -132,6 +135,61 @@ constexpr const char* inputLoadStateName(InputLoadState s) noexcept
         case InputLoadState::Ready: return "ready";
         case InputLoadState::Failed: return "failed";
         case InputLoadState::NoFiles: return "no files";
+    }
+    return "?";
+}
+
+// --- Live input (M2b-B) ------------------------------------------------------------------
+// The capture ring (LiveInput): mono float at 48 kHz, this many samples (a power
+// of two, about 1.37 s).
+constexpr std::size_t kLiveRingFrames = 65536;
+// The stage starts reading (and re-starts after an underrun) once the ring holds
+// the target: this many output buffers' worth by default (the launch option
+// --live-target-buffers sets 1 to 32; InputStage::setLiveTargetBuffers()).
+constexpr std::size_t kLiveTargetBuffers    = 2;
+constexpr std::size_t kLiveMinTargetBuffers = 1;
+constexpr std::size_t kLiveMaxTargetBuffers = 32;
+// Two real underruns within one second double the target, up to this many
+// buffers (never above a configured target; it never lowers by itself; a new
+// session, i.e. opening or closing a device, resets it to the configured one).
+constexpr std::size_t kLiveMaxAutoBuffers = 16;
+// Above the target plus this many output buffers (or twice the target, if more)
+// the stage skips ahead to the target (an overfill: the capture side runs fast,
+// or the output stalled).
+constexpr std::size_t kLiveOverfillMarginBuffers = 4;
+// Slow capture: when the fill sinks below its settled minimum (the smallest
+// fill over kLiveBaselineFrames after a start or a skip) by half a repeat, the
+// stage repeats the last min(output buffer, kLiveMaxRepeatFrames) samples with a
+// crossfade, before the ring runs dry.
+constexpr std::size_t kLiveMaxRepeatFrames = 1024;
+constexpr std::size_t kLiveBaselineFrames  = 12000; // 0.25 s
+// The target when the output buffer size is not known (prepare() without it).
+constexpr std::size_t kLiveDefaultTargetFrames = 512;
+// The skip's linear crossfade between the old and the new read position: this
+// many samples (10 ms), or the target if that is smaller.
+constexpr std::size_t kLiveSkipCrossfadeFrames = 480;
+// The UI treats an open device as lost when it has delivered nothing for this long.
+constexpr double kLiveStallSeconds = 3.0;
+// Capture samples are clamped to +/- this after the mono mix, as file samples are.
+constexpr float kLiveSampleLimit = kInputSampleLimit;
+// The capture devices listed (SYSTEM DEFAULT plus at most this many minus one names).
+constexpr std::size_t kLiveMaxDevices = 32;
+
+// What the INPUT tab says about the live device besides its name.
+enum class LiveStatus : std::uint8_t
+{
+    None,   // nothing to report (open, or never chosen)
+    Failed, // the last open failed (CANNOT OPEN <name>: <reason>)
+    Lost,   // the open device went away (unplugged, stopped delivering): DEVICE LOST
+};
+
+constexpr const char* liveStatusName(LiveStatus s) noexcept
+{
+    switch(s)
+    {
+        case LiveStatus::None: return "none";
+        case LiveStatus::Failed: return "failed";
+        case LiveStatus::Lost: return "lost";
     }
     return "?";
 }

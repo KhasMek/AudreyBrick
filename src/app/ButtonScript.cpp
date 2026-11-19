@@ -95,8 +95,74 @@ bool buttonFromName(std::string_view name, Button& out) noexcept
     return false;
 }
 
+namespace
+{
+bool parseCaptureLine(const std::vector<std::string_view>& f, int lineNo, CaptureScript& cap, std::string& error)
+{
+    const std::string where = "line " + std::to_string(lineNo) + ": ";
+    // capture device <name> fail | capture device <name> <ch> <tone> <amp> <rate>
+    if(f.size() < 3 || !equalsIgnoreCase(f[1], "device"))
+    {
+        error = where + "expected 'capture device <name> <channels> <tone_hz> <amplitude> <rate_hz>' or "
+                        "'capture device <name> fail'";
+        return false;
+    }
+    SimCaptureDevice d;
+    d.name = std::string(f[2]);
+    for(const SimCaptureDevice& o : cap.devices)
+        if(o.name == d.name)
+        {
+            error = where + "capture device '" + d.name + "' declared twice";
+            return false;
+        }
+    if(f.size() == 4 && equalsIgnoreCase(f[3], "fail"))
+    {
+        d.fails = true;
+        cap.devices.push_back(d);
+        return true;
+    }
+    double ch = 0, tone = 0, amp = 0, rate = 0;
+    if(f.size() != 7 || !parseTime(f[3], ch) || !parseTime(f[4], tone) || !parseTime(f[5], amp) ||
+       !parseTime(f[6], rate))
+    {
+        error = where + "expected 'capture device <name> <channels> <tone_hz> <amplitude> <rate_hz>' (plain decimals)";
+        return false;
+    }
+    if(ch < 1 || ch > 8 || ch != static_cast<double>(static_cast<int>(ch)) || !(tone > 0) || !(tone < 24000) ||
+       amp > 8 || rate < 24000 || rate > 96000)
+    {
+        error = where + "capture device values out of range (channels 1..8, 0 < tone_hz < 24000, amplitude 0..8, "
+                        "rate_hz 24000..96000)";
+        return false;
+    }
+    d.channels  = static_cast<int>(ch);
+    d.toneHz    = tone;
+    d.amplitude = amp;
+    d.rateHz    = rate;
+    cap.devices.push_back(d);
+    return true;
+}
+} // namespace
+
 bool parseButtonScript(const std::string& text, std::vector<TimedButtonEvent>& out, std::string& error)
 {
+    CaptureScript cap;
+    std::vector<TimedButtonEvent> events;
+    if(!parseButtonScript(text, events, cap, error))
+        return false;
+    if(cap.any() || !cap.events.empty())
+    {
+        error = "capture lines are only accepted by the app's self-test";
+        return false;
+    }
+    out = std::move(events);
+    return true;
+}
+
+bool parseButtonScript(const std::string& text, std::vector<TimedButtonEvent>& out, CaptureScript& capture,
+                       std::string& error)
+{
+    CaptureScript                 cap;
     std::vector<TimedButtonEvent> events;
     std::string_view              rest(text);
     int                           lineNo = 0;
@@ -115,6 +181,27 @@ bool parseButtonScript(const std::string& text, std::vector<TimedButtonEvent>& o
             continue;
 
         const std::string where = "line " + std::to_string(lineNo) + ": ";
+        if(equalsIgnoreCase(f[0], "capture"))
+        {
+            if(!parseCaptureLine(f, lineNo, cap, error))
+                return false;
+            continue;
+        }
+        if(f.size() >= 2 && equalsIgnoreCase(f[1], "capture"))
+        {
+            SimCaptureEvent ev;
+            ev.line = lineNo;
+            if(f.size() != 4 || !parseTime(f[0], ev.timeSeconds) ||
+               !(equalsIgnoreCase(f[2], "plug") || equalsIgnoreCase(f[2], "unplug")))
+            {
+                error = where + "expected '<time_s> capture plug|unplug <name>'";
+                return false;
+            }
+            ev.plug = equalsIgnoreCase(f[2], "plug");
+            ev.name = std::string(f[3]);
+            cap.events.push_back(ev);
+            continue;
+        }
         if(f.size() != 3)
         {
             error = where + "expected <time_s> <button> <down|up>";
@@ -145,11 +232,36 @@ bool parseButtonScript(const std::string& text, std::vector<TimedButtonEvent>& o
     }
     std::stable_sort(events.begin(), events.end(),
                      [](const TimedButtonEvent& a, const TimedButtonEvent& b) { return a.timeSeconds < b.timeSeconds; });
-    out = std::move(events);
+    // Capture events: each names a declared device; a device whose first event
+    // is a plug starts absent.
+    std::stable_sort(cap.events.begin(), cap.events.end(),
+                     [](const SimCaptureEvent& a, const SimCaptureEvent& b) { return a.timeSeconds < b.timeSeconds; });
+    for(const SimCaptureEvent& ev : cap.events)
+    {
+        bool known = false;
+        for(const SimCaptureDevice& d : cap.devices)
+            known = known || d.name == ev.name;
+        if(!known)
+        {
+            error = "line " + std::to_string(ev.line) + ": capture device '" + ev.name + "' is not declared";
+            return false;
+        }
+    }
+    for(SimCaptureDevice& d : cap.devices)
+        for(const SimCaptureEvent& ev : cap.events)
+            if(ev.name == d.name)
+            {
+                d.present = !ev.plug;
+                break;
+            }
+    out     = std::move(events);
+    capture = std::move(cap);
     return true;
 }
 
-bool loadButtonScriptFile(const std::string& path, std::vector<TimedButtonEvent>& out, std::string& error)
+namespace
+{
+bool readFile(const std::string& path, std::string& text, std::string& error)
 {
     std::ifstream f(path, std::ios::binary);
     if(!f)
@@ -159,7 +271,22 @@ bool loadButtonScriptFile(const std::string& path, std::vector<TimedButtonEvent>
     }
     std::ostringstream ss;
     ss << f.rdbuf();
-    return parseButtonScript(ss.str(), out, error);
+    text = ss.str();
+    return true;
+}
+} // namespace
+
+bool loadButtonScriptFile(const std::string& path, std::vector<TimedButtonEvent>& out, std::string& error)
+{
+    std::string text;
+    return readFile(path, text, error) && parseButtonScript(text, out, error);
+}
+
+bool loadButtonScriptFile(const std::string& path, std::vector<TimedButtonEvent>& out, CaptureScript& capture,
+                          std::string& error)
+{
+    std::string text;
+    return readFile(path, text, error) && parseButtonScript(text, out, capture, error);
 }
 
 } // namespace audreybrick

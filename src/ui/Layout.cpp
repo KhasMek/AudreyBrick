@@ -106,6 +106,27 @@ constexpr int kPopNameX  = 64;
 constexpr int kPopPlayX  = 632; // the PLAY mark
 constexpr int kPopStatusY = 566;
 constexpr int kPopHintsY  = 618;
+// M2b-B: the INPUT tab with the source LIVE: compact rows, the warning panel
+// under the rows and the (shortened) input meter.
+constexpr int kLiveSourceY  = 184;
+constexpr int kLiveSourceH  = 52;
+constexpr int kLiveGainY    = 242;
+constexpr int kLiveGainH    = 72;
+constexpr int kLiveDeviceY  = 320;
+constexpr int kLiveDeviceH  = 94;
+constexpr int kLiveMeterH   = 230; // the input meter, y 184..414
+constexpr int kLiveWarnX    = 8;
+constexpr int kLiveWarnY    = 420;
+constexpr int kLiveWarnW    = 864; // under the rows and the input meter (x 8..872)
+constexpr int kLiveWarnH    = 52;
+constexpr int kLivePopH       = 230; // the device pop-up, y 184..414 (the warning stays visible)
+constexpr int kLivePopRowY    = 228;
+constexpr int kLivePopStep    = 34;
+constexpr int kLivePopRows    = 4;
+constexpr int kLivePopStatusY = 368;
+constexpr int kLivePreX     = 580; // the PRE bar on the DEVICE row (its label 52 px to the left)
+constexpr int kLivePreW     = 120;
+constexpr int kLiveLineX    = 16;  // DEVICE row status lines use the row's whole width
 constexpr int kSmallArrowA = 84; // the compact rows' arrows (RowGeom kSmall)
 constexpr int kSmallArrowB = 122;
 
@@ -785,47 +806,51 @@ void inputRowStart(Builder& b, const UiSnapshot& s, int index, int y, int h, int
     b.text(kRowNameX, midY - 16, 4, fg, TextRole::InputName, name);
 }
 
-void inputSourceRow(Builder& b, const UiSnapshot& s) noexcept
+// The SOURCE row: OFF, FILE, LIVE as boxes at 24 px (M2b-B: three no longer fit
+// at 32 px beside the row name), right-aligned; the current one solid (inverse
+// video). `y`, `h`: the full row (M2b-A) or the compact one (LIVE).
+void inputSourceRow(Builder& b, const UiSnapshot& s, int y, int h) noexcept
 {
-    const int y    = kInSourceY;
-    const int h    = kInSourceH;
     const int midY = y + h / 2;
-    const int boxH = 48;
+    const int boxH = 40;
     inputRowStart(b, s, 0, y, h, midY, true, !s.xHeld, true, false, "SOURCE");
-    // The choices as boxes, right-aligned; the current one solid (inverse video).
     int right = kInRight;
     for(int i = kInputSourceCount - 1; i >= 0; --i)
     {
         const auto        src  = static_cast<InputSource>(i);
         const char*       name = inputSourceName(src);
         const bool        cur  = src == s.input.source;
-        const int         w    = textWidth(name, 4) + 32;
+        const int         w    = textWidth(name, 3) + 16;
         const int         x    = right - w;
         if(cur)
             b.fill(x, midY - boxH / 2, w, boxH, pal::accent);
         else
             b.frame(x, midY - boxH / 2, w, boxH, pal::faint, 2);
-        b.text(x + 16, midY - 16, 4, cur ? pal::bg : pal::dim, TextRole::InputValue, name);
-        right = x - 12;
+        b.text(x + 8, midY - 12, 3, cur ? pal::bg : pal::dim, TextRole::InputValue, name);
+        right = x - 8;
     }
 }
 
-void inputGainRow(Builder& b, const UiSnapshot& s) noexcept
+// The GAIN row: the value at 40 px and a bar with the 0 dB tick. `compact`
+// (LIVE): 72 px instead of 92, the same text sizes.
+void inputGainRow(Builder& b, const UiSnapshot& s, int y, bool compact) noexcept
 {
     char value[24];
     formatInputGain(value, sizeof value, s.input.gainNorm);
-    const int y    = kInGainY;
-    const int midY = y + 28;
-    inputRowStart(b, s, 1, y, kInGainH, midY, true, !s.xHeld, false, false, "GAIN");
+    const int h    = compact ? kLiveGainH : kInGainH;
+    const int midY = compact ? y + 24 : y + 28;
+    inputRowStart(b, s, 1, y, h, midY, true, !s.xHeld, false, false, "GAIN");
     b.textRight(kInRight, midY - 20, 5, pal::text, TextRole::InputValue, value);
     // The bar: the knob position, with a tick at unity (n = 0.5, 0 dB).
-    const int barY = y + 60;
+    const int barY = compact ? y + 50 : y + 60;
+    const int barH = compact ? 14 : 20;
+    const int tick = compact ? 4 : 5; // how far the tick reaches above and below the bar
     const int barW = kInRight - kRowNameX;
-    b.fill(kRowNameX, barY, barW, 20, pal::panelDark, RectTag::Bar);
-    b.fill(kRowNameX, barY, fraction(barW, s.input.gainNorm), 20, pal::accent, RectTag::Bar);
-    b.frame(kRowNameX, barY, barW, 20, pal::edge, 1);
+    b.fill(kRowNameX, barY, barW, barH, pal::panelDark, RectTag::Bar);
+    b.fill(kRowNameX, barY, fraction(barW, s.input.gainNorm), barH, pal::accent, RectTag::Bar);
+    b.frame(kRowNameX, barY, barW, barH, pal::edge, 1);
     const int tx = kRowNameX + fraction(barW, kInputGainUnityNorm);
-    b.fill(tx - 1, barY - 5, 3, 30, pal::text, RectTag::GainUnityMark);
+    b.fill(tx - 1, barY - tick, 3, barH + 2 * tick, pal::text, RectTag::GainUnityMark);
 }
 
 void inputFileRow(Builder& b, const UiSnapshot& s) noexcept
@@ -1151,15 +1176,148 @@ void inputFileRowChoose(Builder& b, const UiSnapshot& s) noexcept
 //          LOADING <name>, or PLAYING: <name> whenever a file is loaded (so the
 //          playing file is named even when it is outside the window);
 //   y 618  hints: X RELEASE: LOAD, Y MODE, SELECT PLAY AGAIN.
+// M2b-B: the device pop-up (source LIVE). Shorter than the file list, so the
+// howl warning under it stays fully visible (M2b-B review, M2): x 8..712,
+// y 184..414 (the DEVICE row's bottom):
+//   y 194  "DEVICES n OF m" (24 px) and, at the right, the one hint that applies:
+//          X RELEASE: OPEN (16 px; Y and SELECT do nothing with LIVE);
+//   y 228  kLivePopRows rows of 34 px with the names at 32 px: a window of the
+//          view's list around the cursor; the cursor row in inverse video with
+//          ">", OPEN on the open device;
+//   y 368  one or two status lines at 16 px: CANNOT OPEN <name> and the reason
+//          (inverse video), DEVICE LOST: <name> (inverse video), or OPEN: <name>.
+void inputPopupLive(Builder& b, const UiSnapshot& s) noexcept
+{
+    const UiInputView& in = s.input;
+    b.panel(PanelKind::InputPopup, kPopX, kPopY, kPopW, kLivePopH, kNoKnobIndex, 0, true, true, false, true);
+    b.fill(kPopX, kPopY, kPopW, kLivePopH, pal::bg);
+    b.frame(kPopX, kPopY, kPopW, kLivePopH, pal::accent, 4);
+    char head[48];
+    if(in.deviceCount > 0 && in.cursor >= 0)
+        std::snprintf(head, sizeof head, "DEVICES %d OF %d", in.cursor + 1, in.deviceCount);
+    else
+        std::snprintf(head, sizeof head, "DEVICES");
+    b.text(kPopX + 16, kPopY + 10, 3, pal::text, TextRole::PopupText, head);
+    {
+        const char* hint = "RELEASE: OPEN";
+        const int   hx   = kPopX + kPopW - 16 - textWidth(hint, 2);
+        const int   cw   = textWidth("X", 2) + 8;
+        b.keyCap(hx - 6 - cw, kPopY + 11, "X", 2, pal::text, pal::bg, false, 22);
+        b.text(hx, kPopY + 14, 2, pal::text, TextRole::PopupText, hint);
+    }
+    b.fill(kPopX + 8, kPopY + 40, kPopW - 16, 2, pal::edge);
+
+    // A window of kLivePopRows of the view's (up to kInputListRows) names,
+    // keeping the cursor in it.
+    const int rows  = in.listRows < kLivePopRows ? in.listRows : kLivePopRows;
+    int       first = in.cursor - in.listFirst - 1;
+    if(first > in.listRows - rows)
+        first = in.listRows - rows;
+    if(first < 0)
+        first = 0;
+    if(in.deviceCount <= 0 || rows <= 0)
+    {
+        b.text(kPopX + 16, kLivePopRowY + 4, 3, pal::dim, TextRole::PopupText, "NO DEVICES");
+    }
+    else
+    {
+        const std::size_t roomOpen = static_cast<std::size_t>((kPopPlayX - 8 - kPopNameX) / glyphPx(4));
+        const std::size_t roomFull = static_cast<std::size_t>((kPopX + kPopW - 16 - kPopNameX) / glyphPx(4));
+        for(int i = 0; i < rows; ++i)
+        {
+            const int   slot   = first + i;
+            const int   index  = in.listFirst + slot;
+            const int   ry     = kLivePopRowY + i * kLivePopStep;
+            const bool  cursor = index == in.cursor;
+            const bool  open   = index == in.loadedIndex;
+            const Color fg     = cursor ? pal::bg : pal::text;
+            if(cursor)
+            {
+                b.fill(kPopX + 8, ry, kPopW - 16, kLivePopStep, pal::accent);
+                b.text(kPopX + 16, ry + 1, 4, fg, TextRole::PopupText, ">");
+            }
+            char safe[sizeof in.listNames[0]];
+            char name[TextItem::kMaxChars + 1];
+            copyDisplayName(safe, sizeof safe, in.listNames[slot], sizeof in.listNames[slot]);
+            appendCut(name, sizeof name, 0, safe, open ? roomOpen : roomFull);
+            if(name[0] != '\0')
+                b.text(kPopNameX, ry + 1, 4, fg, TextRole::PopupText, name);
+            if(open)
+                b.text(kPopPlayX, ry + 9, 2, fg, TextRole::PopupText, "OPEN");
+        }
+    }
+
+    // The status.
+    char      status[TextItem::kMaxChars + 1];
+    bool      bad  = false;
+    bool      any  = false;
+    const int room = (kPopW - 32) / glyphPx(2);
+        {
+            char safe[96];
+            const std::size_t lim = static_cast<std::size_t>(room) - 1;
+            if(in.liveStatus == LiveStatus::Failed && !in.deviceOpen)
+            {
+                // Two lines: CANNOT OPEN <name>, and the reason under it.
+                bad = true;
+                copyDisplayName(safe, sizeof safe, in.liveFailName);
+                const std::size_t at = appendCut(status, sizeof status, 0, "CANNOT OPEN ", lim);
+                appendCut(status, sizeof status, at, safe, lim > at ? lim - at : 0);
+                char reason[TextItem::kMaxChars + 1];
+                copyDisplayName(safe, sizeof safe, in.liveReason);
+                appendCut(reason, sizeof reason, 0, safe, lim);
+                if(reason[0] != '\0')
+                {
+                    b.fill(kPopX + 12, kLivePopStatusY + 18, textWidth(reason, 2) + 8, 20, pal::clip);
+                    b.text(kPopX + 16, kLivePopStatusY + 20, 2, pal::bg, TextRole::PopupText, reason);
+                }
+                any = true;
+            }
+            else if(in.liveStatus == LiveStatus::Lost && !in.deviceOpen)
+            {
+                bad = true;
+                copyDisplayName(safe, sizeof safe, in.liveFailName);
+                const std::size_t at =
+                    appendCut(status, sizeof status, 0, safe[0] != '\0' ? "DEVICE LOST: " : "DEVICE LOST", lim);
+                appendCut(status, sizeof status, at, safe, lim > at ? lim - at : 0);
+                any = true;
+            }
+            else if(in.deviceOpen)
+            {
+                copyDisplayName(safe, sizeof safe, in.deviceName);
+                const std::size_t at = appendCut(status, sizeof status, 0, "OPEN: ", lim);
+                appendCut(status, sizeof status, at, safe, lim > at ? lim - at : 0);
+                any = true;
+            }
+        }
+    if(any)
+    {
+        if(bad)
+        {
+            b.fill(kPopX + 12, kLivePopStatusY - 2, textWidth(status, 2) + 8, 20, pal::clip);
+            b.text(kPopX + 16, kLivePopStatusY, 2, pal::bg, TextRole::PopupText, status);
+        }
+        else
+        {
+            b.text(kPopX + 16, kLivePopStatusY, 2, pal::text, TextRole::PopupText, status);
+        }
+    }
+}
+
 void inputPopup(Builder& b, const UiSnapshot& s) noexcept
 {
     const UiInputView& in = s.input;
+    if(in.source == InputSource::Live)
+    {
+        inputPopupLive(b, s); // M2b-B
+        return;
+    }
+    const int count = in.fileCount;
     b.panel(PanelKind::InputPopup, kPopX, kPopY, kPopW, kPopH, kNoKnobIndex, 0, true, true, false, true);
     b.fill(kPopX, kPopY, kPopW, kPopH, pal::bg);
     b.frame(kPopX, kPopY, kPopW, kPopH, pal::accent, 4);
     char head[48];
-    if(in.fileCount > 0 && in.cursor >= 0)
-        std::snprintf(head, sizeof head, "FILES %d OF %d", in.cursor + 1, in.fileCount);
+    if(count > 0 && in.cursor >= 0)
+        std::snprintf(head, sizeof head, "FILES %d OF %d", in.cursor + 1, count);
     else
         std::snprintf(head, sizeof head, "FILES");
     b.text(kPopX + 16, kPopY + 10, 3, pal::text, TextRole::PopupText, head);
@@ -1168,7 +1326,7 @@ void inputPopup(Builder& b, const UiSnapshot& s) noexcept
     b.textRight(kPopX + kPopW - 16, kPopY + 10, 3, pal::text, TextRole::PopupText, mode);
     b.fill(kPopX + 8, kPopY + 40, kPopW - 16, 2, pal::edge);
 
-    if(in.fileCount <= 0 || in.listRows <= 0)
+    if(count <= 0 || in.listRows <= 0)
     {
         b.text(kPopX + 16, kPopRowY + 4, 3, pal::dim, TextRole::PopupText, "NO FILES IN data/input");
     }
@@ -1206,7 +1364,9 @@ void inputPopup(Builder& b, const UiSnapshot& s) noexcept
         char       status[TextItem::kMaxChars + 1];
         bool       bad  = false;
         const int  room = (kPopW - 32) / glyphPx(2);
-        if(popupStatusText(status, sizeof status, in, room, false, bad, true))
+        bool       any  = false;
+        any = popupStatusText(status, sizeof status, in, room, false, bad, true);
+        if(any)
         {
             if(bad)
             {
@@ -1235,11 +1395,16 @@ void inputPopup(Builder& b, const UiSnapshot& s) noexcept
     }
 }
 
-void inputMeter(Builder& b, const MeterView& m) noexcept
+// The large input meter, x 720..872 from y 184, `h` tall (the whole area, or
+// M2b-B's shorter one with the source LIVE): the CLIP cap, a dB scale, the bar
+// (h - 88 px: 200 at full height), IN and the held peak under it.
+void inputMeter(Builder& b, const MeterView& m, int h) noexcept
 {
-    b.panel(PanelKind::InputMeter, kInMeterX, kAreaY, kInMeterW, kAreaH);
-    b.fill(kInMeterX, kAreaY, kInMeterW, kAreaH, pal::panel);
-    b.frame(kInMeterX, kAreaY, kInMeterW, kAreaH, pal::edge, 1);
+    const int barTop = kAreaY + 40;
+    const int barH   = h - 88;
+    b.panel(PanelKind::InputMeter, kInMeterX, kAreaY, kInMeterW, h);
+    b.fill(kInMeterX, kAreaY, kInMeterW, h, pal::panel);
+    b.frame(kInMeterX, kAreaY, kInMeterW, h, pal::edge, 1);
 
     // CLIP cap: solid while the clip latch is on.
     const int capX = kInMeterX + 8;
@@ -1258,48 +1423,179 @@ void inputMeter(Builder& b, const MeterView& m) noexcept
     const Tick ticks[] = {{0.0f, "0"}, {-6.0f, "-6"}, {-12.0f, "-12"}, {-24.0f, "-24"}, {-36.0f, "-36"}};
     for(const Tick& t : ticks)
     {
-        const int ty = kMeterTop + static_cast<int>(std::lround((1.0 - meterPositionDb(t.db)) * kMeterH));
+        const int ty = barTop + static_cast<int>(std::lround((1.0 - meterPositionDb(t.db)) * barH));
         b.fill(kInBigBarX - 16, ty - 1, 12, 2, pal::dim);
         b.textRight(kInBigBarX - 20, ty - 8, 2, pal::dim, TextRole::InputMeterText, t.label);
     }
 
-    const int hotY = kMeterTop + static_cast<int>(std::lround((1.0 - meterPositionDb(-6.0f)) * kMeterH));
-    b.fill(kInBigBarX, kMeterTop, kInBigBarW, kMeterH, pal::panelDark, RectTag::Bar);
-    const int top = kMeterTop + kMeterH - fraction(kMeterH, meterPosition(m.inLevel));
-    if(top < kMeterTop + kMeterH)
+    const int hotY = barTop + static_cast<int>(std::lround((1.0 - meterPositionDb(-6.0f)) * barH));
+    b.fill(kInBigBarX, barTop, kInBigBarW, barH, pal::panelDark, RectTag::Bar);
+    const int top = barTop + barH - fraction(barH, meterPosition(m.inLevel));
+    if(top < barTop + barH)
     {
         const int greenTop = top > hotY ? top : hotY;
-        b.fill(kInBigBarX, greenTop, kInBigBarW, kMeterTop + kMeterH - greenTop, pal::meter, RectTag::Bar);
+        b.fill(kInBigBarX, greenTop, kInBigBarW, barTop + barH - greenTop, pal::meter, RectTag::Bar);
         if(top < hotY)
             b.fill(kInBigBarX, top, kInBigBarW, hotY - top, pal::meterHot, RectTag::Bar);
     }
     if(m.inHold > 0.0f)
     {
-        int hy = kMeterTop + kMeterH - fraction(kMeterH, meterPosition(m.inHold)) - 1;
-        hy     = hy < kMeterTop ? kMeterTop : (hy > kMeterTop + kMeterH - 3 ? kMeterTop + kMeterH - 3 : hy);
+        int hy = barTop + barH - fraction(barH, meterPosition(m.inHold)) - 1;
+        hy     = hy < barTop ? barTop : (hy > barTop + barH - 3 ? barTop + barH - 3 : hy);
         b.fill(kInBigBarX, hy, kInBigBarW, 3, pal::text, RectTag::Bar);
     }
-    b.frame(kInBigBarX, kMeterTop, kInBigBarW, kMeterH, pal::edge, 1);
+    b.frame(kInBigBarX, barTop, kInBigBarW, barH, pal::edge, 1);
 
-    b.textCentered(kInBigBarX + kInBigBarW / 2, 432, 2, pal::dim, TextRole::InputMeterText, "IN");
+    b.textCentered(kInBigBarX + kInBigBarW / 2, barTop + barH + 8, 2, pal::dim, TextRole::InputMeterText, "IN");
     // The held peak in dB ("-inf dB" for silence).
     char peak[24];
     if(m.inHold > PeakMeter::kSilence)
         formatDb(peak, sizeof peak, 20.0f * std::log10(m.inHold));
     else
         std::snprintf(peak, sizeof peak, "-inf dB");
-    b.textCentered(kInMeterX + kInMeterW / 2, 452, 2, pal::text, TextRole::InputMeterText, peak);
+    b.textCentered(kInMeterX + kInMeterW / 2, barTop + barH + 28, 2, pal::text, TextRole::InputMeterText, peak);
+}
+
+// M2b-B: the DEVICE row (source LIVE), y 320..414:
+//   y + 6   "DEVICE" (32 px), the X cap, left/right arrows; "n OF m" (24 px) at
+//           the right: the position of the device named on the next line;
+//   y + 42  the device name at 24 px: the cursor's while X is held, else the
+//           open device, else NO DEVICE CHOSEN;
+//   y + 72  one line at 16 px (see liveLine below).
+void inputDeviceRow(Builder& b, const UiSnapshot& s, const MeterView& m) noexcept
+{
+    const UiInputView& in   = s.input;
+    const int          y    = kLiveDeviceY;
+    const int          midY = y + 22;
+    inputRowStart(b, s, 2, y, kLiveDeviceH, midY, true, s.xHeld, true, true, "DEVICE");
+    const int  room3      = (kInRight - kRowNameX) / glyphPx(3);
+    const int  room2      = (kInRight - kRowNameX) / glyphPx(2);
+    const bool showCursor = in.choosing && in.deviceCount > 0 && cursorNameOf(in)[0] != '\0';
+
+    // "n OF m": the device named below.
+    if(in.deviceCount > 0 && (showCursor || in.deviceOpen))
+    {
+        char pos[24];
+        const int at = showCursor ? in.cursor : in.loadedIndex;
+        if(at >= 0)
+            std::snprintf(pos, sizeof pos, "%d OF %d", at + 1, in.deviceCount);
+        else
+            std::snprintf(pos, sizeof pos, "- OF %d", in.deviceCount);
+        b.textRight(kInRight, y + 10, 3, pal::text, TextRole::InputValue, pos);
+    }
+
+    // The name line (after a failed open: the device that failed, dimmed).
+    const bool  failed = !showCursor && !in.deviceOpen && in.liveStatus == LiveStatus::Failed && in.liveFailName[0] != '\0';
+    const char* raw    = showCursor ? cursorNameOf(in) : (in.deviceOpen ? in.deviceName : (failed ? in.liveFailName : ""));
+    if(raw[0] != '\0')
+    {
+        char safe[96];
+        char name[TextItem::kMaxChars + 1];
+        copyDisplayName(safe, sizeof safe, raw);
+        appendCut(name, sizeof name, 0, safe, static_cast<std::size_t>(room3));
+        b.text(kRowNameX, y + 42, 3, failed ? pal::dim : pal::text, failed ? TextRole::InputPlaying : TextRole::InputValue,
+               name);
+    }
+    else
+    {
+        b.text(kRowNameX, y + 42, 3, pal::dim, TextRole::InputPlaying, "NO DEVICE CHOSEN");
+    }
+
+    // The 16 px line, by priority:
+    //   choosing another device while one is open: OPEN: <name>;
+    //   a device open: what it delivers ("48000 Hz 1 CH 256 FR") and the PRE bar;
+    //   CANNOT OPEN <name>: <reason> / DEVICE LOST (inverse video);
+    //   HOLD X: CHOOSE DEVICE.
+    const int ly = y + 72;
+    if(in.deviceOpen && showCursor && in.cursor != in.loadedIndex)
+    {
+        char safe[96];
+        char line[TextItem::kMaxChars + 1];
+        copyDisplayName(safe, sizeof safe, in.deviceName);
+        const std::size_t at = appendCut(line, sizeof line, 0, "OPEN: ", static_cast<std::size_t>(room2));
+        appendCut(line, sizeof line, at, safe, static_cast<std::size_t>(room2) > at ? static_cast<std::size_t>(room2) - at : 0);
+        b.text(kRowNameX, ly, 2, pal::dim, TextRole::InputStatus, line);
+    }
+    else if(in.deviceOpen)
+    {
+        char spec[48];
+        std::snprintf(spec, sizeof spec, "%d Hz %d CH %d FR", in.grantedRate, in.grantedChannels, in.grantedFrames);
+        char cut[TextItem::kMaxChars + 1];
+        appendCut(cut, sizeof cut, 0, spec, static_cast<std::size_t>((kLivePreX - 80 - kRowNameX) / glyphPx(2)));
+        b.text(kRowNameX, ly, 2, pal::text, TextRole::InputValue, cut);
+        // PRE: the level as captured, before the gain (so a working device shows
+        // even with the gain at zero).
+        b.text(kLivePreX - 52, ly, 2, pal::text, TextRole::InputMeterText, "PRE");
+        const int by = ly + 3;
+        b.fill(kLivePreX, by, kLivePreW, 10, pal::panelDark, RectTag::Bar);
+        const int w = fraction(kLivePreW, meterPosition(m.preLevel));
+        if(w > 0)
+            b.fill(kLivePreX, by, w, 10, m.preLevel >= 1.0f ? pal::clip : pal::meter, RectTag::Bar);
+        if(m.preHold > 0.0f)
+        {
+            int hx = kLivePreX + fraction(kLivePreW, meterPosition(m.preHold)) - 2;
+            hx     = hx < kLivePreX ? kLivePreX : (hx > kLivePreX + kLivePreW - 3 ? kLivePreX + kLivePreW - 3 : hx);
+            b.fill(hx, by, 3, 10, pal::text, RectTag::Bar);
+        }
+        b.frame(kLivePreX, by, kLivePreW, 10, pal::edge, 1);
+    }
+    else if(in.liveStatus == LiveStatus::Failed || in.liveStatus == LiveStatus::Lost)
+    {
+        // From the row's left edge (42 characters): CANNOT OPEN: <reason> (the
+        // device's name is on the name line above) or DEVICE LOST: <name>.
+        const std::size_t lim = static_cast<std::size_t>((kInRight - kLiveLineX) / glyphPx(2)) - 1; // 1: the box's margin
+        char              line[TextItem::kMaxChars + 1];
+        char              safe[96];
+        const bool        lost = in.liveStatus == LiveStatus::Lost;
+        if(lost)
+            copyDisplayName(safe, sizeof safe, in.liveFailName);
+        else
+            copyDisplayName(safe, sizeof safe, in.liveReason);
+        const std::size_t at = appendCut(line, sizeof line, 0, lost ? (safe[0] != '\0' ? "DEVICE LOST: " : "DEVICE LOST")
+                                                                   : "CANNOT OPEN: ",
+                                         lim);
+        appendCut(line, sizeof line, at, safe, lim > at ? lim - at : 0);
+        b.fill(kLiveLineX - 4, ly - 1, textWidth(line, 2) + 8, 18, pal::clip);
+        b.text(kLiveLineX, ly, 2, pal::bg, TextRole::InputStatus, line);
+    }
+    else
+    {
+        b.text(kRowNameX, ly, 2, pal::text, TextRole::InputValue, "HOLD");
+        const int x = kRowNameX + textWidth("HOLD", 2) + 8;
+        const int w = b.keyCap(x, ly - 2, "X", 2, pal::text, pal::panel, s.xHeld, 20);
+        b.text(x + w + 4, ly, 2, pal::text, TextRole::InputValue, in.deviceListFailed ? ": CHOOSE DEVICE (LIST FAILED)"
+                                                                                       : ": CHOOSE DEVICE");
+    }
+}
+
+// M2b-B: the warning while the source is LIVE (whether or not a device is open).
+void inputWarning(Builder& b) noexcept
+{
+    b.panel(PanelKind::InputWarning, kLiveWarnX, kLiveWarnY, kLiveWarnW, kLiveWarnH);
+    b.fill(kLiveWarnX, kLiveWarnY, kLiveWarnW, kLiveWarnH, pal::clip);
+    b.text(kLiveWarnX + 16, kLiveWarnY + 2, 3, pal::bg, TextRole::InputWarning, "SPEAKER + MIC CAN HOWL");
+    b.text(kLiveWarnX + 16, kLiveWarnY + 27, 3, pal::bg, TextRole::InputWarning, "USE HEADPHONES OR KEEP GAIN LOW");
 }
 
 void inputTab(Builder& b, const UiSnapshot& s, const MeterView& m) noexcept
 {
-    inputSourceRow(b, s);
-    inputGainRow(b, s);
+    if(s.input.source == InputSource::Live)
+    {
+        // M2b-B: compact rows, the DEVICE row, the warning, a shorter meter.
+        inputSourceRow(b, s, kLiveSourceY, kLiveSourceH);
+        inputGainRow(b, s, kLiveGainY, true);
+        inputDeviceRow(b, s, m);
+        inputMeter(b, m, kLiveMeterH);
+        inputWarning(b);
+        return;
+    }
+    inputSourceRow(b, s, kInSourceY, kInSourceH);
+    inputGainRow(b, s, kInGainY, false);
     if(s.input.source == InputSource::File)
         inputFileRowChoose(b, s); // M2b-A3
     else
         inputFileRow(b, s);
-    inputMeter(b, m);
+    inputMeter(b, m, kAreaH);
 }
 
 // --- Value strip ---------------------------------------------------------------------------
@@ -1588,7 +1884,8 @@ void buildLayout(const UiSnapshot& s, const MeterView& m, DrawList& out) noexcep
     statusLine(b, s);
     footer(b, s);
     // M2b-A3: the pop-up list last, over everything it covers.
-    if(s.tab == Tab::Input && s.input.source == InputSource::File && s.input.popup && s.input.choosing)
+    if(s.tab == Tab::Input && (s.input.source == InputSource::File || s.input.source == InputSource::Live) &&
+       s.input.popup && s.input.choosing)
         inputPopup(b, s);
 }
 

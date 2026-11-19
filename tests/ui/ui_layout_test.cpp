@@ -179,6 +179,7 @@ const char* kindName(PanelKind k)
         case PanelKind::InputRow: return "input row";
         case PanelKind::InputMeter: return "input meter";
         case PanelKind::InputPopup: return "input pop-up";
+        case PanelKind::InputWarning: return "input warning";
     }
     return "?";
 }
@@ -727,11 +728,103 @@ void checkInputFileChoose(const std::string& n, const UiSnapshot& s, const DrawL
     }
 }
 
+// M2b-B: the pop-up with the source LIVE: DEVICES n OF m (no mode), the device
+// names at 32 px, OPEN on the open device, one hint (X RELEASE: OPEN), and the
+// status CANNOT OPEN <name>: <reason> / DEVICE LOST (inverse video) / OPEN: <name>.
+void checkLivePopup(const std::string& n, const UiSnapshot& s, const DrawList& d, int pop)
+{
+    const UiInputView& in = s.input;
+    const std::string  head = "DEVICES " + std::to_string(in.cursor + 1) + " OF " + std::to_string(in.deviceCount);
+    bool               mode = false;
+    for(std::size_t k = 0; k < d.textCount; ++k)
+        mode = mode || (d.texts[k].panel == pop && (std::strcmp(d.texts[k].text, "LOOP") == 0 ||
+                                                    std::strcmp(d.texts[k].text, "ONCE") == 0));
+    check(textIn(d, pop, head.c_str(), TextRole::PopupText) != nullptr && !mode,
+          n + "device pop-up header \"" + head + "\", no play mode");
+    // M2b-B review (M2): shorter than the file list (y 184..414), so the warning
+    // below it stays visible; four rows of the view's list around the cursor.
+    const PanelItem& pp = d.panels[static_cast<std::size_t>(pop)];
+    check(pp.x == 8 && pp.w == 704 && pp.y == 184 && pp.y + pp.h == 414, n + "device pop-up: x 8..712, y 184..414");
+    const int rows  = std::min(in.listRows, 4);
+    int       first = std::min(std::max(in.cursor - in.listFirst - 1, 0), in.listRows - rows);
+    int bad = 0, names = 0, cursors = 0, opens = 0, plays = 0;
+    for(int r = 0; r < rows; ++r)
+    {
+        const int         i     = first + r;
+        const int         index = in.listFirst + i;
+        const bool        isOpen = index == in.loadedIndex;
+        const std::string want   = displayCut(in.listNames[i], isOpen ? (632 - 8 - 64) / 32 : (8 + 704 - 16 - 64) / 32);
+        const TextItem*   t      = textIn(d, pop, want.c_str(), TextRole::PopupText);
+        if(t == nullptr || t->scale < 4)
+        {
+            ++bad;
+            std::printf("  device pop-up row %d: \"%s\" not drawn at 32 px\n", i, want.c_str());
+            continue;
+        }
+        ++names;
+        bool mark = false, open = false;
+        for(std::size_t k = 0; k < d.textCount; ++k)
+        {
+            const TextItem& o = d.texts[k];
+            if(o.panel != pop || o.y + o.h <= t->y || o.y >= t->y + t->h || &o == t)
+                continue;
+            mark = mark || std::strcmp(o.text, ">") == 0;
+            open = open || std::strcmp(o.text, "OPEN") == 0;
+            plays += std::strcmp(o.text, "PLAY") == 0 ? 1 : 0;
+        }
+        if((index == in.cursor) != (mark && filledBehind(d, pop, box(*t), palette::accent) && sameColor(t->color, palette::bg)))
+            ++bad;
+        if(open != isOpen)
+            ++bad;
+        cursors += mark ? 1 : 0;
+        opens += open ? 1 : 0;
+    }
+    const bool openIn = in.loadedIndex >= in.listFirst && in.loadedIndex < in.listFirst + in.listRows;
+    const bool openShown = in.loadedIndex >= in.listFirst + first && in.loadedIndex < in.listFirst + first + rows;
+    (void)openIn;
+    check(bad == 0 && plays == 0 && names == rows && in.listRows == std::min(in.deviceCount, kInputListRows) &&
+              cursors == 1 && opens == (openShown ? 1 : 0),
+          n + "device pop-up: " + std::to_string(rows) + " names at 32 px around the cursor, the cursor row in inverse "
+              "video with \">\", OPEN on the open device only, never PLAY");
+    // One hint, in the header row: X RELEASE: OPEN (Y and SELECT do nothing with LIVE).
+    std::vector<std::string> caps = keysIn(d, pop);
+    check(caps == std::vector<std::string>{"X"} && textIn(d, pop, "RELEASE: OPEN", TextRole::PopupText) != nullptr &&
+              textIn(d, pop, "MODE", TextRole::PopupText) == nullptr &&
+              textIn(d, pop, "PLAY AGAIN", TextRole::PopupText) == nullptr,
+          n + "device pop-up hint: only X RELEASE: OPEN");
+    const TextItem* st = nullptr;
+    for(std::size_t k = 0; k < d.textCount; ++k)
+        if(d.texts[k].panel == pop && d.texts[k].y == 368)
+            st = &d.texts[k];
+    const std::string text = st != nullptr ? st->text : "";
+    bool              ok   = false;
+    if(!in.deviceOpen && in.liveStatus == LiveStatus::Failed)
+    {
+        // Two lines: CANNOT OPEN <name>, then the reason, both in inverse video.
+        const TextItem* r2 = nullptr;
+        for(std::size_t k = 0; k < d.textCount; ++k)
+            if(d.texts[k].panel == pop && d.texts[k].y == 388)
+                r2 = &d.texts[k];
+        ok = st != nullptr && startsWith(st->text, "CANNOT OPEN " + displayCut(in.liveFailName, 96).substr(0, 10)) &&
+             filledBehind(d, pop, box(*st), palette::clip) && sameColor(st->color, palette::bg) && r2 != nullptr &&
+             startsWith(r2->text, std::string(in.liveReason).substr(0, 20)) && filledBehind(d, pop, box(*r2), palette::clip);
+    }
+    else if(!in.deviceOpen && in.liveStatus == LiveStatus::Lost)
+        ok = st != nullptr && startsWith(st->text, "DEVICE LOST") && filledBehind(d, pop, box(*st), palette::clip) &&
+             (in.liveFailName[0] == '\0' || text == "DEVICE LOST: " + displayCut(in.liveFailName, 41 - 13));
+    else if(in.deviceOpen)
+        ok = startsWith(text.c_str(), "OPEN: " + displayCut(in.deviceName, 96).substr(0, 20));
+    else
+        ok = st == nullptr;
+    check(ok, n + "device pop-up status \"" + text + "\"");
+}
+
 void checkPopup(const std::string& n, const UiSnapshot& s, const DrawList& d)
 {
     const UiInputView& in    = s.input;
     const int          pop   = findPanel(d, PanelKind::InputPopup);
-    const bool         shown = s.tab == Tab::Input && in.source == InputSource::File && in.choosing && in.popup;
+    const bool         live  = in.source == InputSource::Live; // M2b-B: the device list
+    const bool         shown = s.tab == Tab::Input && (in.source == InputSource::File || live) && in.choosing && in.popup;
     if(!shown)
     {
         check(pop < 0, n + "no pop-up");
@@ -759,6 +852,11 @@ void checkPopup(const std::string& n, const UiSnapshot& s, const DrawList& d)
         cutCells += overlapsY && !insideY ? 1 : 0;
     }
     check(cutCells == 0, n + "pop-up: the value grid's rows it reaches are covered whole (no cell cut by its top or bottom)");
+    if(live)
+    {
+        checkLivePopup(n, s, d, pop);
+        return;
+    }
     // The status line: CANNOT LOAD <name>: <reason> / LOADING <name> / PLAYING: <name>.
     const TextItem* st = nullptr;
     for(std::size_t k = 0; k < d.textCount; ++k)
@@ -847,6 +945,119 @@ void checkPopup(const std::string& n, const UiSnapshot& s, const DrawList& d)
           n + "pop-up hints: X RELEASE: LOAD, Y MODE, SELECT PLAY AGAIN with key caps");
 }
 
+// M2b-B: the INPUT tab with the source LIVE.
+void checkInputLive(const std::string& n, const UiSnapshot& s, const MeterView& m, const DrawList& d, int src, int gain,
+                    int dev, int mtr, int warn)
+{
+    const UiInputView& in = s.input;
+    auto               at = [&](int p, int y, int h) {
+        const PanelItem& q = d.panels[static_cast<std::size_t>(p)];
+        return q.x == 8 && q.w == 704 && q.y == y && q.h == h;
+    };
+    const PanelItem& mp = d.panels[static_cast<std::size_t>(mtr)];
+    check(at(src, 184, 52) && at(gain, 242, 72) && at(dev, 320, 94) && mp.y == 184 && mp.h == 230,
+          n + "LIVE: compact SOURCE (y 184, 52 px), GAIN (y 242, 72 px), DEVICE (y 320, 94 px), input meter to y 414");
+    // The warning, whether or not a device is open: two lines at 24 px, bg on the
+    // clip colour (as errors), under the rows and the meter.
+    if(warn < 0)
+    {
+        check(false, n + "LIVE: the howl warning panel is drawn");
+        return;
+    }
+    const PanelItem& wp = d.panels[static_cast<std::size_t>(warn)];
+    const TextItem*  w1 = textIn(d, warn, "SPEAKER + MIC CAN HOWL", TextRole::InputWarning);
+    const TextItem*  w2 = textIn(d, warn, "USE HEADPHONES OR KEEP GAIN LOW", TextRole::InputWarning);
+    check(wp.x == 8 && wp.y == 420 && wp.w == 864 && wp.y + wp.h == 472 && w1 != nullptr && w2 != nullptr &&
+              w1->scale == 3 && w2->scale == 3 && sameColor(w1->color, palette::bg) && sameColor(w2->color, palette::bg) &&
+              filledBehind(d, warn, box(*w1), palette::clip) && filledBehind(d, warn, box(*w2), palette::clip),
+          n + "LIVE: SPEAKER + MIC CAN HOWL / USE HEADPHONES OR KEEP GAIN LOW at 24 px, inverse video on the clip colour");
+    // M2b-B review (M2): both lines fully visible in every LIVE state, the
+    // pop-up open or not: no overlay panel covers any part of the warning panel.
+    int covered = 0;
+    for(std::size_t i = 0; i < d.panelCount; ++i)
+        covered += d.panels[i].overlay && intersects(box(d.panels[i]), box(wp)) ? 1 : 0;
+    check(covered == 0 && static_cast<std::size_t>(warn) < d.panelCount,
+          n + "LIVE: the warning is fully visible (no overlay over any part of it)");
+    // The DEVICE row.
+    const TextItem* dn = textIn(d, dev, "DEVICE", TextRole::InputName);
+    check(dn != nullptr && dn->scale == 4, n + "DEVICE name at 32 px");
+    checkArrows(n, d, dev, true, s.xHeld, "DEVICE");
+    const std::vector<std::string> keys = keysIn(d, dev);
+    check(std::find(keys.begin(), keys.end(), "X") != keys.end(), n + "DEVICE row has the X cap");
+    const bool showCursor = in.choosing && in.deviceCount > 0 && cursorName(in)[0] != '\0';
+    if(showCursor || in.deviceOpen)
+    {
+        const int         idx = showCursor ? in.cursor : in.loadedIndex;
+        const std::string pos = (idx >= 0 ? std::to_string(idx + 1) : std::string("-")) + " OF " + std::to_string(in.deviceCount);
+        check(textIn(d, dev, pos.c_str(), TextRole::InputValue) != nullptr, n + "DEVICE row shows \"" + pos + "\"");
+    }
+    const bool  failed = !showCursor && !in.deviceOpen && in.liveStatus == LiveStatus::Failed && in.liveFailName[0] != '\0';
+    const char* raw    = showCursor ? cursorName(in) : (in.deviceOpen ? in.deviceName : (failed ? in.liveFailName : ""));
+    if(raw[0] != '\0')
+    {
+        const std::string want = displayCut(raw, (700 - 166) / 24);
+        const TextItem*   t    = textIn(d, dev, want.c_str(), failed ? TextRole::InputPlaying : TextRole::InputValue);
+        check(t != nullptr && t->scale == 3 && t->y == 320 + 42 && sameColor(t->color, failed ? palette::dim : palette::text),
+              n + "DEVICE row name \"" + want + "\" at 24 px (" +
+                  (showCursor ? "the cursor's device" : failed ? "the device that failed, dimmed" : "the open device") + ")");
+    }
+    else
+    {
+        const TextItem* t = textIn(d, dev, "NO DEVICE CHOSEN", TextRole::InputPlaying);
+        check(!failed, n + "DEVICE row: a failed open names its device");
+        check(t != nullptr && t->scale == 3, n + "DEVICE row: NO DEVICE CHOSEN at 24 px");
+    }
+    // The 16 px line.
+    const int ly = 320 + 72;
+    if(in.deviceOpen && showCursor && in.cursor != in.loadedIndex)
+    {
+        const std::string want = displayCut(("OPEN: " + std::string(in.deviceName)).c_str(), (700 - 166) / 16);
+        check(textIn(d, dev, want.c_str(), TextRole::InputStatus) != nullptr, n + "DEVICE row: \"" + want + "\" while choosing");
+    }
+    else if(in.deviceOpen)
+    {
+        const std::string spec = std::to_string(in.grantedRate) + " Hz " + std::to_string(in.grantedChannels) + " CH " +
+                                 std::to_string(in.grantedFrames) + " FR";
+        const TextItem*   st   = textIn(d, dev, spec.c_str(), TextRole::InputValue);
+        const TextItem*   pre  = textIn(d, dev, "PRE", TextRole::InputMeterText);
+        std::vector<const RectItem*> bars;
+        for(std::size_t r = 0; r < d.rectCount; ++r)
+            if(d.rects[r].panel == dev && d.rects[r].tag == RectTag::Bar && d.rects[r].y == ly + 3)
+                bars.push_back(&d.rects[r]);
+        const int wantFill = static_cast<int>(std::lround(std::min(1.0, std::max(0.0, static_cast<double>(meterPosition(m.preLevel)))) * 120));
+        const bool fillOk  = wantFill == 0 ? (bars.size() >= 1) : (bars.size() >= 2 && std::abs(bars[1]->w - wantFill) <= 1);
+        check(st != nullptr && st->y == ly && st->scale == 2 && pre != nullptr && pre->y == ly && !bars.empty() &&
+                  bars[0]->w == 120 && bars[0]->x == 580 && fillOk && pre->x >= st->x + st->w + 32,
+              n + "DEVICE row: \"" + spec + "\" and the PRE bar (pre-gain level " + std::to_string(m.preLevel) + ")");
+    }
+    else if(in.liveStatus == LiveStatus::Failed || in.liveStatus == LiveStatus::Lost)
+    {
+        const TextItem* st = nullptr;
+        for(std::size_t k = 0; k < d.textCount; ++k)
+            if(d.texts[k].panel == dev && d.texts[k].role == TextRole::InputStatus && d.texts[k].y == ly)
+                st = &d.texts[k];
+        const std::string text = st != nullptr ? st->text : "";
+        const bool lost = in.liveStatus == LiveStatus::Lost;
+        // From the row's left edge, 41 characters: DEVICE LOST: <name> / CANNOT
+        // OPEN: <reason> (the name is on the line above).
+        const std::string want = lost ? (in.liveFailName[0] != '\0' ? "DEVICE LOST: " + displayCut(in.liveFailName, 41 - 13)
+                                                                    : std::string("DEVICE LOST"))
+                                      : "CANNOT OPEN: " + displayCut(in.liveReason, 41 - 13);
+        const bool ok = st != nullptr && st->scale == 2 && st->x == 16 && filledBehind(d, dev, box(*st), palette::clip) &&
+                        sameColor(st->color, palette::bg) && text == want && st->x + st->w <= 700;
+        check(ok, n + "DEVICE row: \"" + text + "\" in inverse video (want \"" + want + "\")");
+    }
+    else
+    {
+        bool x = false;
+        for(std::size_t k = 0; k < d.keyCount; ++k)
+            x = x || (d.keys[k].panel == dev && std::strcmp(d.keys[k].label, "X") == 0 && d.keys[k].y > 320 + 60);
+        check(x && textIn(d, dev, "HOLD", TextRole::InputValue) != nullptr &&
+                  textIn(d, dev, ": CHOOSE DEVICE", TextRole::InputValue) != nullptr,
+              n + "DEVICE row: HOLD X: CHOOSE DEVICE");
+    }
+}
+
 void checkInputTab(const std::string& n, const UiSnapshot& s, const MeterView& m, const DrawList& d)
 {
     const UiInputView& in = s.input;
@@ -873,7 +1084,8 @@ void checkInputTab(const std::string& n, const UiSnapshot& s, const MeterView& m
         return;
     }
 
-    // SOURCE: the name, OFF and FILE at 32 px, the current one in inverse video.
+    // SOURCE: the name at 32 px; OFF, FILE and LIVE at 24 px (M2b-B: three no
+    // longer fit at 32 px), the current one in inverse video.
     const TextItem* srcName = textIn(d, src, "SOURCE", TextRole::InputName);
     check(srcName != nullptr && srcName->scale == 4, n + "SOURCE name at 32 px");
     checkArrows(n, d, src, true, !s.xHeld, "SOURCE");
@@ -882,7 +1094,7 @@ void checkInputTab(const std::string& n, const UiSnapshot& s, const MeterView& m
         const auto      sv  = static_cast<InputSource>(i);
         const TextItem* t   = textIn(d, src, inputSourceName(sv), TextRole::InputValue);
         const bool      cur = sv == in.source;
-        check(t != nullptr && t->scale >= 4 && filledBehind(d, src, box(*t), palette::accent) == cur &&
+        check(t != nullptr && t->scale >= 3 && filledBehind(d, src, box(*t), palette::accent) == cur &&
                   sameColor(t->color, cur ? palette::bg : palette::dim),
               n + "SOURCE " + inputSourceName(sv) + (cur ? ": the current choice, in inverse video" : ": shown, not inverse"));
     }
@@ -909,6 +1121,14 @@ void checkInputTab(const std::string& n, const UiSnapshot& s, const MeterView& m
               std::fabs(tick->x + tick->w / 2.0 - (bars[0]->x + bars[0]->w * 0.5)) <= 1.0,
           n + "GAIN bar at the knob position, the 0 dB tick at its middle");
 
+    const int warn = findPanel(d, PanelKind::InputWarning);
+    if(in.source == InputSource::Live)
+    {
+        checkInputLive(n, s, m, d, src, gain, file, mtr, warn);
+        checkInputMeter(n, m, d, mtr);
+        return;
+    }
+    check(warn < 0, n + "no howl warning unless the source is LIVE");
     if(in.source == InputSource::File)
     {
         checkInputFileChoose(n, s, d, file);

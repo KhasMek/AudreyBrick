@@ -10,6 +10,10 @@
 //   - while the gain ramps and jumps, and while the source is switched on and off;
 //   - M2b-A2: through crossfades between files, ONCE files ending, restart()s and
 //     LOOP/ONCE changes (each is seen to happen during the counted calls).
+//   - M2b-B: with the source LIVE: the capture callback's write
+//     (LiveInput::writeInterleaved, stereo and mono) and render() both counted,
+//     through start-up buffering, underruns (starvation), overfills (bursts),
+//     new sessions and FILE / LIVE / OFF switches (each seen to happen).
 // The buffers it is done with come back through reclaim() and are freed on this
 // (the "UI") side, outside the counted calls. Same technique as
 // tests/platform/platform_alloc_test.cpp, but the counter is thread-local, so only
@@ -32,6 +36,7 @@
 #include "core/AudreyVoice.h"
 #include "input/InputFiles.h"
 #include "input/InputStage.h"
+#include "input/LiveInput.h"
 #include "input_test_common.h"
 #include "platform/AudioRender.h"
 
@@ -178,6 +183,77 @@ int main()
         check(news == 0 && deletes == 0, "render with a file playing, hand-overs, gain ramps and source changes: no "
                                          "operator new or delete (" + std::to_string(frames) + "-frame calls)");
     }
+    // --- M2b-B: LIVE --------------------------------------------------------------------------------------
+    {
+        auto       voice = std::make_unique<AudreyVoice>();
+        voice->init();
+        auto        src = std::make_unique<ButtonControlSource>();
+        LiveInput   live;
+        InputStage  stage;
+        AudioRender render(*voice, *src, AudioRender::FlushToZero::LeaveAlone);
+        stage.attachLive(&live);
+        render.attachInput(&stage);
+        render.prepare(256);
+        stage.offer(makeBuffer(30000, 220));
+        stage.setSource(InputSource::Live);
+        std::vector<float> out(512);
+        std::vector<float> cap(2 * 4096);
+        double             phase = 0.0;
+        long               news = 0, deletes = 0, sessions = 0, switches = 0, sounding = 0;
+        float              peak = 0.0f;
+        for(int i = 0; i < 3000; ++i) // 16 s
+        {
+            // The UI side, not counted.
+            if(i % 400 == 100)
+            {
+                live.newSession();
+                ++sessions;
+            }
+            if(i % 250 == 200)
+            {
+                stage.setSource(i % 500 == 200 ? InputSource::File : InputSource::Off);
+                ++switches;
+            }
+            if(i % 250 == 230)
+                stage.setSource(InputSource::Live);
+            stage.setGainNorm(static_cast<float>(0.5 + 0.3 * std::sin(0.01 * i)));
+            while(auto b = stage.reclaim())
+            {
+            }
+            // The capture side (counted): usually one block, a burst now and then,
+            // nothing for a while (starvation), mono or stereo.
+            std::size_t n = 256;
+            if(i % 97 == 50)
+                n = 2400;
+            if(i % 300 > 280)
+                n = 0;
+            const int ch = (i / 200) % 2 == 0 ? 2 : 1;
+            for(std::size_t k = 0; k < n; ++k)
+            {
+                const auto v = static_cast<float>(0.3 * std::sin(phase));
+                phase += 0.05;
+                for(int c = 0; c < ch; ++c)
+                    cap[k * static_cast<std::size_t>(ch) + static_cast<std::size_t>(c)] = v;
+            }
+            t_counting = true;
+            live.writeInterleaved(cap.data(), n, ch);
+            render.render(out.data(), 256);
+            t_counting = false;
+            news += g_news.exchange(0);
+            deletes += g_deletes.exchange(0);
+            peak = std::max(peak, stage.peak().take());
+            sounding += live.running() ? 1 : 0;
+        }
+        std::printf("render(256) with the source LIVE: %ld sessions, %ld source switches, underruns %llu, overfills %llu, "
+                    "calls with the ring playing %ld; input peak %.3f; operator new %ld, operator delete %ld\n",
+                    sessions, switches, static_cast<unsigned long long>(live.underruns()),
+                    static_cast<unsigned long long>(live.overfills()), sounding, static_cast<double>(peak), news, deletes);
+        check(live.underruns() > 5 && live.overfills() > 5 && sounding > 1000 && peak > 0.1f,
+              "LIVE: underruns, overfills and live playback happened inside the counted calls");
+        check(news == 0 && deletes == 0, "LIVE: the capture write and render(), through buffering, underruns, overfills, "
+                                         "new sessions and source switches: no operator new or delete");
+    }
+
     // --- A float file of absurd values (3e38, -3e38): clamped at load, so the meter
     //     and the output stay finite even at +12 dB of gain -------------------------------------------
     {
