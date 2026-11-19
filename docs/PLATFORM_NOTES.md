@@ -210,3 +210,33 @@ Package built from the M2b-A3 tree (file input with the hold-X pop-up browser), 
 | Memory | `MemAvailable` 678 MB at start-up; 578 MB with the 100 MB file loaded. The 10-minute cap (115 MB per file, two at most) fits comfortably |
 | Callback load | Unchanged by a playing file: 33 to 36 % of a 256-frame buffer at the default governor; maxima up to 69 % while a file was loading. **0 overruns** in the run |
 
+### Live input run and capture diagnosis (2026-11-19)
+
+Package built from the M2b-B tree, then a diagnostic session over adb with the human's permission. **[confirmed, device log, `arecord` tests and kernel log]** unless marked.
+
+| Item | Finding |
+|---|---|
+| Capture devices SDL lists | `audiocodec, ` (built-in, ALSA card 0, `hw:0,0`) and, with the human's USB interface plugged in, `JIANT FM, USB Audio` (card 1). The list updates on plug and unplug |
+| **USB by name** | Works. Opened in 59 ms: 48000 Hz, 2 channels, 256 frames (float after SDL's conversion). About 17 minutes with no skips or repeats; 2 underruns at start; the capture buffer was raised from 512 to 1024 frames at start and to 2048 at 14 minutes. Capture arrives in bursts of 1024 frames. Unplugging is reported by SDL. The human reports it working perfectly |
+| **Built-in mic by name (SDL, `sysdefault:CARD=audiocodec`)** | Fails: `Couldn't set hardware audio parameters`, kernel `can't set sun50iw10codec hw params: -22`. ALSA's plug layer picks a hardware format the codec rejects (`arecord -D plughw:0,0 -f FLOAT_LE` and `-D sysdefault:CARD=audiocodec` fail the same way) |
+| **Built-in mic, direct** | `arecord -D hw:0,0 -f S16_LE -r 48000` with 1 or 2 channels works (also 44100 Hz, also a 256-frame period), **only with the mixer set**. The hardware advertises S16_LE and S24_LE, 1 to 2 channels |
+| **Mixer** | Defaults after boot: `ADCL Input MIC1 Boost` off, `MIC1 gain volume` 31, `ADC volume` 0,0 (-119 dB). With these, direct capture delivers no frames and blocks. With boost on and `ADC volume` 160,160, capture delivers real audio. (GrainBrick sets the same three controls before recording from `hw:0,0`.) |
+| **Capture through PipeWire (ALSA `default`, SDL's default device)** | **Broken, and harmful.** With the built-in mic as the default source nothing is delivered (also with plain `arecord -D default`), the kernel logs `invalid rate setting` / `machine hw_params failed: -22`, and PipeWire then keeps `/dev/snd/pcmC0D0c` open in a failed state, so every direct open is `Device or resource busy` until reboot. PipeWire lists the source as `s24-32le`, `audio.channels = 64`; the firmware's WirePlumber rule forces sane values for the output node only. With the USB interface as the default source it delivered silence at about a third of real time, then stalled. **Never open the default capture device on this firmware** |
+| PipeWire and the capture PCM | On a fresh boot PipeWire holds only the playback PCM; the capture PCM is closed. Direct capture and PipeWire playback coexist |
+| Output load with USB capture | Default governor (408 MHz almost throughout): 28 late output callbacks in 18 minutes, maxima 102 to 141 % of the buffer; average load 33 to 36 % as before |
+| SDL and `AUDIODEV` | SDL 2.32.8's ALSA driver opens the ALSA name in the `AUDIODEV` environment variable when asked for the default device, and falls back from float to 16-bit on raw hardware. [confirmed, SDL source, and on the device: see the next table] |
+
+### Built-in mic run (2026-11-19)
+
+Package `8b45e8c-dirty` (the M2b-B2 tree), default governor, about 12 minutes. **[confirmed, device log and the human's report]** The human reports everything working as expected.
+
+| Item | Finding |
+|---|---|
+| **Built-in mic, direct route** | Works. SDL opens `hw:0,0` through `AUDIODEV` with a NULL device name: asked 48000 Hz float 1 channel 256 frames, obtained the same (SDL converts from the codec's 16-bit). Open takes 82 to 85 ms, 188 to 194 ms including the mixer calls. Opened twice in the run |
+| Mixer | `amixer -c 0 cget/cset name=...` works as called: 16 to 24 ms per call. Boost off -> on, gain 31 -> 31, ADC volume 0,0 -> 160,160 on open; all three restored on both closes (device change and quit) |
+| Mic capture quality of service | 7 minutes continuous: 0 underruns, 0 skips, 0 repeats, capture clock 1.0000x the output clock, fill 512 to 768 frames at the 512-frame target (no raise needed). Capture arrives in 256-frame callbacks, unlike the USB interface's 1024-frame bursts |
+| Mic level | The pre-gain peak reached 1.000 (full scale) with these mixer values, so the mic can clip before the app's gain. The human did not report a problem; lowering `ADC volume` is the remedy if it matters |
+| Device list | `audiocodec, ` only at start; the USB interface appears on plug-in; no SYSTEM DEFAULT |
+| USB after the change | Still opens by name (105 ms, 2 channels); the target was raised to 2048 frames within 0.2 s as before. Unplugging is reported as DEVICE LOST within 50 ms, and the mic reopens afterwards |
+| Close time | 46 to 77 ms for either device |
+| Output load | 31 to 37 % average as before; 1 late callback (115 %) in the run, at the moment the USB device was unplugged |

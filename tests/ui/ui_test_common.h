@@ -589,6 +589,45 @@ inline UiSnapshot inputLiveGainZeroSnapshot()
     return s;
 }
 
+// M2b-B2: the Brick with SDL's alsa driver: no SYSTEM DEFAULT; the built-in mic
+// opened on the direct route (DIRECT), the gain still at zero, the mic alive.
+inline std::vector<std::string> brickDevices()
+{
+    return {"audiocodec, ", "JIANT FM, USB Audio"};
+}
+
+inline UiSnapshot inputLiveDirectSnapshot()
+{
+    UiSnapshot s = inputLiveGainZeroSnapshot();
+    setLiveList(s, brickDevices(), 0, 0);
+    s.input.grantedChannels = 1;
+    s.input.deviceDirect    = true;
+    return s;
+}
+
+// ... with 32 devices listed (the widest "n OF m" beside DIRECT).
+inline UiSnapshot inputLiveDirectManySnapshot()
+{
+    UiSnapshot               s = inputLiveDirectSnapshot();
+    std::vector<std::string> names;
+    for(int i = 0; i < 32; ++i)
+        names.push_back(i == 31 ? "audiocodec, " : "Device " + std::to_string(i));
+    setLiveList(s, names, 31, 31);
+    return s;
+}
+
+// ... while X is held on another device: the spec line (and DIRECT) give way.
+inline UiSnapshot inputLiveDirectChoosingSnapshot()
+{
+    UiSnapshot s = inputLiveDirectSnapshot();
+    s.xHeld      = true;
+    setButton(s, Button::X, true);
+    setButton(s, Button::DpadRight, true);
+    setLiveList(s, brickDevices(), 1, 0);
+    s.input.choosing = true;
+    return s;
+}
+
 // LIVE, X held with left/right: the cursor on another device than the open one.
 inline UiSnapshot inputLiveChoosingSnapshot()
 {
@@ -740,6 +779,9 @@ inline std::vector<NamedSnapshot> allSnapshots()
         {"input_live_no_device", inputLiveNoDeviceSnapshot()},
         {"input_live_open", inputLiveOpenSnapshot()},
         {"input_live_gain_zero", inputLiveGainZeroSnapshot()},
+        {"input_live_direct", inputLiveDirectSnapshot()},
+        {"input_live_direct_32_devices", inputLiveDirectManySnapshot()},
+        {"input_live_direct_choosing", inputLiveDirectChoosingSnapshot()},
         {"input_live_choosing", inputLiveChoosingSnapshot()},
         {"input_live_popup_3_devices", inputLivePopupSnapshot()},
         {"input_live_popup_nothing_open", inputLivePopupNothingSnapshot()},

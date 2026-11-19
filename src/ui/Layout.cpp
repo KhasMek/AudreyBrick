@@ -1459,6 +1459,8 @@ void inputMeter(Builder& b, const MeterView& m, int h) noexcept
 // M2b-B: the DEVICE row (source LIVE), y 320..414:
 //   y + 6   "DEVICE" (32 px), the X cap, left/right arrows; "n OF m" (24 px) at
 //           the right: the position of the device named on the next line;
+//           between them "DIRECT" (16 px) while the open device's spec line
+//           shows and it was opened on the direct route (M2b-B2);
 //   y + 42  the device name at 24 px: the cursor's while X is held, else the
 //           open device, else NO DEVICE CHOSEN;
 //   y + 72  one line at 16 px (see liveLine below).
@@ -1518,6 +1520,11 @@ void inputDeviceRow(Builder& b, const UiSnapshot& s, const MeterView& m) noexcep
     }
     else if(in.deviceOpen)
     {
+        // M2b-B2: the direct route (hw:<card>,0) is marked on the top line,
+        // between the row's name and "n OF m" (the 16 px line below is full:
+        // "48000 Hz 1 CH 256 FR" is the 20 characters it has room for).
+        if(in.deviceDirect)
+            b.text(kRowNameX + textWidth("DEVICE", 4) + 16, y + 14, 2, pal::text, TextRole::InputValue, "DIRECT");
         char spec[48];
         std::snprintf(spec, sizeof spec, "%d Hz %d CH %d FR", in.grantedRate, in.grantedChannels, in.grantedFrames);
         char cut[TextItem::kMaxChars + 1];

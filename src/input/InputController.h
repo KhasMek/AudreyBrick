@@ -117,7 +117,10 @@
 //     open fails with NO CAPTURE SUPPORT.
 //   - The device list is SYSTEM DEFAULT (the backend's default device, SDL's
 //     NULL) followed by every name the backend lists (at most kLiveMaxDevices
-//     entries in all). It is listed again when LIVE is selected, when the INPUT
+//     entries in all). M2b-B2: SYSTEM DEFAULT only if the backend offers it
+//     (LiveBackend::offersDefaultDevice(); not with SDL's alsa driver, see
+//     input/CaptureRoute.h); then the list is the listed names only, possibly
+//     empty (X then chooses nothing). setLive() logs which rule applies. It is listed again when LIVE is selected, when the INPUT
 //     tab is entered, when X is pressed with the source LIVE, and in tick()
 //     whenever the backend's listChanges() has grown (SDL_AUDIODEVICEADDED /
 //     REMOVED for capture devices). A list that changed is logged in full. After
@@ -145,12 +148,16 @@
 //     runs dry and the stage fades out over 10 ms from the last sample; if the
 //     system delivers silence before SDL notices, that silence plays (the sound
 //     can cut at the moment of unplugging); the close then fades out what is left.
-//   - The stage doubles its live target after two underruns within a second
+//   - The stage doubles its live target after two underruns within a second,
+//     or after one underrun when the settled fill had left no room for a repeat
 //     (InputStage, "Live"); tick() logs each raise with the new target.
 //   - Log lines: every listing that changed (all names), every open (the name
-//     asked for, the spec asked for and obtained, the time taken, or the
-//     backend's error), every close with its reason, every gain reset to zero,
-//     and every loss.
+//     asked for, the spec asked for and obtained, the route, the time taken, or
+//     the backend's error), every close with its reason, every gain reset to
+//     zero, and every loss; and (M2b-B2) the backend's own lines after each open
+//     and close (LiveBackend::takeLog(): the route chosen, the mixer set and
+//     restored). The open device's route shows on the screen as DIRECT when it
+//     is the direct one (UiInputView::deviceDirect).
 //
 // Exceptions (M2b-A review): no public function throws. Each catches everything
 // at its boundary: a failed folder scan (for example out of memory) leaves the
@@ -246,7 +253,8 @@ class InputController
     std::uint64_t buffersFreed() const noexcept { return freed_; }
     const InputLoader& loader() const noexcept { return loader_; }
     // M2b-B, the live input.
-    const std::vector<std::string>& devices() const noexcept { return devices_; } // [0] SYSTEM DEFAULT
+    const std::vector<std::string>& devices() const noexcept { return devices_; } // [0] SYSTEM DEFAULT (if offered)
+    bool               offersDefault() const noexcept { return hasDefault_; }     // M2b-B2
     int                deviceCursor() const noexcept { return devCursor_; }
     bool               deviceOpen() const noexcept { return devOpen_; }
     const std::string& deviceOpenName() const noexcept { return devOpenName_; } // as listed
@@ -361,13 +369,14 @@ class InputController
     // M2b-B, the live input.
     LiveInput*               live_    = nullptr;
     LiveBackend*             backend_ = nullptr;
-    std::vector<std::string> devices_;               // [0] SYSTEM DEFAULT, then the system's names
+    std::vector<std::string> devices_;               // [0] SYSTEM DEFAULT (if offered), then the system's names
     bool                     devicesListed_  = false;
     bool                     devicesOk_      = true; // the last listing worked
     std::uint64_t            listSeen_       = 0;    // backend listChanges() at the last listing
     int                      devCursor_      = -1;
     std::string              devCursorName_;
     bool                     devOpen_        = false;
+    bool                     hasDefault_     = true;  // M2b-B2: the list starts with SYSTEM DEFAULT
     bool                     devOpenDefault_ = false; // the open (or chosen) device is SYSTEM DEFAULT
     std::string              devOpenName_;            // as listed ("SYSTEM DEFAULT" for the default)
     int                      devOpenIndex_   = -1;

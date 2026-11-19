@@ -499,6 +499,47 @@ int main()
               "LIVE -> OFF -> LIVE: the return waits for the target of new samples (2 silent calls), none of the "
               "stale ring audio is played (max " + std::to_string(m) + ")");
     }
+    for(const InputSource away : {InputSource::Off, InputSource::File})
+    {
+        // M2b-B2 (deferred review minor): the fade-out of LIVE ends inside a
+        // chunk and LIVE is chosen again in the very next pull(), with no new
+        // session. The stage must buffer afresh (not read on from where it
+        // stopped): nothing written before the return is heard.
+        Rig r;
+        r.stage.setSource(InputSource::Live);
+        std::vector<float> stale(4096, 2.0f), zero(4096, 0.0f);
+        r.live.write(stale.data(), 512);
+        for(int i = 0; i < 10; ++i)
+        {
+            r.live.write(stale.data(), kBlock);
+            r.stage.pull(kBlock);
+        }
+        r.stage.setSource(away);
+        // The fade-out: 480 samples, so it ends at sample 224 of the second
+        // chunk. The device stays open and keeps delivering meanwhile, so the
+        // ring holds stale samples at the return (without the fix they played:
+        // up to 2.0, no silent call).
+        for(int i = 0; i < 2; ++i)
+        {
+            r.live.write(stale.data(), kBlock);
+            r.stage.pull(kBlock);
+        }
+        r.stage.setSource(InputSource::Live); // the very next pull()
+        int   nulls = 0;
+        float m     = 0.0f;
+        for(int i = 0; i < 20; ++i)
+        {
+            const float* p = r.stage.pull(kBlock);
+            nulls += p == nullptr ? 1 : 0;
+            r.live.write(zero.data(), kBlock); // what arrives after the return: zeros
+            for(std::size_t k = 0; p != nullptr && k < kBlock; ++k)
+                m = std::max(m, std::fabs(p[k]));
+        }
+        check(m == 0.0f && nulls == 2 && r.live.running(),
+              std::string("LIVE -> ") + inputSourceName(away) + " (fade ends inside a chunk) -> LIVE in the next pull: "
+                  "buffered afresh, none of the stale ring audio is played (max " + std::to_string(m) + ", " +
+                  std::to_string(nulls) + " silent calls)");
+    }
 
     // --- Bursty capture (S1): 1024-frame bursts, as one PipeWire quantum of 1024 ---------------------------
     {

@@ -1,6 +1,26 @@
 # Device run: live input (microphone, USB audio)
 
-For the human. Written 2026-11-19 for the package built after M2b-B. **Not yet run.**
+For the human. Written 2026-11-19 for the package built after M2b-B; the section "Built-in mic run" was added for the package built after M2b-B2 (the built-in microphone). **The built-in mic run has not been run yet.**
+
+## Built-in mic run (package after M2b-B2)
+
+What changed: on the Brick the device list no longer has SYSTEM DEFAULT (it broke the mic until reboot). The built-in mic, `audiocodec, `, now opens directly on its sound card (the DEVICE row shows DIRECT), and AudreyBrick switches the mic's input mixer on before opening it and back to how it was after closing it. Headphones in, volume low, for every step except 6.
+
+1. **Reboot the Brick first** if SYSTEM DEFAULT was chosen in AudreyBrick (or anything recorded through the audio server) since it last started. Otherwise the mic can stay blocked ("Device or resource busy").
+2. **Save your logs,** then copy the new `AudreyBrick.sh` and `audreybrick` folder into `roms/ports`, replacing the old ones. Plug in the USB interface before starting.
+3. **Start AudreyBrick.** L1 to INPUT, d-pad right twice (LIVE). Hold X and press down: the list should show `audiocodec, ` and the USB interface, and **no SYSTEM DEFAULT**. Photo of the list.
+4. **Choose `audiocodec, `** (cursor on it, release X). The built-in mic is opened as mono, so expect `48000 Hz 1 CH 256 FR` with `DIRECT` (DIRECT sits on the DEVICE row's top line, next to the word DEVICE; the format line is below the name). GAIN shows -inf dB. If it shows `2 CH`, note it (the device gave two channels; it still works, mixed to one). If it says CANNOT OPEN, photograph the reason and skip to step 7.
+5. **PRE bar, gain, clap.** Tap the Brick or speak near it: does the PRE bar move while the gain is still -inf? Raise the gain with d-pad up (or Y + up for 0 dB) at minimum feedback: do you hear the mic through the instrument? Note the gain you need for speech at arm's length. Clap once or twice sharply: none, slight or clearly late delay?
+6. **Speaker howl test.** Feedback at its minimum (hold L2 until FEEDBACK stops falling), system volume low, input gain at -inf. Unplug the headphones and raise the input gain slowly. Note the gain at which it starts to ring or howl, then bring it down at once (or press d-pad left: LIVE closes). Headphones back in.
+7. **USB still works.** Hold X, step to the USB interface, release. It should open by its name (no DIRECT) and sound as in the first run. Then choose `audiocodec, ` again: it should reopen (DIRECT) with the gain back at -inf.
+8. **Leave and return.** D-pad left (FILE), then right (LIVE): the mic reopens with the gain at -inf, no clicks.
+9. **Quit** with Menu + Start. **Send back** the `roms/ports/audreybrick/data/` folder and your notes (the list photo, what step 4 showed, the gain for speech, the delay impression, the howl point, whether USB still worked).
+
+The log shows `input: capture route: ...` lines (which route opened the device) and `input: mixer: ...` lines (the three mixer values read, set, and restored at each close).
+
+## First run (M2b-B, done 2026-11-19)
+
+The steps below were the first live-input run. They mention SYSTEM DEFAULT, which the Brick's list no longer offers.
 
 ## What is new
 
@@ -29,8 +49,9 @@ The INPUT tab has a third source, LIVE: a capture device (the Brick's built-in m
 ## If something goes wrong
 
 - **Howl:** press d-pad left at once (LIVE closes the device), or hold d-pad down to lower the gain.
-- **Regular dropouts or a choppy sound with a device** (the `live:` part of the log shows underruns): AudreyBrick doubles its live buffer by itself after two dropouts within a second (the log says `live target raised`). If dropouts still happen, or to start with a larger buffer, edit `AUDREY_LIVE_TARGET="${AUDREY_LIVE_TARGET:-2}"` near the top of `AudreyBrick.sh` to 4 or 8 (1 to 32; more adds delay), run again and note the setting.
-- **CANNOT OPEN:** photograph the reason, try SYSTEM DEFAULT and the device's own name, and note which works.
+- **Regular dropouts or a choppy sound with a device** (the `live:` part of the log shows underruns): AudreyBrick doubles its live buffer by itself after two dropouts within a second, or after one when the buffer had no room left for its corrections (the log says `live target raised`). If dropouts still happen, or to start with a larger buffer, edit `AUDREY_LIVE_TARGET="${AUDREY_LIVE_TARGET:-2}"` near the top of `AudreyBrick.sh` to 4 or 8 (1 to 32; more adds delay), run again and note the setting.
+- **CANNOT OPEN:** photograph the reason and note the device. (The first run's advice to try SYSTEM DEFAULT no longer applies on the Brick: it is not offered any more.)
+- **The mic is silent or says Device or resource busy:** reboot the Brick and try again before anything else.
 
 ## What the log will tell us
 

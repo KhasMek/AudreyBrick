@@ -167,10 +167,17 @@ grep -E "input: (capture|gain|DEVICE|live)|stats:.*live:" "$DATA/audreybrick.log
     || fail "LIVE self-test through the launcher (rc $rc)"
 grep -q "input: capture device 'busy' could not be opened (asked for 'busy'): SIMULATED: DEVICE BUSY" "$DATA/audreybrick.log" \
     && grep -q "input: gain 0.500 -> 0 (-inf dB) before opening a capture device" "$DATA/audreybrick.log" \
-    && grep -q "input: capture device opened: 'usb' (asked for 'usb'; asked 48000 Hz f32 2 ch 256 frames; obtained 48000 Hz f32 2 ch 256 frames)" "$DATA/audreybrick.log" \
+    && grep -q "input: capture device opened: 'usb' (asked for 'usb'; asked 48000 Hz f32 2 ch 256 frames; obtained 48000 Hz f32 2 ch 256 frames; route by name (simulated))" "$DATA/audreybrick.log" \
     && grep -q "input: DEVICE LOST: 'usb'" "$DATA/audreybrick.log" \
     && pass "the log has the failed open, the gain reset, the open (asked and obtained) and the loss" \
     || fail "LIVE log lines"
+# M2b-B2: the capture rule is logged at start. The self-test uses the simulated
+# capture system, which offers SYSTEM DEFAULT; the ALSA rule (no SYSTEM DEFAULT,
+# the direct route, the mic's mixer) needs a sound card and amixer, which this
+# container has neither of: it is tested with fakes in input_capture_route_test.
+grep -q "input: capture rule: SYSTEM DEFAULT is offered first in the device list" "$DATA/audreybrick.log" \
+    && pass "the capture rule is logged at start (simulated capture: SYSTEM DEFAULT offered)" \
+    || fail "capture rule line"
 grep -qE '^launcher: settings: .* AUDREY_LIVE_TARGET=4 ' "$DATA/stdout.log" \
     && grep -q "input: live target 1024 frames (4 output buffers, --live-target-buffers)" "$DATA/audreybrick.log" \
     && pass "AUDREY_LIVE_TARGET=4 reaches the app as --live-target-buffers 4 (a 1024-frame target)" \

@@ -139,6 +139,8 @@
 //     discard every chunk, and once more in the chunk where LIVE is chosen
 //     again), so a return to LIVE always buffers afresh from the writer's
 //     position at that moment and snaps the gain; nothing written before is read.
+//     The live input stops running at the sample where its fade-out ends, so
+//     this holds also when LIVE is chosen again in the very next pull() (M2b-B2).
 //   - A new session (the UI opened or closed a device): reading stops at once,
 //     everything written so far is skipped, and the level fades out on the
 //     held last output value; nothing of the new device is read before the
@@ -259,7 +261,8 @@ class InputStage
     void        setLiveTargetBuffers(std::size_t n) noexcept;
     std::size_t liveTargetBuffersConfigured() const noexcept { return liveConfBuffers_; }
     // The live target and overfill margin now (frames; any thread), and how often
-    // two underruns within a second have doubled the target since start.
+    // underruns have doubled the target since start (two within a second, or a
+    // single one when the settled minimum left no room for a repeat).
     std::size_t   liveTargetFrames() const noexcept { return liveTargetPub_.load(std::memory_order_relaxed); }
     std::size_t   liveMarginFrames() const noexcept { return liveMarginPub_.load(std::memory_order_relaxed); }
     std::uint64_t liveTargetRaises() const noexcept { return liveRaises_.load(std::memory_order_acquire); }

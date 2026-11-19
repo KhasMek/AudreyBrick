@@ -140,6 +140,9 @@
 //     against the output, pre- and post-gain peaks) while the source is LIVE.
 //   - Shutdown: the capture device is closed first, then the output, then the
 //     controller, the capture system, the render, the stage and the ring.
+//     M2b-B2: closing the capture device also restores the built-in mic's mixer
+//     values (CaptureHost / input/CaptureRoute.h); this is the path a normal
+//     quit and a SIGTERM / SIGINT / SIGHUP (the launcher's signal handling) take.
 //   - The self-test report adds the live state; --expect-live-underruns-max <n>
 //     --expect-live-underruns-min <n>, --expect-live-repeats-min <n> and
 //     --expect-live-overfills-min <n> check

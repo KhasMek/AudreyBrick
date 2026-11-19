@@ -10,7 +10,11 @@
 #     the offline tools keep their own in audrey_tools, and no binary links both).
 #   audrey_input (static): the loader thread and the INPUT tab's model
 #     (InputController), and M2b-B's simulated capture system (LiveSim, for the
-#     self-test and the tests). Linked into the app.
+#     self-test and the tests). Linked into the app. M2b-B2: the capture route
+#     (CaptureRoute: no SYSTEM DEFAULT on ALSA, the direct-hardware fallback, the
+#     built-in mic's mixer set-up) and its POSIX system parts (SystemProcess:
+#     child processes, the environment, text files); platform/CaptureHost uses
+#     them.
 #
 # None of them includes upstream DSP headers; they apply AB_DSP_OPT_OPTIONS anyway
 # (fixed -O2, no fast-math, no FMA contraction) so the resampler computes the
@@ -40,6 +44,8 @@ add_library(audrey_input STATIC
     InputLoader.cpp
     InputController.cpp
     LiveSim.cpp
+    CaptureRoute.cpp
+    SystemProcess.cpp
 )
 target_include_directories(audrey_input PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(audrey_input PUBLIC audrey_input_files Threads::Threads)

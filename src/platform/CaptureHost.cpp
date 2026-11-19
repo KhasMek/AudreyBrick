@@ -75,19 +75,36 @@ bool CaptureHost::listDevices(std::vector<std::string>& names)
     return true;
 }
 
+const char* CaptureHost::driverName() const noexcept
+{
+    return SDL_GetCurrentAudioDriver();
+}
+
 bool CaptureHost::open(const char* name, LiveOpenResult& r)
 {
-    close();
+    removed_ = false;
+    return router_.open(name, r); // closes first (and restores the mixer)
+}
+
+void CaptureHost::close() noexcept
+{
+    router_.close(); // closeDevice() if open, then the mixer restored
+    removed_ = false;
+}
+
+bool CaptureHost::openDevice(const char* name, int channels, LiveOpenResult& r)
+{
+    closeDevice();
     removed_ = false;
     SDL_AudioSpec want;
     SDL_zero(want);
     want.freq     = 48000;
     want.format   = AUDIO_F32SYS;
-    want.channels = 2;
+    want.channels = static_cast<Uint8>(channels >= 1 && channels <= 8 ? channels : 2); // M2b-B2: 1 for the built-in mic
     want.samples  = static_cast<Uint16>(frames_ > 0 && frames_ <= 32768 ? frames_ : 256);
     want.callback = &CaptureHost::callback;
     target_.live     = &live_;
-    target_.channels = 2;
+    target_.channels = want.channels;
     want.userdata = &target_;
 
     r.askedName     = name != nullptr ? name : "";
@@ -130,7 +147,7 @@ bool CaptureHost::open(const char* name, LiveOpenResult& r)
     return true;
 }
 
-void CaptureHost::close() noexcept
+void CaptureHost::closeDevice() noexcept
 {
     if(device_ != 0)
     {

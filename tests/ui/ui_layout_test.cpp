@@ -1007,6 +1007,50 @@ void checkInputLive(const std::string& n, const UiSnapshot& s, const MeterView& 
         check(!failed, n + "DEVICE row: a failed open names its device");
         check(t != nullptr && t->scale == 3, n + "DEVICE row: NO DEVICE CHOSEN at 24 px");
     }
+    // M2b-B2: DIRECT on the top line, between the row name and "n OF m", only
+    // with the spec line and the direct route.
+    {
+        const bool      specShown = in.deviceOpen && !(showCursor && in.cursor != in.loadedIndex);
+        const TextItem* dir       = textIn(d, dev, "DIRECT", TextRole::InputValue);
+        if(specShown && in.deviceDirect)
+        {
+            const TextItem* pos = nullptr;
+            for(std::size_t k = 0; k < d.textCount; ++k)
+                if(d.texts[k].panel == dev && d.texts[k].role == TextRole::InputValue && d.texts[k].scale == 3 &&
+                   d.texts[k].y == 320 + 10)
+                    pos = &d.texts[k];
+            check(dir != nullptr && dn != nullptr && dir->scale == 2 && dir->y == 320 + 14 && dir->x >= dn->x + dn->w + 8 &&
+                      pos != nullptr && dir->x + dir->w + 16 <= pos->x && sameColor(dir->color, palette::text),
+                  n + "DEVICE row: DIRECT at 16 px between the row name and \"n OF m\"");
+            // ... and clear of the row's X cap, its "+" and the d-pad arrows.
+            int hits = 0, others = 0;
+            for(std::size_t k = 0; k < d.keyCount; ++k)
+                if(d.keys[k].panel == dev)
+                {
+                    ++others;
+                    hits += dir != nullptr && intersects(box(*dir), box(d.keys[k])) ? 1 : 0;
+                }
+            for(std::size_t k = 0; k < d.triCount; ++k)
+                if(d.tris[k].panel == dev)
+                {
+                    ++others;
+                    hits += dir != nullptr && intersects(box(*dir), box(d.tris[k])) ? 1 : 0;
+                }
+            for(std::size_t k = 0; k < d.textCount; ++k)
+                if(d.texts[k].panel == dev && &d.texts[k] != dir)
+                {
+                    ++others;
+                    hits += dir != nullptr && intersects(box(*dir), box(d.texts[k])) ? 1 : 0;
+                }
+            check(dir != nullptr && hits == 0 && others >= 5,
+                  n + "DEVICE row: DIRECT overlaps no key cap, arrow or other text on the row (" + std::to_string(others) +
+                      " items checked)");
+        }
+        else
+        {
+            check(dir == nullptr, n + "DEVICE row: no DIRECT (not the direct route, or the spec line is not shown)");
+        }
+    }
     // The 16 px line.
     const int ly = 320 + 72;
     if(in.deviceOpen && showCursor && in.cursor != in.loadedIndex)

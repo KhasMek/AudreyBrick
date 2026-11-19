@@ -283,7 +283,8 @@ void InputStage::liveChunkStart(InputSource src, float& gt, std::size_t frames) 
             // device, or bursts larger than the target): play what is there, then
             // hold, while the level fades out; buffer to the target again. Two
             // within a second (while LIVE is chosen) double the target, at most
-            // kLiveMaxAutoBuffers buffers.
+            // kLiveMaxAutoBuffers buffers; so does a single one when the settled
+            // minimum had left no room for a repeat (liveNoHeadroom_, below).
             liveRunning_ = false;
             liveXf_      = liveXfLen_; // a running crossfade ends; what is left plays straight
             if(src == InputSource::Live)
@@ -617,7 +618,12 @@ const float* InputStage::pull(std::size_t frames) noexcept
                 // M2b-B: the fade-out of one source is over; the other one takes
                 // over (FILE <-> LIVE, or either -> OFF). A file starts from its
                 // beginning; the live input once the ring holds the target (the
-                // next chunk checks).
+                // next chunk checks). M2b-B2 (deferred review minor): when the
+                // live input stops sounding it also stops running, so LIVE chosen
+                // again in the very next pull() (no new session) discards and
+                // buffers afresh instead of reading on from where it stopped.
+                if(sounding_ == InputSource::Live)
+                    liveRunning_ = false;
                 sounding_ = src;
                 if(sounding_ == InputSource::File)
                     cur_.rewind();

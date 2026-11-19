@@ -93,6 +93,7 @@ bool LiveSim::open(const char* name, LiveOpenResult& r)
     r.channels = d.channels;
     r.frames   = block_;
     r.format   = "f32";
+    r.route    = name != nullptr ? "by name (simulated)" : "system default (simulated)"; // M2b-B2
     done();
     return true;
 }

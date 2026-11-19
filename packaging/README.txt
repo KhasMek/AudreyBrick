@@ -153,13 +153,17 @@ whenever LIVE is selected.
        X + up/down     opens the list of devices (with nothing open, X, down,
                        release opens the highlighted one)
        release X       opens the device you went to
-     The list starts with SYSTEM DEFAULT (the system's default capture device,
-     on the Brick normally its built-in microphone), then every device the
-     system reports, by the names it gives them (the built-in codec is called
-     something like "audiocodec, "). A USB interface appears when it is plugged
-     in, also while AudreyBrick runs. X + Y and X + SELECT do nothing with LIVE.
+     The list shows every device the system reports, by the names it gives
+     them: on the Brick the built-in microphone is called "audiocodec, " and a
+     USB interface something like "JIANT FM, USB Audio". A USB interface
+     appears when it is plugged in, also while AudreyBrick runs. On the Brick
+     there is no SYSTEM DEFAULT entry (see "The built-in microphone" below); on
+     other systems (a computer) the list starts with SYSTEM DEFAULT. X + Y and
+     X + SELECT do nothing with LIVE.
   3. When a device opens, the gain is set to -inf dB. The DEVICE row then shows
-     what the device delivers (for example "48000 Hz 1 CH 256 FR") and a PRE bar:
+     what the device delivers (for example "48000 Hz 1 CH 256 FR"; DIRECT next
+     to the row's name when it was opened directly on its sound card, as the
+     built-in microphone always is) and a PRE bar:
      the level coming from the device before the gain, so you can see that the
      microphone works while the gain is still at zero. Raise the gain with
      d-pad up (or Y + up for 0 dB) and watch the large input meter.
@@ -183,13 +187,46 @@ the buffer is corrected now and then with a short crossfade: a few milliseconds
 are skipped (fast) or repeated (slow). If the device delivers its sound in
 large bursts and the buffer runs dry (an "underrun": a short fade out, a gap,
 a fade in), AudreyBrick doubles the buffer after two underruns within a
-second, up to 16 audio buffers; it goes back to the setting when you choose a
+second, or after a single one when the buffer had no room left for its slow-
+clock corrections, up to 16 audio buffers; it goes back to the setting when you choose a
 device again. To start with a larger buffer, set AUDREY_LIVE_TARGET (1 to 32
 audio buffers, default 2) near the top of AudreyBrick.sh; more is steadier but
 adds delay. The log (data/audreybrick.log) has a "live:" part in every
 statistics line while LIVE is selected (buffer fill and target, underruns,
 skips, repeats, frames captured and played, levels), and a line for every
 device listed, opened, closed or lost and every time the buffer was doubled.
+
+The built-in microphone and why there is no SYSTEM DEFAULT on the Brick:
+  - The Brick's system default capture device goes through its audio server
+    (PipeWire). With the built-in microphone it delivers nothing, and it leaves
+    the microphone blocked for every program until the next reboot. So on the
+    Brick AudreyBrick never offers or opens the system default for recording;
+    choose a device by its name.
+  - The built-in microphone ("audiocodec, ") cannot be opened the usual way
+    (its chip rejects the format the system picks), so AudreyBrick opens it
+    directly on its sound card (hw:0,0), as one channel (mono: it is one
+    microphone). The DEVICE row then shows DIRECT next to its name and
+    "48000 Hz 1 CH 256 FR" below. A USB interface opens by its name, asking for
+    two channels (mixed to one as left + right); if opening it by name ever
+    fails, AudreyBrick tries it directly on its card too. A listed name that is
+    not one of the Brick's sound cards is never opened (CANNOT OPEN: NOT AN
+    ALSA CARD).
+  - The built-in microphone delivers nothing at all until its input mixer is
+    set. Before opening it, AudreyBrick reads three mixer settings of the
+    Brick's sound card and changes them with the system's amixer tool: "ADCL
+    Input MIC1 Boost Switch" on, "MIC1 gain volume" 31, "ADC volume" 160,160.
+    When the microphone is closed again (you leave LIVE, choose another device,
+    it is lost, or you quit AudreyBrick normally) it writes back the values it
+    read (if amixer fails to write them back, it tries again at the next close
+    and when AudreyBrick quits). If AudreyBrick is killed without its normal
+    shutdown, the values stay
+    as set until the next reboot; nothing breaks (the microphone input simply
+    stays switched on). If amixer is missing or fails, the log says so and the
+    microphone stays silent (DEVICE LOST after 3 seconds).
+  - If you ever chose SYSTEM DEFAULT in an earlier AudreyBrick version (or
+    recorded through the audio server some other way) since the Brick last
+    started, the microphone may be blocked ("Device or resource busy"): reboot
+    the Brick.
 
 
 Quitting

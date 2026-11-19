@@ -64,7 +64,8 @@ The human commits. The orchestrator stops at each point and proposes a message.
 | 13 | M3-C: quit on Menu + Start, hold-to-quit removed; second-run results and the third-run checklist | Committed |
 | 14 | M2b plan | Committed |
 | 15 | M2b-A and M2b-A2: the input stage, the INPUT tab, file input with a hold-X pop-up browser (M2b-A3), crossfade, LOOP/ONCE and a 10-minute cap, reviewed; device checklist | Committed |
-| 16 | M2b-B: live input (LIVE source, device chooser, capture ring with drift handling, howl safeguards), reviewed; device checklist | Ready to commit |
+| 16 | M2b-B: live input (LIVE source, device chooser, capture ring with drift handling, howl safeguards), reviewed; device checklist | Committed |
+| 17 | M2b-B2: the built-in mic on the direct hardware route (mono, mixer set and restored), no SYSTEM DEFAULT on ALSA, reviewed; confirmed on the Brick | Ready to commit |
 
 ## What was verified and how
 
@@ -309,6 +310,9 @@ Decision: choose a playable init patch by ear after the presets work (M5). Until
 
 ## Log
 
+- 2026-11-19: Built-in mic device run: the direct route, the mixer set and restore, and USB by name all work on the Brick (`PLATFORM_NOTES.md`, "Built-in mic run"). M2b is confirmed on the device; commit point 17 is ready.
+- 2026-11-19: M2b-B2 (built-in mic: direct hardware route through `AUDIODEV`, mixer set and restore with `amixer`, mono, no SYSTEM DEFAULT on ALSA) implemented and reviewed (nothing blocking; follow-ups applied and verified by the orchestrator, not re-reviewed). Orchestrator's clean runs: macOS Release 64/64, ASan/UBSan 64/64, TSan 56/56, no-SDL 46/46, Debian 13 containers 46/46 each, vendor and reference checks OK, `make_port.sh` exit 0 with 234 PASS and 0 FAIL. None of the built-in mic route has run on the device. Commit point 16 (M2b-B) was committed by the human as `8b45e8c`; this is commit point 17.
+- 2026-11-19: Live-input device run: USB capture works; the built-in mic does not (results and diagnosis in `PLATFORM_NOTES.md`, "Live input run and capture diagnosis"). The human allowed adb for the diagnosis, with a rule to ask before anything further on the device. Brief M2b-B2 (direct hardware route, mixer set-up, no SYSTEM DEFAULT on ALSA) written and delegated.
 - 2026-11-19: M2b-B (live input) implemented and reviewed three times (full review, a review of the fix round, a confirmation review). Fixed along the way: automatic and settable capture buffering for bursty delivery, crossfaded repeats for a slow capture clock, the hold fade taken after gain, the stage never reads before a session's first sample, load order in `pull()`. The confirmation review found nothing to fix before the device run. Deferred minors: `liveRunning_` survives a fade-out that ends inside a chunk when LIVE returns in the very next pull without a new session (stage API only; the app always closes the device); two stale comments about the raise rule in `InputStage.h` / `.cpp`; one late capture callback can double the live target for the session. Orchestrator's clean runs: macOS Release 63/63, ASan/UBSan 63/63, TSan 55/55, no-SDL 45/45, Debian 13 containers 45/45 each (17 of 25 references matching), vendor and reference checks OK, `make_port.sh` exit 0 with 232 PASS and 0 FAIL. `CaptureHost` has run only against SDL's dummy driver. Stopped at commit point 16 for the device run (`docs/LIVE_INPUT_RUN_BRICK.md`).
 - 2026-11-19: The human ran file input on the Brick: it works as expected (results in `PLATFORM_NOTES.md`, "File input run"). Commit point 15 committed. The human has a USB audio device for testing. Brief M2b-B (live input) written and delegated.
 - 2026-11-18: The human tried file input on the Brick and asked for a 10-minute cap, a crossfade between files, a scrollable file list that does not auto-load, and LOOP / ONCE play modes. Brief M2b-A2 written and delegated.

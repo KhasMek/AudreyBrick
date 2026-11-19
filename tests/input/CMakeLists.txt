@@ -15,6 +15,10 @@
 # with a real writer thread and the simulated capture system; the
 # ThreadSanitizer build runs it), and input_live_controller_test (the INPUT tab's
 # model with the source LIVE, against a fake capture system).
+# M2b-B2: input_capture_route_test (how a capture device is opened: no SYSTEM
+# DEFAULT on ALSA, the direct-hardware fallback, the built-in mic's mixer set-up
+# and restore, with fakes; and the real child-process runner against echo, sh
+# and sleep, which every build host has).
 #
 # input_make_tone: a helper (not a test) that writes the self-test's tone file;
 # tests/platform uses it as a fixture.
@@ -36,6 +40,7 @@ set(AB_INPUT_TESTS
     input_live_test
     input_live_threads_test
     input_live_controller_test
+    input_capture_route_test
 )
 foreach(_t ${AB_INPUT_TESTS})
     add_executable(${_t} ${_t}.cpp)

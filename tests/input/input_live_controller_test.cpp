@@ -15,6 +15,12 @@
 //     LIVE closes, L1 / releaseAll cancel, no capture system, a listing failure;
 //   - fill(): the list fields hold the devices with the source LIVE, the files
 //     otherwise; the live fields.
+//   - M2b-B2: a capture system that offers no system default (SDL's alsa
+//     driver): the list is the listed names only (possibly none), the rule is
+//     logged at start, no gesture ever asks for the default (nullptr), the gain
+//     is still zero before every open; the system's own log lines (route,
+//     mixer) are taken after every open and close; a direct route shows in the
+//     view (deviceDirect).
 
 #include <cmath>
 #include <cstdint>
@@ -49,6 +55,12 @@ struct FakeBackend final : LiveBackend
     LiveInput*               live    = nullptr;
     float                    gainAtOpen    = -1.0f;
     std::uint32_t            sessionAtOpen = 0;
+    // M2b-B2.
+    bool                     offersDef   = true;
+    bool                     directRoute = false; // opens report the direct route
+    int                      nullOpens   = 0;     // open(nullptr) calls
+    std::vector<float>       gainsAtOpen;         // every open's gain
+    std::vector<std::string> pending;             // log lines for takeLog()
 
     bool listDevices(std::vector<std::string>& out) override
     {
@@ -59,6 +71,9 @@ struct FakeBackend final : LiveBackend
     {
         ++opens;
         gainAtOpen    = ctl != nullptr ? ctl->gainNorm() : -1.0f;
+        gainsAtOpen.push_back(gainAtOpen);
+        nullOpens += name == nullptr ? 1 : 0;
+        pending.push_back(std::string("backend: open '") + (name != nullptr ? name : "(NULL)") + "'");
         sessionAtOpen = live != nullptr ? live->session() : 0;
         r.askedName   = name != nullptr ? name : "";
         r.askedRate = r.rate = 48000;
@@ -77,13 +92,25 @@ struct FakeBackend final : LiveBackend
         lostFlag      = false;
         r.channels    = name != nullptr && openedName == "audiocodec, " ? 1 : 2;
         r.ok          = true;
+        r.direct      = directRoute;
+        r.route       = directRoute ? "direct hw:0,0" : "by name";
         return true;
     }
     void close() noexcept override
     {
         if(opened)
+        {
             ++closes;
+            pending.push_back("backend: closed, mixer restored");
+        }
         opened = false;
+    }
+    bool offersDefaultDevice() const noexcept override { return offersDef; }
+    void takeLog(std::vector<std::string>& out) noexcept override
+    {
+        for(std::string& l : pending)
+            out.push_back(l);
+        pending.clear();
     }
     bool          isOpen() const noexcept override { return opened; }
     bool          lost() noexcept override { return opened && lostFlag; }
@@ -110,13 +137,14 @@ struct Rig
     double                           t = 0.0;
     std::vector<std::string>         log;
 
-    explicit Rig(bool withBackend = true)
+    explicit Rig(bool withBackend = true, bool offersDefault = true)
     {
         stage.attachLive(&live);
         stage.prepare(256, 256);
         ctl    = std::make_unique<InputController>(stage, "", &twoFiles);
         be.ctl = ctl.get();
         be.live = &live;
+        be.offersDef = offersDefault;
         ctl->setLive(&live, withBackend ? &be : nullptr);
         take();
     }
@@ -213,7 +241,7 @@ int main()
               "the gain was set to zero (-inf dB) and the ring's session advanced before the device opened");
         check(r.logHas("input: gain 0.500 -> 0 (-inf dB) before opening a capture device") &&
                   r.logHas("input: capture device opened: 'audiocodec, ' (asked for 'audiocodec, '; asked 48000 Hz f32le 2 ch "
-                           "256 frames; obtained 48000 Hz f32le 1 ch 256 frames)"),
+                           "256 frames; obtained 48000 Hz f32le 1 ch 256 frames; route by name)"),
               "the gain reset and the open (asked and obtained) are logged");
         // Y + up: unity (a deliberate press).
         r.ev(Button::Y, true);
@@ -422,6 +450,92 @@ int main()
         r.ctl->stop();
         r.take();
         check(!r.be.opened && r.logHas("closed (shutting down)"), "stop(): the device is closed");
+        check(r.logHas("backend: closed, mixer restored"), "stop(): the system's close lines (the mixer restore) are logged");
+    }
+
+    // --- M2b-B2: no SYSTEM DEFAULT (SDL's alsa driver) -------------------------------------------------------------
+    {
+        Rig d; // a system that offers it
+        check(d.ctl->offersDefault() && d.logHas("capture rule: SYSTEM DEFAULT is offered"),
+              "a system with a default device: SYSTEM DEFAULT offered, the rule logged at start");
+
+        Rig r(true, false);
+        check(!r.ctl->offersDefault() && r.logHas("capture rule: no SYSTEM DEFAULT"),
+              "SDL's alsa driver: no SYSTEM DEFAULT, the rule logged at start");
+        r.toLive();
+        UiInputView v = r.view();
+        check(r.ctl->devices().size() == 2 && r.ctl->devices()[0] == "audiocodec, " && r.ctl->devices()[1] == "USB Audio" &&
+                  v.deviceCount == 2 && v.listRows == 2 && std::string(v.listNames[0]) == "audiocodec, " && v.cursor == 0 &&
+                  r.be.opens == 0,
+              "no SYSTEM DEFAULT: the list is the listed devices only, the cursor on the first, nothing opened");
+        check(r.logHas("capture devices: 2 listed (no SYSTEM DEFAULT with this driver); [0] 'audiocodec, '; [1] 'USB Audio'"),
+              "the listing without SYSTEM DEFAULT is logged with every name");
+        // X, up, release with nothing open: the cursor's device, by its name.
+        r.ctl->setLive(&r.live, &r.be); // (a second setLive keeps the rule)
+        r.take();
+        r.choose({Button::DpadUp});
+        check(r.be.opens == 1 && r.be.nullOpens == 0 && r.be.openedName == "audiocodec, " && r.ctl->deviceOpenIndex() == 0 &&
+                  r.be.gainAtOpen == 0.0f,
+              "no SYSTEM DEFAULT: X, up, release opens the first listed device by name (never NULL), gain 0 first");
+        check(r.logHas("backend: open 'audiocodec, '") && r.logHas("route by name"),
+              "the system's open lines and the route are logged");
+        // Raise the gain, choose the next one (wraps through the list only).
+        r.tap(Button::DpadUp);
+        r.choose({Button::DpadRight});
+        check(r.be.opens == 2 && r.be.openedName == "USB Audio" && r.be.gainAtOpen == 0.0f && r.be.nullOpens == 0,
+              "another device: gain to zero again before the open");
+        r.tap(Button::DpadUp);
+        r.choose({Button::DpadRight}); // wraps to audiocodec
+        r.tap(Button::DpadUp);
+        r.choose({Button::DpadLeft, Button::DpadLeft, Button::DpadLeft}); // audiocodec -> USB -> audiocodec -> USB
+        // Leaving LIVE and coming back reopens (gain to zero).
+        r.tap(Button::DpadUp);
+        r.tap(Button::DpadLeft);
+        r.tap(Button::DpadRight);
+        bool allZero = !r.be.gainsAtOpen.empty();
+        for(float g : r.be.gainsAtOpen)
+            allZero = allZero && g == 0.0f;
+        check(r.be.opens == 5 && r.be.nullOpens == 0 && allZero && r.ctl->deviceOpen() && r.be.openedName == "USB Audio",
+              "every open (choices and the reopen on LIVE) had the gain at zero; none asked for the default (" +
+                  std::to_string(r.be.opens) + " opens)");
+        // The direct route shows in the view.
+        r.be.directRoute = true;
+        r.choose({Button::DpadRight});
+        UiInputView w = r.view();
+        check(w.deviceOpen && w.deviceDirect && r.logHas("route direct hw:0,0"),
+              "a device opened on the direct route: deviceDirect in the view, the route logged");
+        r.be.directRoute = false;
+        r.choose({Button::DpadRight});
+        check(!r.view().deviceDirect, "opened by name: deviceDirect is false");
+        // The open device disappears: no default to fall back on, the cursor stays valid.
+        r.be.names = {"audiocodec, "};
+        ++r.be.changes;
+        r.tick();
+        r.be.lostFlag = true;
+        r.tick();
+        check(!r.ctl->deviceOpen() && r.ctl->devices().size() == 1 && r.ctl->deviceCursor() == 0 && r.be.nullOpens == 0,
+              "the open device removed and lost: closed, the list holds the rest, the cursor valid");
+    }
+    {
+        // Nothing listed and no default: an empty list.
+        Rig r(true, false);
+        r.be.names.clear();
+        r.ctl->setLive(&r.live, &r.be);
+        r.take();
+        r.toLive();
+        r.choose({Button::DpadUp});
+        r.choose({Button::DpadRight});
+        r.choose({Button::DpadUp, Button::DpadDown});
+        UiInputView v = r.view();
+        check(r.ctl->devices().empty() && r.be.opens == 0 && v.deviceCount == 0 && v.cursor == -1 && v.listRows == 0 &&
+                  !v.deviceOpen && r.logHas("capture devices: 0 listed (no SYSTEM DEFAULT with this driver)"),
+              "no SYSTEM DEFAULT and no device: an empty list, X + any direction opens nothing, no crash");
+        r.be.names = {"JIANT FM, USB Audio"};
+        ++r.be.changes;
+        r.tick();
+        r.choose({Button::DpadUp});
+        check(r.be.opens == 1 && r.be.openedName == "JIANT FM, USB Audio" && r.ctl->deviceCursor() == 0,
+              "a device plugged in later is listed and can be chosen");
     }
     return itest::finish();
 }

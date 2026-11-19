@@ -85,12 +85,20 @@ void InputController::stop() noexcept
 
 void InputController::setLive(LiveInput* live, LiveBackend* backend) noexcept
 {
-    live_    = live;
-    backend_ = backend;
+    live_       = live;
+    backend_    = backend;
+    hasDefault_ = backend_ == nullptr || backend_->offersDefaultDevice();
     if(backend_ != nullptr)
         logf("input: live capture through %s", backend_->kind());
     else
         log("input: no capture system: LIVE lists SYSTEM DEFAULT only and cannot open it");
+    // M2b-B2: which rule applies to the system default (one line at start).
+    if(hasDefault_)
+        log("input: capture rule: SYSTEM DEFAULT is offered first in the device list");
+    else
+        log("input: capture rule: no SYSTEM DEFAULT (SDL's alsa driver: ALSA's default capture is PipeWire, which fails "
+            "with the built-in codec and then holds it); only listed devices are opened, by name or directly on "
+            "their card");
     devicesListed_ = false; // the next listing is logged
     listDevices();
 }
@@ -802,7 +810,7 @@ void InputController::handleResult(InputLoadResult& r)
 // --- M2b-B: the live input ------------------------------------------------------------------
 int InputController::indexOfDevice(const std::string& name) const noexcept
 {
-    for(std::size_t i = 1; i < devices_.size(); ++i)
+    for(std::size_t i = hasDefault_ ? 1 : 0; i < devices_.size(); ++i)
         if(devices_[i] == name)
             return static_cast<int>(i);
     return -1;
@@ -821,7 +829,8 @@ void InputController::listDevices() noexcept
         }
         std::vector<std::string> list;
         list.reserve(names.size() + 1);
-        list.emplace_back(kLiveDefaultDeviceName);
+        if(hasDefault_)
+            list.emplace_back(kLiveDefaultDeviceName); // M2b-B2: not with SDL's alsa driver
         for(std::string& n : names)
             if(list.size() < kLiveMaxDevices)
                 list.push_back(std::move(n));
@@ -829,27 +838,34 @@ void InputController::listDevices() noexcept
         devices_.swap(list);
         devicesListed_ = true;
         devicesOk_     = ok;
-        // The cursor: the same name if still listed, else the nearest position.
+        // The cursor: the same name if still listed, else the nearest position
+        // (M2b-B2: none when nothing is listed, possible without SYSTEM DEFAULT).
         int at = -1;
         for(std::size_t i = 0; i < devices_.size(); ++i)
             if(devices_[i] == devCursorName_)
                 at = static_cast<int>(i);
-        if(at < 0)
+        if(at < 0 && !devices_.empty())
             at = devCursor_ < 0 ? 0 : std::min(devCursor_, static_cast<int>(devices_.size()) - 1);
         devCursor_ = at;
-        if(devices_[static_cast<std::size_t>(at)] != devCursorName_)
+        if(at < 0)
+            devCursorName_.clear();
+        else if(devices_[static_cast<std::size_t>(at)] != devCursorName_)
         {
             std::string n = devices_[static_cast<std::size_t>(at)];
             devCursorName_.swap(n);
         }
-        devOpenIndex_ = !devOpen_ ? -1 : (devOpenDefault_ ? 0 : indexOfDevice(devOpenName_));
+        devOpenIndex_ = !devOpen_ ? -1 : (devOpenDefault_ ? (hasDefault_ ? 0 : -1) : indexOfDevice(devOpenName_));
         if(changed && backend_ != nullptr)
         {
             std::string line = "input: capture devices";
             if(!ok)
                 line += " (the capture system cannot list them)";
-            line += ": " + std::to_string(devices_.size() - 1) + " listed besides SYSTEM DEFAULT";
-            for(std::size_t i = 1; i < devices_.size(); ++i)
+            const std::size_t first = hasDefault_ ? 1 : 0;
+            if(hasDefault_)
+                line += ": " + std::to_string(devices_.size() - 1) + " listed besides SYSTEM DEFAULT";
+            else
+                line += ": " + std::to_string(devices_.size()) + " listed (no SYSTEM DEFAULT with this driver)";
+            for(std::size_t i = first; i < devices_.size(); ++i)
                 line += "; [" + std::to_string(i) + "] '" + devices_[i] + "'";
             log(line);
         }
@@ -866,7 +882,7 @@ void InputController::selectLiveSource()
     listDevices();
     if(!devChosen_)
         return; // nothing chosen yet in this run: nothing opens by itself
-    const int at = devChosenDefault_ ? 0 : indexOfDevice(devChosenName_);
+    const int at = devChosenDefault_ ? (hasDefault_ ? 0 : -1) : indexOfDevice(devChosenName_);
     if(at < 0)
     {
         logf("input: the device chosen before, '%s', is no longer listed: nothing reopened", devChosenName_.c_str());
@@ -884,7 +900,7 @@ void InputController::beginDeviceChoice()
     popup_       = false;
     choiceMoved_ = false;
     if(devices_.empty())
-        return;
+        return; // M2b-B2: possible without SYSTEM DEFAULT; X then chooses nothing
     int at = devOpen_ && devOpenIndex_ >= 0 ? devOpenIndex_ : (devCursor_ >= 0 ? devCursor_ : 0);
     if(at >= static_cast<int>(devices_.size()))
         at = 0;
@@ -915,11 +931,13 @@ void InputController::closeDevice(const char* reason) noexcept
         return;
     const auto t0 = std::chrono::steady_clock::now();
     if(backend_ != nullptr)
-        backend_->close();
+        backend_->close(); // M2b-B2: also restores the built-in mic's mixer (CaptureHost)
     if(live_ != nullptr)
         live_->newSession(); // the stage stops reading and fades out on its last sample
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     logf("input: capture device '%s' closed (%s), %.1f ms", devOpenName_.c_str(), reason, ms);
+    if(backend_ != nullptr)
+        backend_->takeLog(log_); // the mixer restore's lines
     devOpen_      = false;
     devOpenIndex_ = -1;
 }
@@ -928,7 +946,7 @@ void InputController::openDevice(int index)
 {
     if(index < 0 || static_cast<std::size_t>(index) >= devices_.size())
         return;
-    const bool def = index == 0;
+    const bool def = hasDefault_ && index == 0; // M2b-B2: no default entry with SDL's alsa driver
     // Everything that may throw first (copies), before anything changes; after
     // the open only swaps, moves and fixed-size formatting (M2b-B review, M4).
     std::string    name   = devices_[static_cast<std::size_t>(index)];
@@ -956,7 +974,10 @@ void InputController::openDevice(int index)
     if(backend_ == nullptr || live_ == nullptr)
         r.error = "NO CAPTURE SUPPORT";
     else
+    {
         ok = backend_->open(def ? nullptr : name.c_str(), r);
+        backend_->takeLog(log_); // M2b-B2: the route and the mixer, before the open's own line
+    }
     if(ok)
     {
         devOpen_          = true;
@@ -972,9 +993,9 @@ void InputController::openDevice(int index)
         stallClock_   = true;
         raisesSeen_   = stage_.liveTargetRaises();
         logf("input: capture device opened: '%s' (asked for %s; asked %d Hz %s %d ch %d frames; obtained %d Hz %s %d ch "
-             "%d frames) in %.1f ms",
+             "%d frames; route %s) in %.1f ms",
              devOpenName_.c_str(), asked, r.askedRate, r.askedFormat.c_str(), r.askedChannels, r.askedFrames, r.rate,
-             r.format.c_str(), r.channels, r.frames, 1000.0 * r.seconds);
+             r.format.c_str(), r.channels, r.frames, r.route.empty() ? "-" : r.route.c_str(), 1000.0 * r.seconds);
     }
     else
     {
@@ -1009,7 +1030,8 @@ void InputController::checkLive(double t) noexcept
 {
     if(backend_ != nullptr && backend_->listChanges() != listSeen_)
         listDevices(); // SDL_AUDIODEVICEADDED / REMOVED
-    // The stage doubled its target after two underruns within a second.
+    // The stage doubled its target: two underruns within a second, or one
+    // underrun when the settled fill had left no room for a repeat (InputStage).
     // The count first (acquire; the stage stores the target, then increments it
     // with release), then the target: at least the raised one (M2b-B review 2, M3).
     const std::uint64_t raises = stage_.liveTargetRaises();
@@ -1017,7 +1039,7 @@ void InputController::checkLive(double t) noexcept
     {
         raisesSeen_          = raises;
         const std::size_t to = stage_.liveTargetFrames();
-        logf("input: live target raised to %zu frames (two underruns within a second; %llu raise(s) since start)", to,
+        logf("input: live target raised to %zu frames (underruns; %llu raise(s) since start)", to,
              static_cast<unsigned long long>(raises));
     }
     if(!devOpen_)
@@ -1100,6 +1122,7 @@ void InputController::fill(UiInputView& v) const noexcept
     v.grantedRate     = devOpen_ ? lastOpen_.rate : 0;
     v.grantedChannels = devOpen_ ? lastOpen_.channels : 0;
     v.grantedFrames   = devOpen_ ? lastOpen_.frames : 0;
+    v.deviceDirect    = devOpen_ && lastOpen_.direct; // M2b-B2
     v.liveStatus      = liveStatus_;
     copyDisplayName(v.liveFailName, sizeof v.liveFailName, liveStatus_ != LiveStatus::None ? liveFailName_.c_str() : "");
     copyDisplayName(v.liveReason, sizeof v.liveReason, liveStatus_ == LiveStatus::Failed ? liveReason_ : "");

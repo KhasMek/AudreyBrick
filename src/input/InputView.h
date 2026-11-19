@@ -70,13 +70,14 @@ struct UiInputView
 
     // M2b-B: the live input (the source LIVE). listNames[i] are device names,
     // loadedIndex is the open device's position (as listed), cursor the chooser's.
-    int        deviceCount      = 0;     // devices listed, SYSTEM DEFAULT included
+    int        deviceCount      = 0;     // devices listed, SYSTEM DEFAULT included (when offered)
     bool       deviceListFailed = false; // the capture system could not list its devices
     bool       deviceOpen       = false;
     char       deviceName[96]   = {};    // the open device as listed ("SYSTEM DEFAULT"), "" if none
     int        grantedRate      = 0;     // what the open device delivers (as opened)
     int        grantedChannels  = 0;
     int        grantedFrames    = 0;
+    bool       deviceDirect     = false; // M2b-B2: opened on the direct route (hw:<card>,0)
     LiveStatus liveStatus       = LiveStatus::None;
     char       liveFailName[96] = {};    // Failed: the device that could not be opened; Lost: the one lost
     char       liveReason[64]   = {};    // Failed: the capture system's reason

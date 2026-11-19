@@ -41,8 +41,9 @@
 // LiveBackend: what the INPUT tab's model (InputController) needs from a capture
 // system: list the devices, open one into a LiveInput, close it, report that it
 // was lost, and count list changes. platform/CaptureHost implements it with
-// SDL; the app's self-test has a simulated one (input/LiveSim.h); the tests
-// have their own. Called on the UI thread only.
+// SDL (and the routing of input/CaptureRoute.h: M2b-B2); the app's self-test has
+// a simulated one (input/LiveSim.h); the tests have their own. Called on the UI
+// thread only.
 
 #pragma once
 
@@ -184,6 +185,10 @@ struct LiveOpenResult
     int         frames   = 0;
     std::string format;
     double      seconds = 0.0; // how long the open took (wall clock)
+    // M2b-B2: how it was opened (input/CaptureRoute.h): "by name", "system
+    // default", or "direct hw:<card>,0"; `direct` for the last.
+    std::string route;
+    bool        direct = false;
 };
 
 class LiveBackend
@@ -205,6 +210,13 @@ class LiveBackend
     virtual std::uint64_t listChanges() const noexcept = 0;
     // A short name for the log ("SDL alsa", "simulated").
     virtual const char* kind() const noexcept = 0;
+    // M2b-B2: whether the list may offer the system default (open(nullptr)).
+    // SDL's ALSA driver does not (input/CaptureRoute.h): on the Brick ALSA's
+    // default capture is PipeWire, which fails with the built-in codec.
+    virtual bool offersDefaultDevice() const noexcept { return true; }
+    // M2b-B2: log lines the system collected (the route, the mixer), appended to
+    // `out`; called after every open and close. Never throws.
+    virtual void takeLog(std::vector<std::string>& out) noexcept { (void)out; }
 };
 
 } // namespace audreybrick

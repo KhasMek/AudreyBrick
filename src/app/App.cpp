@@ -35,6 +35,7 @@
 #include "app/RestoreOnExit.h"
 #include "app/Signals.h"
 #include "core/ParamTable.h"
+#include "input/SystemProcess.h"
 #include "platform/Denormals.h"
 #include "platform/Meters.h"
 
@@ -724,6 +725,10 @@ bool App::startUp(std::string& error)
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
     if(stopAt("before SDL_Init", error))
         return false;
+    // M2b-B2: AUDIODEV set and put back once while no other thread exists (see
+    // input/SystemProcess.h, primeCaptureEnvironment()).
+    if(!primeCaptureEnvironment())
+        log_.line(logTime(), "input: could not prime the environment (AUDIODEV) before SDL starts");
     if(SDL_Init(SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0)
     {
         error = std::string("SDL_Init failed: ") + SDL_GetError();
