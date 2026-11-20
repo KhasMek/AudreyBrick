@@ -20,6 +20,12 @@
 //     deliver() (the self-test's path) drives the INPUT tab the same way;
 //   - M2b-A3: X + Y, X + Select and X + d-pad on INPUT reach the panel and make
 //     the model send no command.
+//   - REC: Start + Y (both orders, pad and keyboard) returns RecordToggle once
+//     per chord; the chord's Y is no reset modifier (the model never sees it as
+//     held) and, with X held on INPUT, does not toggle LOOP/ONCE; plain Y is
+//     unchanged; Menu + Start still quits in both orders with Y held; Select +
+//     Start + Y counts as Start + Y; self-test mode ignores real Start + Y while
+//     routeScripted() (the self-test's path) applies the chord.
 // No SDL_Init: InputMap::handle needs none for these events.
 
 #include <SDL.h>
@@ -35,6 +41,7 @@
 #include "app/ControlModel.h"
 #include "app/InputRouter.h"
 #include "app/MenuQuit.h"
+#include "app/RecordChord.h"
 #include "control/ButtonControlSource.h"
 #include "input/InputController.h"
 #include "input/InputStage.h"
@@ -70,6 +77,15 @@ SDL_Event focusLost()
     e.window.event = SDL_WINDOWEVENT_FOCUS_LOST;
     return e;
 }
+SDL_Event key(Uint32 type, SDL_Scancode sc)
+{
+    SDL_Event e{};
+    e.type                = type;
+    e.key.type            = type;
+    e.key.state           = type == SDL_KEYDOWN ? SDL_PRESSED : SDL_RELEASED;
+    e.key.keysym.scancode = sc;
+    return e;
+}
 SDL_Event escape()
 {
     SDL_Event e{};
@@ -87,10 +103,11 @@ struct Rig
     std::unique_ptr<ButtonControlSource> src   = std::make_unique<ButtonControlSource>();
     std::unique_ptr<ControlModel>        model = std::make_unique<ControlModel>(*src);
     MenuQuit                             quit;
+    RecordChord                          chord; // REC
     InputRouter                          router;
     double                               t = 0.0;
 
-    explicit Rig(bool selftest = false) : router(*model, quit, selftest) {}
+    explicit Rig(bool selftest = false) : router(*model, quit, selftest, nullptr, &chord) {}
 
     InputRouter::Result feed(const SDL_Event& e)
     {
@@ -111,6 +128,9 @@ struct Rig
 constexpr int kMenu   = SDL_CONTROLLER_BUTTON_GUIDE;
 constexpr int kStart  = SDL_CONTROLLER_BUTTON_START;
 constexpr int kSelect = SDL_CONTROLLER_BUTTON_BACK;
+constexpr int kY      = SDL_CONTROLLER_BUTTON_Y;
+constexpr int kX      = SDL_CONTROLLER_BUTTON_X;
+constexpr int kUpPad  = SDL_CONTROLLER_BUTTON_DPAD_UP;
 using R               = InputRouter::Result;
 } // namespace
 
@@ -172,6 +192,93 @@ int main()
     {
         Rig r;
         check(r.feed(escape()) == R::Quit, "Escape: Quit (InputMap's quit passes through the router)");
+    }
+
+    // --- REC: Start + Y ------------------------------------------------------------------------------
+    {
+        Rig r;
+        check(r.feed(down(kStart)) == R::Continue, "REC: Start down alone: nothing");
+        check(r.feed(down(kY)) == R::RecordToggle, "REC: Start held, Y down: RecordToggle");
+        check(!r.model->yHeld() && !r.model->isDown(Button::Y), "REC: the chord's Y never reaches the model (not held there)");
+        const std::uint64_t sent = r.model->commandsSent();
+        check(r.feed(down(kUpPad)) == R::Continue && r.model->commandsSent() == sent + 1 && r.model->heldWord() == 0,
+              "REC: d-pad up with the chord's Y still held: a plain step (one command), not a reset");
+        r.feed(up(kUpPad));
+        check(r.feed(up(kY)) == R::Continue && r.feed(up(kStart)) == R::Continue, "REC: releases: nothing");
+        check(r.feed(down(kY)) == R::Continue && r.model->yHeld(), "REC: Y pressed again alone: plain Y (held in the model)");
+        r.feed(up(kY));
+    }
+    {
+        Rig r;
+        check(r.feed(down(kY)) == R::Continue && r.model->yHeld(), "REC: Y down first: a plain Y press");
+        check(r.feed(down(kStart)) == R::RecordToggle, "REC: Y held, Start down: RecordToggle");
+        check(!r.model->yHeld(), "REC: Y + Start: the model is told Y is up (no reset modifier from now on)");
+        check(r.feed(up(kStart)) == R::Continue && r.feed(down(kStart)) == R::RecordToggle,
+              "REC: Start released and pressed again with Y held: fires again (a new chord)");
+        check(r.feed(up(kStart)) == R::Continue && r.feed(up(kY)) == R::Continue && !r.model->yHeld(),
+              "REC: Y released: held back (the model already had its up)");
+        check(r.feed(down(kY)) == R::Continue && r.model->yHeld(), "REC: Y pressed again without Start: a reset modifier again");
+        r.feed(up(kY));
+    }
+    {
+        Rig r;
+        r.feed(down(kStart));
+        int toggles = 0;
+        for(int i = 0; i < 3; ++i)
+        {
+            ButtonEvent yd{Button::Y, true};
+            toggles += r.router.route(InputMap::Action::Button, yd, 1.0) == R::RecordToggle ? 1 : 0; // a repeated down too
+        }
+        check(toggles == 1, "REC: fires once per chord (repeated Y downs do not fire again)");
+    }
+    {
+        Rig r;
+        check(r.feedAll({down(kSelect), down(kStart)}) == R::Continue, "REC: Select + Start: nothing (KNULLI's screenshot)");
+        check(r.feed(down(kY)) == R::RecordToggle && r.model->fine(), "REC: Select + Start + Y: treated as Start + Y");
+    }
+    {
+        Rig r;
+        r.feed(down(kY));
+        r.feed(down(kMenu));
+        check(r.feed(down(kStart)) == R::MenuStart, "REC: Y and Menu held, Start down: quits (Menu + Start wins)");
+    }
+    {
+        Rig r;
+        r.feed(down(kStart));
+        check(r.feed(down(kY)) == R::RecordToggle, "REC: Start + Y");
+        check(r.feed(down(kMenu)) == R::MenuStart, "REC: Start and Y held, Menu down: quits");
+    }
+    {
+        Rig r;
+        check(r.feed(down(kY)) == R::Continue && r.model->yHeld(), "REC: plain Y: unchanged (a reset modifier)");
+        check(r.feed(up(kY)) == R::Continue && !r.model->yHeld() && r.chord.fired() == 0, "REC: plain Y: no toggle");
+    }
+    {
+        Rig r;
+        r.input.setSwapXY(true); // the launcher's swap on the Brick: SDL 'x' acts as Y
+        r.feed(down(kStart));
+        check(r.feed(down(kX)) == R::RecordToggle, "REC: with --swap-xy, Start + the button that acts as Y");
+    }
+    {
+        Rig r;
+        check(r.feed(key(SDL_KEYDOWN, SDL_SCANCODE_RETURN)) == R::Continue &&
+                  r.feed(key(SDL_KEYDOWN, SDL_SCANCODE_Y)) == R::RecordToggle,
+              "REC: keyboard: Return (Start) held + Y key: RecordToggle");
+    }
+    {
+        Rig r;
+        r.feed(down(kStart));
+        ButtonEvent none{};
+        r.router.route(InputMap::Action::ReleaseAll, none, 1.0);
+        check(r.feed(down(kY)) == R::Continue && r.model->yHeld(), "REC: ReleaseAll between Start and Y: no toggle");
+    }
+    {
+        Rig r(true);
+        check(r.feedAll({down(kStart), down(kY)}) == R::Continue && r.chord.fired() == 0,
+              "REC: self-test mode: real Start + Y is ignored");
+        check(r.router.routeScripted({Button::Start, true}, 1.0) == R::Continue &&
+                  r.router.routeScripted({Button::Y, true}, 1.0) == R::RecordToggle && !r.model->yHeld(),
+              "REC: routeScripted() (the self-test's path): Start + Y toggles, Y held back from the model");
     }
 
     // --- M2b-A: the INPUT tab ----------------------------------------------------------------------
@@ -248,6 +355,26 @@ int main()
             router.deliver({Button::Y, true}, t); // back to LOOP
             router.deliver({Button::Y, false}, t);
             router.deliver({Button::X, false}, t);
+        }
+        // REC: Start + Y with X held on INPUT (source FILE): no LOOP/ONCE toggle.
+        {
+            RecordChord chord;
+            InputRouter rrouter(*model, quit, false, &ctl, &chord);
+            const InputPlayMode before = ctl.playMode();
+            ButtonEvent         be{};
+            rrouter.route(InputMap::Action::Button, be = {Button::X, true}, t);
+            rrouter.route(InputMap::Action::Button, be = {Button::Start, true}, t);
+            const auto res = rrouter.route(InputMap::Action::Button, be = {Button::Y, true}, t);
+            rrouter.route(InputMap::Action::Button, be = {Button::Y, false}, t);
+            rrouter.route(InputMap::Action::Button, be = {Button::Start, false}, t);
+            check(res == R::RecordToggle && ctl.playMode() == before,
+                  "REC: X held on INPUT, Start + Y: RecordToggle and LOOP/ONCE unchanged");
+            rrouter.route(InputMap::Action::Button, be = {Button::Y, true}, t);
+            rrouter.route(InputMap::Action::Button, be = {Button::Y, false}, t);
+            check(ctl.playMode() != before, "REC: X still held, plain Y afterwards: toggles LOOP/ONCE as before");
+            rrouter.route(InputMap::Action::Button, be = {Button::Y, true}, t); // back
+            rrouter.route(InputMap::Action::Button, be = {Button::Y, false}, t);
+            rrouter.route(InputMap::Action::Button, be = {Button::X, false}, t);
         }
         // deliver(): the self-test's path.
         router.deliver({Button::DpadLeft, true}, t);

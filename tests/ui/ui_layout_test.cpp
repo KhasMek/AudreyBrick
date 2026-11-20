@@ -34,6 +34,13 @@
 // with "..", "n OF m", the length and the status line; the IN indicator on the
 // other tabs whenever the source is not OFF (and never with it OFF), without
 // moving anything else on the screen; six tabs in the tab bar.
+// REC: in every snapshot nothing is drawn within 4 pixels of the screen's edge
+// (where the recording border goes); the border flag and colour follow the
+// record view; the REC readout is one red 16 px text in the feedback band, left
+// of the "0 dB" label, saying what formatRecordReadout() says, and overlaps
+// nothing (the structure checks); every tab with and without X while recording,
+// and the longest readouts (h:mm:ss with DROP 99999+, SAVED REC-10000.WAV
+// 5:47:12, REC STOPPED: FILE LIMIT with MAX held).
 
 #include <algorithm>
 #include <atomic>
@@ -1309,6 +1316,46 @@ void checkInIndicator(const std::string& n, const UiSnapshot& s, const MeterView
               (m.inClip ? ", in inverse video (clipping)" : ""));
 }
 
+// REC: the 4-pixel edge stays free; the border and the readout.
+void checkRecord(const std::string& n, const UiSnapshot& s, const DrawList& d)
+{
+    const int   e     = DrawList::kRecBorderPx;
+    const Box   inner{e, e, kScreenWidth - 2 * e, kScreenHeight - 2 * e};
+    int         inEdge = 0;
+    for(std::size_t i = 0; i < d.panelCount; ++i)
+        inEdge += contains(inner, box(d.panels[i])) ? 0 : 1;
+    for(std::size_t i = 0; i < d.textCount; ++i)
+        inEdge += contains(inner, box(d.texts[i])) ? 0 : 1;
+    for(std::size_t i = 0; i < d.rectCount; ++i)
+        inEdge += d.rects[i].w <= 0 || d.rects[i].h <= 0 || contains(inner, box(d.rects[i])) ? 0 : 1;
+    for(std::size_t i = 0; i < d.triCount; ++i)
+        inEdge += contains(inner, box(d.tris[i])) ? 0 : 1;
+    for(std::size_t i = 0; i < d.keyCount; ++i)
+        inEdge += contains(inner, box(d.keys[i])) ? 0 : 1;
+    check(inEdge == 0, n + "REC: nothing drawn within 4 px of the screen's edge (the border's place)");
+    check(d.recBorder == s.record.border && (!d.recBorder || sameColor(d.recBorderColor, palette::clip)),
+          n + "REC: border " + (s.record.border ? "on, red" : "off"));
+
+    std::vector<const TextItem*> rec;
+    for(std::size_t i = 0; i < d.textCount; ++i)
+        if(d.texts[i].role == TextRole::RecStatus)
+            rec.push_back(&d.texts[i]);
+    if(s.record.show == RecordShow::None)
+    {
+        check(rec.empty(), n + "REC: no readout");
+        return;
+    }
+    char want[64];
+    formatRecordReadout(want, sizeof want, s.record);
+    const TextItem* zero = findRole(d, TextRole::FeedbackScale);
+    const int       band = rec.empty() ? -1 : rec[0]->panel;
+    check(rec.size() == 1 && rec[0]->text == std::string(want) && rec[0]->scale == 2 &&
+              sameColor(rec[0]->color, palette::clip) && band >= 0 &&
+              d.panels[static_cast<std::size_t>(band)].kind == PanelKind::FeedbackBand && zero != nullptr &&
+              rec[0]->x + rec[0]->w + 8 <= zero->x && rec[0]->y == 158,
+          n + "REC: readout \"" + want + "\" in red at 16 px in the feedback band, y 158, left of \"0 dB\"");
+}
+
 void checkSnapshot(const char* name, const UiSnapshot& s, DrawList& d)
 {
     const MeterView m = uitest::firstFrameMeters(s);
@@ -1321,6 +1368,7 @@ void checkSnapshot(const char* name, const UiSnapshot& s, DrawList& d)
     checkInputTab(n, s, m, d);
     checkInIndicator(n, s, m, d);
     checkPopup(n, s, d);
+    checkRecord(n, s, d);
 }
 
 // --- Feedback band ----------------------------------------------------------------------------
@@ -1451,6 +1499,22 @@ int main()
             uitest::setButton(s, Button::X, x);
             checkSnapshot((std::string(tabSpec(static_cast<Tab>(t)).name) + (x ? " with X" : " without X")).c_str(),
                           s, *d);
+        }
+
+    // REC: every tab, with and without X, while recording; and with a readout
+    // but no border (a message after a stop).
+    for(std::size_t t = 0; t < kTabCount; ++t)
+        for(bool x : {false, true})
+        {
+            UiSnapshot s = uitest::recordingSnapshot(static_cast<Tab>(t));
+            s.xHeld      = x;
+            uitest::setButton(s, Button::X, x);
+            checkSnapshot((std::string("REC ") + tabSpec(static_cast<Tab>(t)).name + (x ? " with X" : " without X")).c_str(),
+                          s, *d);
+            s.record.border  = false;
+            s.record.show    = RecordShow::Message;
+            s.record.message = "REC: CANNOT CREATE FILE";
+            checkSnapshot((std::string("REC message ") + tabSpec(static_cast<Tab>(t)).name).c_str(), s, *d);
         }
 
     // The strip with eleven distinct values (the precondition of checkStrip).

@@ -1,0 +1,8 @@
+# REC self-test script: start recording with Start + Y and never stop it; the run
+# ends (as a quit does) while recording, so the shutdown must finish the file.
+0.20  R2     down
+2.70  R2     up
+0.50  Start  down
+0.60  Y      down
+0.70  Y      up
+0.80  Start  up

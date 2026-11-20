@@ -22,6 +22,7 @@
 #include "app/Tabs.h"
 #include "core/ControlSource.h"
 #include "input/InputView.h"
+#include "record/RecordView.h"
 
 namespace audreybrick
 {
@@ -105,6 +106,10 @@ struct UiSnapshot
     // on the INPUT tab and, whenever the source is not OFF, as the IN bar in the
     // meter panel on every tab.
     UiInputView input;
+
+    // --- Recording (REC) -------------------------------------------------------------------
+    // The red border and the header's REC readout (record/RecordView.h).
+    UiRecordView record;
 };
 
 } // namespace audreybrick

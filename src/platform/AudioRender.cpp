@@ -72,6 +72,11 @@ void AudioRender::render(float* out, std::size_t frames) noexcept
         peak_[0].offer(pl);
         peak_[1].offer(pr);
     }
+    // REC: the whole block as it goes to the device, after the meters (also the
+    // silence written before prepare()). Inside the timed part, so the copy
+    // counts in the callback load.
+    if(record_ != nullptr)
+        record_->offer(out, frames);
 
     if(timed && frames > 0)
     {

@@ -25,6 +25,7 @@
 
 #include "ui/DrawList.h"
 #include "ui/Font.h"
+#include "ui/Layout.h"
 #include "ui/Renderer.h"
 #include "ui_test_common.h"
 
@@ -232,6 +233,32 @@ int main(int, char**)
         }
         check(unseen == 0, std::string(ns.name) + ": all " + std::to_string(list->textCount) +
                                " text items visible in the image");
+        // REC: the border covers exactly the outer 4 pixels, over everything
+        // (also the pop-up); without it nothing there is red.
+        {
+            const std::uint32_t red = rgb(palette::clip);
+            const int           e   = DrawList::kRecBorderPx;
+            int                 edgeRed = 0, edgeTotal = 0, innerRed = 0;
+            for(int y = 0; y < img.h; ++y)
+                for(int x = 0; x < img.w; ++x)
+                {
+                    const bool edge = x < e || y < e || x >= img.w - e || y >= img.h - e;
+                    const bool ring = !edge && (x == e || y == e || x == img.w - e - 1 || y == img.h - e - 1);
+                    const bool isRed =
+                        (img.px[static_cast<std::size_t>(y) * static_cast<std::size_t>(img.w) + static_cast<std::size_t>(x)] &
+                         0xFFFFFFu) == red;
+                    edgeTotal += edge ? 1 : 0;
+                    edgeRed += edge && isRed ? 1 : 0;
+                    innerRed += ring && isRed ? 1 : 0;
+                }
+            if(ns.snap.record.border)
+                check(edgeRed == edgeTotal && innerRed < 200,
+                      std::string(ns.name) + ": REC border: all " + std::to_string(edgeTotal) +
+                          " outer-4-pixel pixels red, drawn last; the 5th pixel ring is not (" + std::to_string(innerRed) +
+                          " red there)");
+            else
+                check(edgeRed == 0, std::string(ns.name) + ": no REC border: no red in the outer 4 pixels");
+        }
         images.push_back(std::move(img));
     }
 

@@ -86,6 +86,12 @@
 //     consecutive gain values is coefficient * |target - current| <= 4 * a, with
 //     a = 1 - exp(-1 / (0.010 * 48000)) = 0.00208, so at most 0.0083 of linear gain
 //     per sample (the full 0 -> 4 jump), and 0.0021 per sample for 0 -> 1.
+//   - GAIN (2026-11-20; the UI keeps one gain per source): while one source
+//     fades out because another is chosen (FILE <-> LIVE, either -> OFF), the
+//     gain is held where it is, so the old source fades out at its own gain;
+//     when the level reaches 0 and the chosen source takes over, the gain snaps
+//     to its target (silent: the level is 0) and the new source fades in at its
+//     own gain. So a change of gain between sources never sounds on either.
 //   - The crossfade's largest step for two full-scale DC files of opposite sign
 //     (+1 new, -1 old) is (pi/2)/(F+1) * sqrt(2) = 4.6e-4 per sample.
 //
@@ -102,7 +108,11 @@
 //     behind the writer (older ones are dropped), the gain snaps to its target
 //     (read again at that moment; the level is 0: no click; a gain set to 0
 //     just before a device opened is exactly 0 for its first sample) and the
-//     level fades in over 10 ms.
+//     level fades in over 10 ms. GAIN: the first start of a session fades in
+//     over setLiveStartFadeFrames() samples instead (the UI asks for
+//     kLiveRestoreFadeFrames, 100 ms, when the open restores a remembered gain
+//     above zero); a start finds the session unchanged after reading the gain,
+//     or waits for the next pull.
 //   - Underrun, i.e. the ring cannot supply the chunk (a stall, a lost device,
 //     or bursts larger than the target): counted (only while the source is
 //     LIVE); what is there is played, then the last output value is held while
@@ -167,7 +177,16 @@
 //   opens a device, so none of those belongs to the new device. A start reads
 //   the gain target after these loads. The UI sets the gain to zero before it
 //   closes the old device and before it advances the session (a release), so a
-//   start after a new session sees that gain (or a newer one). The raise count
+//   start after a new session sees that gain (or a newer one).
+//   GAIN: the UI now raises the gain right after an open (a remembered gain),
+//   so a newer gain can belong to a device whose session the stage has not seen
+//   yet. The gain is therefore stored with release and pull() loads it with
+//   acquire first, before the source and the session: a gain stored after a
+//   session advance (or a source change) comes with that session (and source),
+//   so the old device's samples are skipped (and the old source held at its own
+//   gain) before that gain applies. A start loads the gain again (acquire) and
+//   then the session once more; if the session changed meanwhile it does not
+//   start. The raise count
 //   is incremented with release after the new target is stored; a reader that
 //   loads the count with acquire, then the target, sees the raised target.
 //
@@ -270,8 +289,14 @@ class InputStage
 
     // --- UI thread ---------------------------------------------------------------
     void setSource(InputSource s) noexcept;
-    // Knob position 0..1 (clamped); gain = (2n)^2.
+    // Knob position 0..1 (clamped); gain = (2n)^2. Stored with release (GAIN, see
+    // "Memory order" under Live).
     void setGainNorm(float n) noexcept;
+    // GAIN: the fade-in length (samples, 1..kLiveRestoreFadeFrames, clamped) of
+    // the first start of the next live session. The UI sets it before it advances
+    // the ring's session (LiveInput::newSession() releases it; the stage latches
+    // it when it sees the session). kInputFadeFrames is the default.
+    void setLiveStartFadeFrames(std::size_t frames) noexcept;
     // LOOP or ONCE (M2b-A2); LOOP at start.
     void setPlayMode(InputPlayMode m) noexcept;
     // Plays the current buffer again from its start (M2b-A2; see "Fades").
@@ -357,6 +382,7 @@ class InputStage
     std::atomic<int>           source_{static_cast<int>(InputSource::Off)};
     std::atomic<std::uint32_t> sourceGen_{0};
     std::atomic<float>         gainTarget_{1.0f};
+    std::atomic<std::uint32_t> liveStartFadeReq_{static_cast<std::uint32_t>(kInputFadeFrames)}; // GAIN
     std::atomic<int>           mode_{static_cast<int>(InputPlayMode::Loop)};
     std::atomic<std::uint32_t> restartReq_{0};
     std::atomic<InputBuffer*>  pending_{nullptr};
@@ -423,6 +449,10 @@ class InputStage
     std::atomic<std::size_t>   liveMarginPub_{kLiveOverfillMarginBuffers * (kLiveDefaultTargetFrames / kLiveTargetBuffers)};
     std::atomic<std::uint64_t> liveRaises_{0};
     std::size_t   liveReadCount_   = 0; // samples taken from the ring in this chunk
+    // GAIN: the fade-in of the session's first start (latched with the session),
+    // and the level's rising step while the live input sounds.
+    std::uint32_t liveStartFade_   = static_cast<std::uint32_t>(kInputFadeFrames);
+    float         liveFadeStep_    = 1.0f / static_cast<float>(kInputFadeFrames);
 
     static_assert(std::atomic<InputBuffer*>::is_always_lock_free, "the hand-over must be lock-free");
     static_assert(std::atomic<float>::is_always_lock_free, "the gain must be lock-free");

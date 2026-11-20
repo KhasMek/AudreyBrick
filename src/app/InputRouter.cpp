@@ -18,16 +18,37 @@ void InputRouter::deliver(const ButtonEvent& be, double t) noexcept
         input_->onTabEntered();
 }
 
+bool InputRouter::chordAndDeliver(const ButtonEvent& be, double t) noexcept
+{
+    if(record_ == nullptr)
+    {
+        deliver(be, t);
+        return false;
+    }
+    const RecordChord::Out o = record_->onButton(be);
+    if(o.releaseY)
+        deliver(ButtonEvent{Button::Y, false}, t);
+    if(o.deliver)
+        deliver(be, t);
+    return o.toggle;
+}
+
+InputRouter::Result InputRouter::routeScripted(const ButtonEvent& be, double t) noexcept
+{
+    return chordAndDeliver(be, t) ? Result::RecordToggle : Result::Continue;
+}
+
 InputRouter::Result InputRouter::route(InputMap::Action action, const ButtonEvent& be, double t) noexcept
 {
     if(action == InputMap::Action::Quit)
         return Result::Quit;
     if(selftest_)
         return Result::Continue; // self-test: real input is ignored
+    bool toggled = false;
     switch(action)
     {
         case InputMap::Action::Button:
-            deliver(be, t);
+            toggled = chordAndDeliver(be, t); // REC: Start + Y first
             quit_.onButton(be); // watches Start; the model gets it too
             break;
         case InputMap::Action::MenuDown:
@@ -39,11 +60,15 @@ InputRouter::Result InputRouter::route(InputMap::Action action, const ButtonEven
             if(input_ != nullptr)
                 input_->releaseAll();
             quit_.releaseAll();
+            if(record_ != nullptr)
+                record_->releaseAll();
             break;
         case InputMap::Action::None:
         case InputMap::Action::Quit: break;
     }
-    return quit_.triggered() ? Result::MenuStart : Result::Continue;
+    if(quit_.triggered())
+        return Result::MenuStart;
+    return toggled ? Result::RecordToggle : Result::Continue;
 }
 
 } // namespace audreybrick

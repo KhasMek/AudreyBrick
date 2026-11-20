@@ -19,6 +19,13 @@
 // Then, outside self-test mode, Result::MenuStart once MenuQuit has triggered
 // (Menu + Start, app/MenuQuit.h).
 //
+// REC (docs/briefs/REC.md): with a RecordChord attached, every button event goes
+// through it first (app/RecordChord.h): it may hold back a Y event or ask for a
+// Y up to be delivered first, and it reports Start + Y as Result::RecordToggle
+// (MenuStart wins if both happen on one event: the app quits, which finishes
+// the recording). routeScripted() is the self-test's path: the chord, then
+// deliver(), no MenuQuit. Action::ReleaseAll also resets the chord.
+//
 // deliver() (M2b-A): one button event to the model and then to the input panel,
 // with whether the INPUT tab is current after the model has seen it (so the tab
 // L1/R1 lands on counts); when the event made INPUT current, the panel is told
@@ -35,6 +42,7 @@
 #include "app/Buttons.h"
 #include "app/ControlModel.h"
 #include "app/MenuQuit.h"
+#include "app/RecordChord.h"
 #include "input/InputController.h"
 #include "platform/InputMap.h"
 
@@ -49,23 +57,33 @@ class InputRouter
         Continue,  // nothing for the main loop to do
         Quit,      // InputMap reported a quit
         MenuStart, // Menu + Start on a pad: quit
+        RecordToggle, // REC: Start + Y: start or stop recording
     };
 
-    // `input`: the INPUT tab's panel (M2b-A), or nullptr for none.
-    InputRouter(ControlModel& model, MenuQuit& quit, bool selftest, InputController* input = nullptr) noexcept
-        : model_(model), quit_(quit), selftest_(selftest), input_(input)
+    // `input`: the INPUT tab's panel (M2b-A), or nullptr for none. `record`: the
+    // Start + Y chord (REC), or nullptr for none.
+    InputRouter(ControlModel& model, MenuQuit& quit, bool selftest, InputController* input = nullptr,
+                RecordChord* record = nullptr) noexcept
+        : model_(model), quit_(quit), selftest_(selftest), input_(input), record_(record)
     {
     }
 
     Result route(InputMap::Action action, const ButtonEvent& be, double t) noexcept;
     // One button event to the model and the input panel (not to MenuQuit).
     void deliver(const ButtonEvent& be, double t) noexcept;
+    // REC: a scripted (self-test) button event: the chord, then deliver().
+    // Returns RecordToggle or Continue.
+    Result routeScripted(const ButtonEvent& be, double t) noexcept;
 
   private:
     ControlModel&    model_;
     MenuQuit&        quit_;
     bool             selftest_;
     InputController* input_;
+    RecordChord*     record_;
+
+    // The chord and deliver(); true if it fired.
+    bool chordAndDeliver(const ButtonEvent& be, double t) noexcept;
 };
 
 } // namespace audreybrick

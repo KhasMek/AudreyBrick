@@ -30,6 +30,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 #include "app/UiSnapshot.h"
 
@@ -69,6 +70,14 @@ std::size_t formatClock(char* out, std::size_t size, float seconds) noexcept;
 // M2b-A2. A time as whole minutes and seconds, rounded down: "0:00", "1:23",
 // "10:00". Negative or not finite: "--".
 std::size_t formatMinSec(char* out, std::size_t size, float seconds) noexcept;
+
+// REC. An elapsed or recorded time in whole seconds: "0:00", "1:23", "59:59",
+// then with hours "1:00:00", "5:47:12".
+std::size_t formatRecordTime(char* out, std::size_t size, std::uint64_t wholeSeconds) noexcept;
+// REC. The header's readout for a record view (record/RecordView.h), upper case
+// (the font's letters): "REC 1:23", "REC 1:23 DROP 512" (DROP 99999+ above
+// that), "REC SAVING", "SAVED REC-0003.WAV 1:23", or the message. "" for None.
+std::size_t formatRecordReadout(char* out, std::size_t size, const UiRecordView& v) noexcept;
 
 // A knob's engine value in its unit, by the rules above ("" = plain, two decimals).
 std::size_t formatEngineValue(char* out, std::size_t size, float engine, const char* unit) noexcept;

@@ -18,6 +18,10 @@
 //      while the stage has nothing to give: the voice then runs exactly as with
 //      no input) into the two preallocated channel buffers, then interleaves them
 //      into the output and takes the per-channel peaks.
+//   3b. REC: if a recording tap is attached, offers it the finished
+//      interleaved block (`out`, exactly what goes to the device): copied into
+//      its ring only while it is armed (RecordTap::offer: a memory copy and
+//      a few atomics). It reads the output and never changes it.
 //   4. Reads the clock again and records the load (time / buffer duration); a
 //      callback that took longer than its buffer lasts (load above 1, a likely
 //      underrun) also increments the overrun counter (one relaxed atomic add).
@@ -44,6 +48,7 @@
 #include "core/AudreyVoice.h"
 #include "core/ControlSource.h"
 #include "input/InputStage.h"
+#include "record/RecordTap.h"
 #include "platform/Meters.h"
 
 namespace audreybrick
@@ -89,6 +94,11 @@ class AudioRender
     void attachInput(InputStage* stage) noexcept { input_ = stage; }
     InputStage* input() const noexcept { return input_; }
 
+    // REC: offers every finished output block to `tap` (nullptr: none). Call
+    // before audio starts, never while render() may run. The tap must outlive
+    // every render() call.
+    void attachRecorder(RecordTap* tap) noexcept { record_ = tap; }
+
     // Audio thread. Writes `frames` interleaved stereo float frames (2 * frames
     // floats). Before prepare(), writes silence.
     void render(float* interleaved, std::size_t frames) noexcept;
@@ -113,6 +123,7 @@ class AudioRender
     ClockFn        clock_;
     double         ticksPerSecond_;
     InputStage*    input_ = nullptr;
+    RecordTap*     record_ = nullptr;
 
     std::unique_ptr<float[]> left_;
     std::unique_ptr<float[]> right_;

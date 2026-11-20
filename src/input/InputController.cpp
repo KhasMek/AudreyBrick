@@ -54,6 +54,16 @@ double rampDistance(double tau) noexcept
     return s * a + (e - s) * a / 2.0 + e * (tau - a);
 }
 
+// "-6.0 dB", or "-inf dB" at 0 (GAIN log lines).
+void dbText(char* dst, std::size_t size, float n) noexcept
+{
+    const float db = inputGainDb(n);
+    if(std::isinf(db))
+        std::snprintf(dst, size, "-inf dB");
+    else
+        std::snprintf(dst, size, "%.1f dB", static_cast<double>(db));
+}
+
 void copyText(char* dst, std::size_t size, const char* src) noexcept
 {
     if(size == 0)
@@ -168,6 +178,42 @@ void InputController::setGain(float n) noexcept
 {
     gain_ = clampInputNorm(n);
     stage_.setGainNorm(gain_);
+}
+
+void InputController::setUserGain(float n) noexcept
+{
+    setGain(n);
+    // GAIN: the current source's slot, at once. LIVE with no device open, and
+    // OFF, have none.
+    if(source_ == InputSource::File)
+        fileGain_ = gain_;
+    else if(source_ == InputSource::Live && devOpen_ && devSlot_ >= 0)
+        gainSlots_[devSlot_].gain = gain_;
+}
+
+int InputController::findGainSlot(const std::string& name) const noexcept
+{
+    for(std::size_t i = 0; i < kLiveGainMemorySlots; ++i)
+        if(gainSlots_[i].used && gainSlots_[i].name == name)
+            return static_cast<int>(i);
+    return -1;
+}
+
+bool InputController::rememberedGain(const std::string& name, float& gainNorm) const noexcept
+{
+    const int i = findGainSlot(name);
+    if(i < 0)
+        return false;
+    gainNorm = gainSlots_[i].gain;
+    return true;
+}
+
+std::size_t InputController::rememberedDevices() const noexcept
+{
+    std::size_t n = 0;
+    for(const GainSlot& s : gainSlots_)
+        n += s.used ? 1 : 0;
+    return n;
 }
 
 void InputController::makeDpadInert() noexcept
@@ -345,7 +391,7 @@ void InputController::handleButton(const ButtonEvent& e, double t, bool onInputT
     {
         p.inert = true; // a reset press never ramps
         if(!leftRight)
-            setGain(kInputGainUnityNorm);
+            setUserGain(kInputGainUnityNorm);
         return;
     }
     if(down(opposite(e.button)))
@@ -362,7 +408,7 @@ void InputController::handleButton(const ButtonEvent& e, double t, bool onInputT
         return;
     }
     const bool fine = down(Button::Select);
-    setGain(gain_ + static_cast<float>(dir * (fine ? tuning::kTapStepFine : tuning::kTapStep)));
+    setUserGain(gain_ + static_cast<float>(dir * (fine ? tuning::kTapStepFine : tuning::kTapStep)));
 }
 
 void InputController::beginChoice()
@@ -470,7 +516,7 @@ void InputController::handleTick(double t)
                 double dist = rampDistance(tau1) - rampDistance(tau0);
                 if(down(Button::Select))
                     dist *= tuning::kFineRampScale;
-                setGain(gain_ + static_cast<float>(dir * dist));
+                setUserGain(gain_ + static_cast<float>(dir * dist));
             }
         }
     }
@@ -559,21 +605,32 @@ void InputController::setSource(InputSource s)
         closeDevice("the source left LIVE"); // the mic is never open unseen
         liveStatus_ = LiveStatus::None;
     }
-    // The stage follows source_ on every exit path, also if listing or
-    // reopening throws (out of memory; M2b-B review 2, M2).
-    try
+    // GAIN: FILE's own gain, stored BEFORE the stage is told the source (GAIN
+    // review, S1). pull() loads the gain before the source, so a pull that sees
+    // the source FILE has also seen this gain; the other order let a file start
+    // at the previous source's gain for a few tens of milliseconds. Nothing can
+    // sound at the wrong gain meanwhile: a LIVE source was closed above and is
+    // hold-only (its held output does not depend on the gain), OFF is silent,
+    // and a file still fading out already has FILE's gain or follows the
+    // smoothed change.
+    if(s == InputSource::File)
     {
-        if(s == InputSource::File)
-            selectFileSource();
-        if(s == InputSource::Live)
-            selectLiveSource(); // may reopen the device chosen before (gain to 0 first)
+        if(gain_ != fileGain_)
+        {
+            char db[24];
+            dbText(db, sizeof db, fileGain_);
+            logf("input: gain restored to %.3f (%s) for FILE", static_cast<double>(fileGain_), db);
+        }
+        setGain(fileGain_);
     }
-    catch(...)
-    {
-        stage_.setSource(s);
-        throw;
-    }
+    // The stage follows source_ at once, also if listing or reopening throws
+    // (out of memory; M2b-B review 2, M2). No device is open here (LIVE was left
+    // above, or was not the source).
     stage_.setSource(s);
+    if(s == InputSource::File)
+        selectFileSource();
+    if(s == InputSource::Live)
+        selectLiveSource(); // may reopen the device chosen before (gain to 0 first, then its own)
 }
 
 void InputController::toggleMode() noexcept
@@ -940,6 +997,7 @@ void InputController::closeDevice(const char* reason) noexcept
         backend_->takeLog(log_); // the mixer restore's lines
     devOpen_      = false;
     devOpenIndex_ = -1;
+    devSlot_      = -1; // GAIN: gain changes are no longer remembered for it
 }
 
 void InputController::openDevice(int index)
@@ -952,6 +1010,7 @@ void InputController::openDevice(int index)
     std::string    name   = devices_[static_cast<std::size_t>(index)];
     std::string    open   = name;
     std::string    chosen = name;
+    std::string    slotName = name; // GAIN: a new slot's name (swapped in after the open)
     LiveOpenResult r;
     r.askedName = def ? std::string() : name;
     r.error.reserve(64);
@@ -960,12 +1019,21 @@ void InputController::openDevice(int index)
         std::snprintf(asked, sizeof asked, "the system default (NULL)");
     else
         std::snprintf(asked, sizeof asked, "'%.150s'", name.c_str());
+    // GAIN: a gain remembered for this name in this run (none: the first open,
+    // which stays at zero).
+    const int  knownSlot  = findGainSlot(name);
+    const bool restoring  = knownSlot >= 0;
+    const float remembered = restoring ? gainSlots_[knownSlot].gain : 0.0f;
     // The howl safeguard, in this order: the gain to zero, then the old device
     // closed (which advances the ring's session), then a new session, then the
-    // open. So the gain is zero before any session the stage can see.
+    // open. So the gain is zero before any session the stage can see. The fade-in
+    // asked for the new session's start goes with the session (100 ms when a
+    // gain above zero will be restored, else the usual 10 ms).
     if(gain_ > 0.0f)
         logf("input: gain %.3f -> 0 (-inf dB) before opening a capture device", static_cast<double>(gain_));
     setGain(0.0f);
+    stage_.setLiveStartFadeFrames(restoring && remembered > 0.0f ? kLiveRestoreFadeFrames
+                                                                 : static_cast<std::size_t>(kInputFadeFrames));
     closeDevice("another device chosen");
     if(live_ != nullptr)
         live_->newSession();
@@ -996,6 +1064,42 @@ void InputController::openDevice(int index)
              "%d frames; route %s) in %.1f ms",
              devOpenName_.c_str(), asked, r.askedRate, r.askedFormat.c_str(), r.askedChannels, r.askedFrames, r.rate,
              r.format.c_str(), r.channels, r.frames, r.route.empty() ? "-" : r.route.c_str(), 1000.0 * r.seconds);
+        // GAIN: only now, after the open succeeded, the remembered gain (the
+        // stage holds it back until it has seen the new session and buffered;
+        // the start then fades in over 100 ms). A first open gets a slot at 0;
+        // when the table is full the least recently opened name is forgotten.
+        ++openSeq_;
+        if(restoring)
+        {
+            devSlot_                   = knownSlot;
+            gainSlots_[devSlot_].opened = openSeq_;
+            setGain(remembered);
+            char db[24];
+            dbText(db, sizeof db, remembered);
+            logf("input: gain restored to %.3f (%s) for '%s'", static_cast<double>(remembered), db, devOpenName_.c_str());
+        }
+        else
+        {
+            int at = -1;
+            for(std::size_t i = 0; i < kLiveGainMemorySlots && at < 0; ++i)
+                if(!gainSlots_[i].used)
+                    at = static_cast<int>(i);
+            if(at < 0)
+            {
+                at = 0;
+                for(std::size_t i = 1; i < kLiveGainMemorySlots; ++i)
+                    if(gainSlots_[i].opened < gainSlots_[at].opened)
+                        at = static_cast<int>(i);
+                logf("input: gain memory full (%zu devices): '%s' forgotten", kLiveGainMemorySlots,
+                     gainSlots_[at].name.c_str());
+            }
+            GainSlot& s = gainSlots_[at];
+            s.used      = true;
+            s.name.swap(slotName);
+            s.gain   = 0.0f;
+            s.opened = openSeq_;
+            devSlot_ = at;
+        }
     }
     else
     {

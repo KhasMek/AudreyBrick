@@ -11,6 +11,10 @@
 //                  tick; while A is held the bar is striped, a plate reads
 //                  "MAX +12.0 dB" in the half away from the stored-value marker,
 //                  and "STORED" labels the big number.
+//                  REC: under the bar's left part (x 20, y 158, 16 px, red, at
+//                  most 30 characters, so it ends before the "0 dB" label) the
+//                  recording readout: REC m:ss [DROP n], REC SAVING, SAVED
+//                  <NAME> m:ss, or a REC message (record/RecordView.h).
 //   switch box     inverse and "ON" when on, LATCHED / HELD / LATCH+HELD, B key
 //                  (lit only for the momentary hold).
 //   current tab    one row per bound d-pad binding: arrows (with an X key for X
@@ -73,6 +77,10 @@
 //                  tab's cells framed; the twelfth cell is the CPU meter.
 //   status line    audio spec, dropped commands, controller / keyboard hint;
 //                  cut names end in "..".
+//   REC border     DrawList::recBorder while recording or finalising: a 4-pixel
+//                  red frame on the screen's outermost pixels, drawn by the
+//                  renderer after everything (also over the pop-up). Nothing
+//                  else is drawn within 4 pixels of the edge.
 //   footer         the global buttons; an entry is drawn in inverse video while
 //                  its button is held (this is also where FINE, X and Y show).
 

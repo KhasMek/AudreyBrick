@@ -1,0 +1,18 @@
+# REC self-test script: raise the feedback, record about 3 s with Start + Y, stop
+# with the buttons in the other order (Y, then Start).
+#
+# Feedback: R2 held 0.2 to 2.7 s (a 0.5 dB tap plus 2.25 s at 24 dB/s = 54.5 dB
+# above the -60 dB start: about -5.5 dB, which drones audibly within a second).
+0.20  R2     down
+2.70  R2     up
+# Start, then Y: the chord at 0.60 s starts the recording; this Y has no other
+# effect (it is held back from the model).
+0.50  Start  down
+0.60  Y      down
+0.70  Y      up
+0.80  Start  up
+# Y, then Start: the chord at 3.60 s stops it (about 3.0 s recorded).
+3.50  Y      down
+3.60  Start  down
+3.70  Start  up
+3.80  Y      up

@@ -96,7 +96,13 @@ void InputStage::setSource(InputSource s) noexcept
 
 void InputStage::setGainNorm(float n) noexcept
 {
-    gainTarget_.store(inputGainFromNorm(n), std::memory_order_relaxed);
+    gainTarget_.store(inputGainFromNorm(n), std::memory_order_release); // GAIN: see "Memory order"
+}
+
+void InputStage::setLiveStartFadeFrames(std::size_t frames) noexcept
+{
+    const std::size_t f = frames < 1 ? 1 : (frames > kLiveRestoreFadeFrames ? kLiveRestoreFadeFrames : frames);
+    liveStartFadeReq_.store(static_cast<std::uint32_t>(f), std::memory_order_relaxed); // released by newSession()
 }
 
 void InputStage::setPlayMode(InputPlayMode m) noexcept
@@ -254,6 +260,7 @@ void InputStage::liveChunkStart(InputSource src, float& gt, std::size_t frames) 
     {
         liveSessionSeen_  = ses;
         liveW_            = live_->writeIndex();
+        liveStartFade_    = liveStartFadeReq_.load(std::memory_order_relaxed); // set before the session (GAIN)
         liveHoldOnly_     = true;
         liveLastUnderrun_ = kNoUnderrun;
         setLiveBuffers(liveConfBuffers_);
@@ -356,19 +363,30 @@ void InputStage::liveChunkStart(InputSource src, float& gt, std::size_t frames) 
     // snaps to its target, read again here (after the session and the writer's
     // index): the level is 0, so nothing clicks; a gain set to zero before a
     // device opened is exactly zero for its first sample.
+    // GAIN: the gain is read (acquire) and then the session once more; a session
+    // advanced meanwhile means this gain may be the next device's (restored by
+    // the UI after its open): no start now, the next pull() handles the session.
+    // The first start of a session fades in over the length latched with it
+    // (100 ms after an open that restored a remembered gain), later ones over 10 ms.
     if(sounding_ == InputSource::Live && src == InputSource::Live && !liveRunning_ && !(level_ > 0.0f) &&
        liveW_ - liveRead_ >= liveTarget_)
     {
-        liveRead_     = liveW_ - liveTarget_;
-        liveRunning_  = true;
-        liveHoldOnly_ = false;
-        liveXf_       = 0;
-        liveXfLen_    = 0;
-        liveHoldOut_  = 0.0f;
-        gt            = gainTarget_.load(std::memory_order_relaxed);
-        gain_         = gt;
-        liveResetBaseline();
-        livePublishRead();
+        const float startGain = gainTarget_.load(std::memory_order_acquire);
+        if(live_->session() == liveSessionSeen_)
+        {
+            liveRead_      = liveW_ - liveTarget_;
+            liveRunning_   = true;
+            liveHoldOnly_  = false;
+            liveXf_        = 0;
+            liveXfLen_     = 0;
+            liveHoldOut_   = 0.0f;
+            gt             = startGain;
+            gain_          = gt;
+            liveFadeStep_  = 1.0f / static_cast<float>(liveStartFade_);
+            liveStartFade_ = static_cast<std::uint32_t>(kInputFadeFrames);
+            liveResetBaseline();
+            livePublishRead();
+        }
     }
     if(src == InputSource::Live || sounding_ == InputSource::Live)
         live_->publishFill(static_cast<std::size_t>(liveW_ - liveRead_));
@@ -425,10 +443,11 @@ const float* InputStage::pull(std::size_t frames) noexcept
     //    thread stores the source, then increments the generation. The source is
     //    read before the exchange: the UI thread hands over a buffer before it
     //    changes the source, so a source seen here comes with every buffer offered
-    //    before it.
+    //    before it. GAIN: the gain first (acquire): a gain the UI stored after a
+    //    source change or a session advance comes with them (see "Memory order").
+    float               gt   = gainTarget_.load(std::memory_order_acquire);
     const std::uint32_t gen  = sourceGen_.load(std::memory_order_acquire);
     const auto          src  = static_cast<InputSource>(source_.load(std::memory_order_acquire));
-    float               gt   = gainTarget_.load(std::memory_order_relaxed);
     const auto          mode = static_cast<InputPlayMode>(mode_.load(std::memory_order_relaxed));
     const std::uint32_t rq   = restartReq_.load(std::memory_order_relaxed);
 
@@ -548,18 +567,28 @@ const float* InputStage::pull(std::size_t frames) noexcept
     const float*    tab   = xfTable_.get();
     float*          out   = out_.get();
     float           peak  = 0.0f;
+    // GAIN: while the sounding source fades out because another one is chosen,
+    // the gain is held (that source fades at its own gain); it snaps to the
+    // target when the level is 0 and the chosen source takes over (below).
+    float gUse = (sounding_ != src && level_ > 0.0f) ? gain_ : gt;
     for(std::size_t i = 0; i < frames; ++i)
     {
         if(target > level_)
-            level_ = level_ + kStep < 1.0f ? level_ + kStep : 1.0f;
+        {
+            const float up = sounding_ == InputSource::Live ? liveFadeStep_ : kStep; // GAIN: 100 ms after a restore
+            level_         = level_ + up < 1.0f ? level_ + up : 1.0f;
+        }
         else if(target < level_)
-            level_ = level_ - kStep > 0.0f ? level_ - kStep : 0.0f;
+        {
+            liveFadeStep_ = kStep; // a fade-out ends a long fade-in; a rise after it is 10 ms
+            level_        = level_ - kStep > 0.0f ? level_ - kStep : 0.0f;
+        }
 
-        const float d    = gt - gain_;
+        const float d    = gUse - gain_;
         const float next = gain_ + gainCoef_ * d;
         // Snap once the step no longer changes the float (or is negligible), so
         // the target is reached exactly instead of stalling a few ULPs short.
-        gain_ = (std::fabs(d) < kGainSnap || next == gain_) ? gt : next;
+        gain_ = (std::fabs(d) < kGainSnap || next == gain_) ? gUse : next;
 
         float v = 0.0f;
         if(level_ > 0.0f && sounding_ == InputSource::Live)
@@ -625,6 +654,9 @@ const float* InputStage::pull(std::size_t frames) noexcept
                 if(sounding_ == InputSource::Live)
                     liveRunning_ = false;
                 sounding_ = src;
+                // GAIN: the level is 0: the gain snaps to the chosen source's.
+                gUse  = gt;
+                gain_ = gt;
                 if(sounding_ == InputSource::File)
                     cur_.rewind();
                 target = targetNow();

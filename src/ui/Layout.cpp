@@ -45,6 +45,10 @@ constexpr int kFbBarY = 108;
 constexpr int kFbBarW = 568;
 constexpr int kFbBarH = 36;
 constexpr int kSwX    = 720;
+// REC: the readout's place in the feedback band (x 20.., y 158..174).
+constexpr int kRecReadoutX     = 20;
+constexpr int kRecReadoutY     = kFbBarY + kFbBarH + 14; // 158, the line of the "0 dB" label
+constexpr int kRecReadoutChars = 30;                     // 480 px: ends at x 500, "0 dB" starts at 517
 constexpr int kSwW    = 296;
 
 // The current tab's area: y 184..472. One or two bindings: tall rows (140 px,
@@ -502,6 +506,18 @@ void feedbackBand(Builder& b, const UiSnapshot& s) noexcept
                unity ? RectTag::UnityTick : RectTag::None);
     }
     b.textCentered(kFbBarX + (5 * kFbBarW) / 6, kFbBarY + kFbBarH + 14, 2, pal::dim, TextRole::FeedbackScale, "0 dB");
+
+    // REC: the readout, under the left part of the feedback bar (free on every
+    // tab: below the L2 key and the scale ticks, left of the "0 dB" label), red
+    // at 16 px. At most kRecReadoutChars characters, so it ends before "0 dB".
+    if(s.record.show != RecordShow::None)
+    {
+        char rec[48];
+        formatRecordReadout(rec, sizeof rec, s.record);
+        if(std::strlen(rec) > static_cast<std::size_t>(kRecReadoutChars))
+            rec[kRecReadoutChars] = '\0';
+        b.text(kRecReadoutX, kRecReadoutY, 2, pal::clip, TextRole::RecStatus, rec);
+    }
 }
 
 void switchBox(Builder& b, const UiSnapshot& s) noexcept
@@ -1894,6 +1910,9 @@ void buildLayout(const UiSnapshot& s, const MeterView& m, DrawList& out) noexcep
     if(s.tab == Tab::Input && (s.input.source == InputSource::File || s.input.source == InputSource::Live) &&
        s.input.popup && s.input.choosing)
         inputPopup(b, s);
+    // REC: the border, drawn by the renderer after everything else.
+    out.recBorder      = s.record.border;
+    out.recBorderColor = pal::clip;
 }
 
 } // namespace ui

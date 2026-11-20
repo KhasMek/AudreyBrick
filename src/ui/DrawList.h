@@ -14,7 +14,9 @@
 // dropped and counted in `overflow`. The limits default to the capacities and
 // can be lowered (tests use this to force an overflow).
 //
-// Drawing order: all rectangles in order, then all triangles, then all text.
+// Drawing order: all rectangles in order, then all triangles, then all text
+// (the base layer, then the overlay panels the same way); REC: the recording
+// border (recBorder) last of all, over everything.
 
 #pragma once
 
@@ -103,6 +105,7 @@ enum class TextRole : std::uint8_t
     InputMeterText, // M2b-A: the input meters' labels (IN, the scale, the peak value)
     PopupText,      // M2b-A3: the pop-up list's header, names, marks and hints
     InputWarning,   // M2b-B: SPEAKER + MIC CAN HOWL / USE HEADPHONES OR KEEP GAIN LOW
+    RecStatus,      // REC: the header's REC m:ss / SAVED .. / REC: .. readout
 };
 
 struct TextItem
@@ -196,6 +199,13 @@ struct DrawList
     std::size_t overflow   = 0; // items dropped because a list was at its limit
     Color       background;
 
+    // REC: while recording or finalising, a solid frame of kRecBorderPx pixels on
+    // the outermost pixels of the screen, drawn after everything else (no panel:
+    // it covers the whole screen's edge, over the base layer and any overlay).
+    static constexpr int kRecBorderPx = 4;
+    bool                 recBorder    = false;
+    Color                recBorderColor;
+
     // Limits (at most the capacities above; lowered only by tests).
     std::size_t textLimit  = kMaxTexts;
     std::size_t rectLimit  = kMaxRects;
@@ -211,6 +221,7 @@ struct DrawList
         panelCount = 0;
         keyCount   = 0;
         overflow   = 0;
+        recBorder  = false;
     }
 };
 

@@ -249,7 +249,7 @@ int main()
         ctl.fill(v);
         check(ctl.devices().size() == 3 && ctl.deviceOpen() && v.deviceOpen && ctl.gainNorm() == 0.0f &&
                   ctl.deviceOpenIndex() == cursor,
-              "plugged in again: listed; chosen from the pop-up it opens, the gain zero again");
+              "plugged in again: listed; chosen from the pop-up it opens, the gain zero (a device not opened before in this session)");
         ctl.stop();
         sim.close();
     }
@@ -328,15 +328,15 @@ int main()
             switch(rnd(3))
             {
                 case 0:
-                    choose(Button::DpadRight); // loud (gain to zero first)
+                    choose(Button::DpadRight); // loud (gain to zero first; GAIN: its remembered gain is 0)
                     ++opensLoud;
                     wait(rnd(40));
-                    choose(Button::DpadLeft); // back to quiet (gain zero again)
+                    choose(Button::DpadLeft); // back to quiet (zero first, then its remembered unity)
                     break;
                 case 1:
                     press(Button::DpadLeft); // FILE: closes
                     wait(rnd(5));
-                    press(Button::DpadRight); // LIVE: quiet reopens at gain zero
+                    press(Button::DpadRight); // LIVE: quiet reopens at zero, then its remembered unity
                     break;
                 default: wait(rnd(10)); break;
             }

@@ -709,6 +709,55 @@ inline UiSnapshot inIndicatorLiveSnapshot()
     return s;
 }
 
+// REC: the recording views.
+inline void setRecording(UiSnapshot& s, std::uint64_t seconds, std::uint64_t dropped)
+{
+    s.record            = UiRecordView{};
+    s.record.border     = true;
+    s.record.show       = RecordShow::Recording;
+    s.record.sampleRate = 48000;
+    s.record.frames     = seconds * 48000u + 1234u;
+    s.record.dropped    = dropped;
+}
+inline UiSnapshot recordingSnapshot(Tab tab)
+{
+    UiSnapshot s = playingSnapshot(tab);
+    setRecording(s, 83, 512); // REC 1:23 DROP 512
+    return s;
+}
+inline UiSnapshot recordPopupSnapshot()
+{
+    UiSnapshot s = inputPopupTwelveSnapshot();
+    setRecording(s, 5 * 3600 + 47 * 60 + 12, 123456); // REC 5:47:12 DROP 99999+ over the pop-up
+    return s;
+}
+inline UiSnapshot recordSavingLiveSnapshot()
+{
+    UiSnapshot s     = inputLivePopupSnapshot();
+    s.record         = UiRecordView{};
+    s.record.border  = true;
+    s.record.show    = RecordShow::Saving;
+    return s;
+}
+inline UiSnapshot recordSavedSnapshot()
+{
+    UiSnapshot s     = stressSnapshot();
+    s.record         = UiRecordView{};
+    s.record.show    = RecordShow::Saved;
+    std::snprintf(s.record.name, sizeof s.record.name, "%s", "rec-10000.wav");
+    s.record.seconds = 5 * 3600 + 47 * 60 + 12.9; // SAVED REC-10000.WAV 5:47:12
+    return s;
+}
+inline UiSnapshot recordMessageSnapshot()
+{
+    UiSnapshot s     = playingSnapshot(Tab::Delay);
+    uitest::setFeedback(s, 1.0f, true); // the MAX plate and the stored marker too
+    s.record         = UiRecordView{};
+    s.record.show    = RecordShow::Message;
+    s.record.message = "REC STOPPED: FILE LIMIT";
+    return s;
+}
+
 struct NamedSnapshot
 {
     const char* name;
@@ -791,6 +840,11 @@ inline std::vector<NamedSnapshot> allSnapshots()
         {"input_live_long_name", inputLiveLongNameSnapshot()},
         {"input_live_popup_long", inputLivePopupLongSnapshot()},
         {"in_indicator_live_delay", inIndicatorLiveSnapshot()},
+        {"rec_loop", recordingSnapshot(Tab::Loop)},
+        {"rec_popup_12_files", recordPopupSnapshot()},
+        {"rec_saving_live_popup", recordSavingLiveSnapshot()},
+        {"rec_saved", recordSavedSnapshot()},
+        {"rec_message_max", recordMessageSnapshot()},
     };
 }
 

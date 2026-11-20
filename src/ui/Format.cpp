@@ -182,6 +182,52 @@ std::size_t formatMinSec(char* out, std::size_t size, float seconds) noexcept
     return finish(out, size, std::snprintf(out, size, "%ld:%02ld", s / 60, s % 60));
 }
 
+std::size_t formatRecordTime(char* out, std::size_t size, std::uint64_t s) noexcept
+{
+    const unsigned long long h = s / 3600, m = (s / 60) % 60, sec = s % 60;
+    if(h > 0)
+        return finish(out, size, std::snprintf(out, size, "%llu:%02llu:%02llu", h, m, sec));
+    return finish(out, size, std::snprintf(out, size, "%llu:%02llu", m, sec));
+}
+
+std::size_t formatRecordReadout(char* out, std::size_t size, const UiRecordView& v) noexcept
+{
+    char t[32];
+    switch(v.show)
+    {
+        case RecordShow::None: return finish(out, size, std::snprintf(out, size, "%s", ""));
+        case RecordShow::Recording:
+        {
+            const std::uint64_t rate = v.sampleRate > 0 ? static_cast<std::uint64_t>(v.sampleRate) : 48000u;
+            formatRecordTime(t, sizeof t, v.frames / rate);
+            if(v.dropped == 0)
+                return finish(out, size, std::snprintf(out, size, "REC %s", t));
+            if(v.dropped > 99999)
+                return finish(out, size, std::snprintf(out, size, "REC %s DROP 99999+", t));
+            return finish(out, size,
+                          std::snprintf(out, size, "REC %s DROP %llu", t, static_cast<unsigned long long>(v.dropped)));
+        }
+        case RecordShow::Saving: return finish(out, size, std::snprintf(out, size, "REC SAVING"));
+        case RecordShow::Saved:
+        {
+            char name[sizeof v.name];
+            std::size_t i = 0;
+            for(; i + 1 < sizeof name && v.name[i] != '\0'; ++i)
+            {
+                const char c = v.name[i];
+                name[i]      = c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
+            }
+            name[i] = '\0';
+            const double secs = std::isfinite(v.seconds) && v.seconds > 0.0 ? v.seconds : 0.0;
+            formatRecordTime(t, sizeof t, static_cast<std::uint64_t>(std::floor(secs + 1e-9)));
+            return finish(out, size, std::snprintf(out, size, "SAVED %s %s", name, t));
+        }
+        case RecordShow::Message:
+            return finish(out, size, std::snprintf(out, size, "%s", v.message != nullptr ? v.message : ""));
+    }
+    return finish(out, size, std::snprintf(out, size, "%s", ""));
+}
+
 std::size_t formatEngineValue(char* out, std::size_t size, float engine, const char* unit) noexcept
 {
     if(unit == nullptr)

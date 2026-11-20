@@ -240,3 +240,17 @@ Package `8b45e8c-dirty` (the M2b-B2 tree), default governor, about 12 minutes. *
 | USB after the change | Still opens by name (105 ms, 2 channels); the target was raised to 2048 frames within 0.2 s as before. Unplugging is reported as DEVICE LOST within 50 ms, and the mic reopens afterwards |
 | Close time | 46 to 77 ms for either device |
 | Output load | 31 to 37 % average as before; 1 late callback (115 %) in the run, at the moment the USB device was unplugged |
+
+### Recording run (2026-11-19 and 2026-11-20)
+
+Package `de2fc16-dirty` (the REC tree), default governor, three sessions, six recordings. **[confirmed, device log and the human's report]** The human reports recording working as expected and the files playing.
+
+| Item | Finding |
+|---|---|
+| SD card writes | 205 ten-second windows of recording: longest single write **27.7 ms** (typically 8 ms); the 4-second ring never held more than **9728 frames (0.20 s)**; **0 dropped frames** in every recording |
+| Longest recording | 27 min 52 s (`rec-0002.wav`, 321 MB), written without a drop |
+| Finishing a file | 30 to 66 ms from the stop press to the file closed |
+| Files | Six files; each size equals its logged data bytes plus the 44-byte header. Numbering continued across app restarts (`rec-0001` to `rec-0006`) |
+| Free space | `statvfs` on the card reports about 92.7 GiB free; the launcher and app agree |
+| Recording across sources | Recordings ran through source changes and capture-device opens with no drops |
+| Not exercised | No recording was stopped by quitting in these logs (all six stopped with Start + Y); the file limit and card-full stops have only been tested with injected limits |

@@ -168,6 +168,13 @@ constexpr std::size_t kLiveDefaultTargetFrames = 512;
 // The skip's linear crossfade between the old and the new read position: this
 // many samples (10 ms), or the target if that is smaller.
 constexpr std::size_t kLiveSkipCrossfadeFrames = 480;
+// GAIN (2026-11-20): the fade-in of a live session whose open restored a
+// remembered gain above zero (InputStage::setLiveStartFadeFrames()): linear, this
+// many samples (100 ms) instead of kInputFadeFrames. Only the session's first start.
+constexpr std::size_t kLiveRestoreFadeFrames = 4800;
+// GAIN: the input gain is remembered per capture device for the running session,
+// for at most this many device names (the least recently opened is forgotten).
+constexpr std::size_t kLiveGainMemorySlots = 8;
 // The UI treats an open device as lost when it has delivered nothing for this long.
 constexpr double kLiveStallSeconds = 3.0;
 // Capture samples are clamped to +/- this after the mono mix, as file samples are.

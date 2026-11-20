@@ -65,7 +65,8 @@ The human commits. The orchestrator stops at each point and proposes a message.
 | 14 | M2b plan | Committed |
 | 15 | M2b-A and M2b-A2: the input stage, the INPUT tab, file input with a hold-X pop-up browser (M2b-A3), crossfade, LOOP/ONCE and a 10-minute cap, reviewed; device checklist | Committed |
 | 16 | M2b-B: live input (LIVE source, device chooser, capture ring with drift handling, howl safeguards), reviewed; device checklist | Committed |
-| 17 | M2b-B2: the built-in mic on the direct hardware route (mono, mixer set and restored), no SYSTEM DEFAULT on ALSA, reviewed; confirmed on the Brick | Ready to commit |
+| 17 | M2b-B2: the built-in mic on the direct hardware route (mono, mixer set and restored), no SYSTEM DEFAULT on ALSA, reviewed; confirmed on the Brick | Committed (de2fc16) |
+| 18 | REC: recording the output to a 16-bit WAV on Start + Y, red border and REC readout (`docs/briefs/REC.md`), reviewed; device checklist `docs/RECORDING_RUN_BRICK.md` | Committed; confirmed on the Brick |
 
 ## What was verified and how
 
@@ -310,6 +311,9 @@ Decision: choose a playable init patch by ear after the presets work (M5). Until
 
 ## Log
 
+- 2026-11-20: Recording device run: six recordings, no drops, longest write 28 ms (`PLATFORM_NOTES.md`, "Recording run"); committed. The human asked for the input gain to be kept per source within a session (FILE, and each capture device by name; first open of a device still at -inf). Implemented, reviewed (nothing blocking; the FILE gain-before-source ordering fix and howl guidance applied by the orchestrator and confirmed with the reviewer's probe), verified: Release 72/72, ASan/UBSan 72/72, TSan 64/64, no-SDL 52/52, Linux 52/52, device build 72/72, rootfs checks 234 pass. Open: two quick opens can give the first a 10 ms fade-in. Awaiting the device run ("Gain memory" steps in `RECORDING_RUN_BRICK.md`).
+- 2026-11-19: REC implemented, reviewed (nothing blocking) and verified from clean builds: Release 72/72, ASan/UBSan 72/72, TSan 64/64, no-SDL 52/52, Linux 52/52 (17 of 25 references), device build 72/72, rootfs checks 234 pass. Accepted as built: Y-before-Start on INPUT with X held still toggles LOOP/ONCE; readout under the feedback bar; limits in MiB. Open: the border-drawn-last screenshot test is vacuous. Stopped at commit point 18 for the device run.
+- 2026-11-19: The human chose the recording design: Start + Y, 16-bit, no length cap (only the WAV limit and card space), red border plus REC time. Brief written (`docs/briefs/REC.md`); implementation started.
 - 2026-11-19: Built-in mic device run: the direct route, the mixer set and restore, and USB by name all work on the Brick (`PLATFORM_NOTES.md`, "Built-in mic run"). M2b is confirmed on the device; commit point 17 is ready.
 - 2026-11-19: M2b-B2 (built-in mic: direct hardware route through `AUDIODEV`, mixer set and restore with `amixer`, mono, no SYSTEM DEFAULT on ALSA) implemented and reviewed (nothing blocking; follow-ups applied and verified by the orchestrator, not re-reviewed). Orchestrator's clean runs: macOS Release 64/64, ASan/UBSan 64/64, TSan 56/56, no-SDL 46/46, Debian 13 containers 46/46 each, vendor and reference checks OK, `make_port.sh` exit 0 with 234 PASS and 0 FAIL. None of the built-in mic route has run on the device. Commit point 16 (M2b-B) was committed by the human as `8b45e8c`; this is commit point 17.
 - 2026-11-19: Live-input device run: USB capture works; the built-in mic does not (results and diagnosis in `PLATFORM_NOTES.md`, "Live input run and capture diagnosis"). The human allowed adb for the diagnosis, with a rule to ask before anything further on the device. Brief M2b-B2 (direct hardware route, mixer set-up, no SYSTEM DEFAULT on ALSA) written and delegated.

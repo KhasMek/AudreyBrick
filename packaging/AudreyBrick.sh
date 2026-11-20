@@ -23,6 +23,11 @@
 #     files in it; M2b-A) with a plain mkdir -p, notes in stdout.log how many WAV
 #     files it holds, and passes its path to the app (--input-dir). A folder that
 #     cannot be created is not fatal: the app then shows no files;
+#   - creates audreybrick/data/recordings (Start + Y records the output there as
+#     rec-0001.wav, rec-0002.wav, ...; REC) the same way, notes in stdout.log how
+#     many recordings it holds, and passes its path to the app (--record-dir). A
+#     folder that cannot be created is not fatal: the app tries again when a
+#     recording starts and shows REC: CANNOT CREATE FILE if that fails too;
 #   - keeps the device awake while the app runs (see AUDREY_KEEP_AWAKE);
 #   - makes the A, B, X and Y buttons match their labels (see AUDREY_SWAP_AB and
 #     AUDREY_SWAP_XY);
@@ -51,7 +56,8 @@
 # in data/: the keep-awake file it created, and, only with AUDREY_GOVERNOR set, the
 # scaling_governor files of the CPU frequency policies whose governor it changed
 # (written back only while they still hold the governor this script set). It also
-# creates the folder data/input if it is missing, and never touches what is in it.
+# creates the folders data/input and data/recordings if they are missing, and never
+# touches what is in them.
 #
 # Signals: before the app has started, TERM, INT and HUP only set a flag; the
 # script checks it at safe points and then stops through its normal exit (which
@@ -303,6 +309,17 @@ main() {
         note "input folder: could not create $INPUT_DIR; the INPUT tab will show no files (not fatal)"
     fi
 
+    # --- Recordings folder (REC): data/recordings, next to data/input ---------------------------
+    # Always $APP_DIR/data/recordings. Counted with a glob (no command substitution).
+    RECORD_DIR="$APP_DIR/data/recordings"
+    if mkdir -p "$RECORD_DIR" 2>/dev/null && [ -d "$RECORD_DIR" ]; then
+        n_rec=0
+        for f in "$RECORD_DIR"/rec-*.[wW][aA][vV]; do [ -f "$f" ] && n_rec=$((n_rec + 1)); done
+        note "recordings folder: $RECORD_DIR ($n_rec recording(s); Start + Y records into it)"
+    else
+        note "recordings folder: could not create $RECORD_DIR; the app tries again when a recording starts (not fatal)"
+    fi
+
     # --- Checks ---------------------------------------------------------------------------
     if [ ! -f "$BIN" ]; then
         problem "$BIN is missing; copy the whole audreybrick folder next to AudreyBrick.sh"
@@ -468,6 +485,8 @@ main() {
             echo "launcher: ${cf##*/} governor $(cat "$cf/scaling_governor" 2>/dev/null), cur $(cat "$cf/scaling_cur_freq" 2>/dev/null) kHz, min $(cat "$cf/scaling_min_freq" 2>/dev/null) kHz, max $(cat "$cf/scaling_max_freq" 2>/dev/null) kHz, cpus $(cat "$cf/affected_cpus" 2>/dev/null), available governors: $(cat "$cf/scaling_available_governors" 2>/dev/null)"
         done
         if have df; then echo "launcher: free space on the log folder: $(df -h "$DATA" 2>/dev/null | tail -n 1)"; else echo "launcher: df not found"; fi
+        # REC: the data folder (recordings need 200 MiB free to start; they stop below 100 MiB).
+        if have df; then echo "launcher: free space on the data folder ($APP_DIR/data): $(df -h "$APP_DIR/data" 2>/dev/null | tail -n 1)"; fi
         if [ -z "$TO" ]; then
             echo "launcher: audio server state skipped (no timeout)"
         elif have pactl; then
@@ -578,7 +597,7 @@ main() {
     # If this script is killed with SIGKILL its EXIT trap does not run; the app then
     # removes the pause file itself (--remove-on-exit) and restores the governors
     # (--restore-on-exit <file> <found> <set>, one per policy).
-    args=(--fullscreen --exit-with-parent --buffer "$buffer" --live-target-buffers "$live_target" --log "$LOG" --input-dir "$INPUT_DIR")
+    args=(--fullscreen --exit-with-parent --buffer "$buffer" --live-target-buffers "$live_target" --log "$LOG" --input-dir "$INPUT_DIR" --record-dir "$RECORD_DIR")
     [ "$swap_ab" -eq 1 ] && args+=(--swap-ab)
     [ "$swap_xy" -eq 1 ] && args+=(--swap-xy)
     [ "$PAUSE_MADE" -eq 1 ] && args+=(--remove-on-exit "$PAUSE_FILE")

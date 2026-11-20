@@ -4,7 +4,8 @@
 # audrey_control (src/control/CMakeLists.txt).
 #
 # M3-A adds:
-#   audrey_app_core (static, no SDL): the Menu + Start quit (M3-C), the diagnostic
+#   audrey_app_core (static, no SDL): the Menu + Start quit (M3-C) and the Start + Y
+#     recording chord (REC, RecordChord.cpp), the diagnostic
 #     log's file, formatting and rate limiting, and the build information. Built
 #     with or without SDL, so it is tested everywhere. M3-B adds the CPU frequency
 #     reader (CpuFreq.cpp), restore-on-exit (RestoreOnExit.cpp) and the stop-signal
@@ -19,6 +20,7 @@
 #     <prefix>/libs.aarch64/libaudrey_lgpl.so. Used by scripts/build_device.sh.
 add_library(audrey_app_core STATIC
     MenuQuit.cpp
+    RecordChord.cpp
     DiagLog.cpp
     BuildInfo.cpp
     CpuFreq.cpp
@@ -36,7 +38,8 @@ if(AB_HAVE_SDL)
         InputRouter.cpp
     )
     # M2b-A: the input panel (InputController, src/input), which InputRouter feeds.
-    target_link_libraries(audrey_app_sdl PUBLIC audrey_app_core audrey_platform_sdl audrey_input)
+    # REC: the recorder, which App.cpp (the app and platform_app_test) owns.
+    target_link_libraries(audrey_app_sdl PUBLIC audrey_app_core audrey_platform_sdl audrey_input audrey_record)
     # InputMap.h -> Buttons.h only; no DSP headers, but the same options as the app.
     target_compile_options(audrey_app_sdl PRIVATE ${AB_DSP_OPT_OPTIONS} ${AB_WARNING_OPTIONS})
 

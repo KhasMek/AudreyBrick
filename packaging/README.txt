@@ -51,6 +51,7 @@ Always:
                    INPUT: choosing the file or the capture device, see below)
   Y + d-pad        reset that parameter to its default
   START            nothing by itself
+  START + Y        start / stop recording the output (see Recording below)
   MENU + START     quit
 
 Tabs (d-pad left/right, d-pad up/down):
@@ -64,7 +65,8 @@ Tabs (d-pad left/right, d-pad up/down):
            X + up/down: the list), release X to load it; X + Y: LOOP/ONCE;
            X + SELECT: play the file again from the start
            with LIVE: hold X to choose a capture device the same way,
-           release X to open it (the gain goes to -inf dB first)
+           release X to open it (the gain goes to -inf dB first; a device
+           opened before in this run then gets its own gain back)
 
 
 Audio input (INPUT tab)
@@ -142,7 +144,11 @@ is a feedback instrument. With the speaker on, the microphone hears the speaker,
 the instrument feeds that back into itself and it can howl, loudly. Use
 headphones, or keep the input gain low. AudreyBrick cannot tell whether
 headphones are plugged in, so it does not mute anything by itself; it sets the
-gain to -inf dB (silence) every time a device opens and leaves raising it to you.
+gain to -inf dB (silence) the first time a device opens in a run and leaves
+raising it to you. After that it remembers that device's gain until you quit
+(see step 4). So a gain you set with headphones on comes back when you return
+to that device, also after you have unplugged the headphones: lower the gain
+before you leave LIVE if you will come back on the speaker.
 The INPUT tab shows SPEAKER + MIC CAN HOWL / USE HEADPHONES OR KEEP GAIN LOW
 whenever LIVE is selected.
 
@@ -160,7 +166,8 @@ whenever LIVE is selected.
      there is no SYSTEM DEFAULT entry (see "The built-in microphone" below); on
      other systems (a computer) the list starts with SYSTEM DEFAULT. X + Y and
      X + SELECT do nothing with LIVE.
-  3. When a device opens, the gain is set to -inf dB. The DEVICE row then shows
+  3. When a device opens for the first time in a run, the gain is set to
+     -inf dB. The DEVICE row then shows
      what the device delivers (for example "48000 Hz 1 CH 256 FR"; DIRECT next
      to the row's name when it was opened directly on its sound card, as the
      built-in microphone always is) and a PRE bar:
@@ -169,7 +176,13 @@ whenever LIVE is selected.
      d-pad up (or Y + up for 0 dB) and watch the large input meter.
   4. Leaving LIVE (d-pad left) closes the device, so the microphone is never
      open without you seeing it. Selecting LIVE again opens the same device
-     again, with the gain back at -inf dB.
+     again. The gain is remembered for each source until you quit: FILE has
+     its own gain, and each device has its own (for up to 8 devices). A device
+     you have opened before comes back at the gain you left it at: it opens
+     at -inf dB, and once it is open its gain fades in over a tenth of a
+     second. If it howls, bring the gain down; leaving LIVE while it howls
+     stores that gain for the device. Changes you make while no device is open (or with OFF) are not
+     remembered. Nothing is saved: the next launch starts at -inf dB again.
   5. If a device cannot be opened, the DEVICE row says CANNOT OPEN and the
      reason. If the open device is unplugged, the sound may stop abruptly at
      that moment (the system can hand over silence before it reports the
@@ -235,6 +248,48 @@ Quitting
     app quits at once. (KNULLI's soft reset, MENU + START pressed twice quickly,
     also ends AudreyBrick.)
   - On a USB keyboard: Escape, or Alt+F4.
+
+
+Recording
+---------
+Hold START and press Y (or hold Y and press START), on any tab, to start
+recording what AudreyBrick plays. Do it again to stop. While it records, a thin
+red frame runs round the whole screen and REC 1:23 (minutes and seconds; hours
+from the first hour, 1:02:03) counts up in red under the feedback bar. After a
+stop it shows the file's name and length for 2 seconds: SAVED REC-0003.WAV 1:23.
+
+What is recorded: exactly what goes to the speaker or headphones, after
+everything (the processed audio input included; the input is not recorded on its
+own). 16-bit, stereo, 48 kHz WAV, without any processing of its own. Recording
+carries on when you change tabs or the input source.
+
+Where: audreybrick/data/recordings, as rec-0001.wav, rec-0002.wav, ... (the
+Brick's clock is not set, so the names are numbers, not dates). A new recording
+takes the number after the highest one in the folder; nothing is ever
+overwritten. To copy them off: switch the Brick off, put the SD card in a
+computer and copy roms/ports/audreybrick/data/recordings. (Replacing the
+audreybrick folder with a new version deletes data/: copy the recordings off
+first.) On a FAT or exFAT card macOS adds hidden ._ files; they do no harm.
+
+Limits:
+  - There is no time limit of your own to set. A file stops by itself just
+    before 4 GB (about 5 hours 47 minutes): REC STOPPED: FILE LIMIT. It is saved
+    up to there; press START + Y again for a new file.
+  - Free space on the card: a recording does not start with less than 200 MB
+    free (REC: CARD FULL), and stops by itself when less than 100 MB is left
+    (REC STOPPED: CARD FULL). Both keep what was recorded.
+  - REC: CANNOT CREATE FILE: the folder or the file could not be made (a
+    read-only or full card). REC: WRITE ERROR: the card refused a write; the file
+    is kept up to that point.
+  - REC BUSY: you pressed START + Y while the previous file was still being
+    finished (usually a fraction of a second); press it again.
+  - If the card is too slow for a moment, AudreyBrick skips whole pieces of
+    sound in the file rather than stall the instrument; the readout then shows
+    DROP and the number of skipped sample frames, and the log says so.
+
+Quitting while recording (MENU + START, KNULLI's soft reset) finishes the file
+properly. If the Brick loses power or the app is killed, the file is still
+playable up to the last 2 seconds before that.
 
 
 Screenshots

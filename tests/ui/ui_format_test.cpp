@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -247,6 +248,49 @@ int main()
         v.unit   = nullptr;
         formatKnob(unk, sizeof unk, v);
         check(std::strcmp(unk, "0.09") == 0, std::string("formatKnob with a null unit shows the engine value: \"") + unk + "\"");
+    }
+
+    // --- REC: the recording readout -----------------------------------------------------------------
+    {
+        char b[64];
+        struct T
+        {
+            std::uint64_t s;
+            const char*   want;
+        };
+        for(const T& t : {T{0, "0:00"}, T{59, "0:59"}, T{83, "1:23"}, T{3599, "59:59"}, T{3600, "1:00:00"},
+                          T{5 * 3600 + 47 * 60 + 12, "5:47:12"}, T{36000, "10:00:00"}})
+        {
+            formatRecordTime(b, sizeof b, t.s);
+            check(std::strcmp(b, t.want) == 0, std::string("REC time ") + std::to_string(t.s) + " s: \"" + b + "\"");
+        }
+        UiRecordView v;
+        formatRecordReadout(b, sizeof b, v);
+        check(b[0] == '\0', "REC readout: None is empty");
+        v.show       = RecordShow::Recording;
+        v.sampleRate = 48000;
+        v.frames     = 83 * 48000 + 47999;
+        formatRecordReadout(b, sizeof b, v);
+        check(std::strcmp(b, "REC 1:23") == 0, std::string("REC readout: frames / rate, rounded down: \"") + b + "\"");
+        v.dropped = 512;
+        formatRecordReadout(b, sizeof b, v);
+        check(std::strcmp(b, "REC 1:23 DROP 512") == 0, std::string("REC readout with drops: \"") + b + "\"");
+        v.dropped = 100000;
+        v.frames  = 3600ull * 48000;
+        formatRecordReadout(b, sizeof b, v);
+        check(std::strcmp(b, "REC 1:00:00 DROP 99999+") == 0, std::string("REC readout, hours, many drops: \"") + b + "\"");
+        v.show = RecordShow::Saving;
+        formatRecordReadout(b, sizeof b, v);
+        check(std::strcmp(b, "REC SAVING") == 0, std::string("REC readout while finalising: \"") + b + "\"");
+        v.show = RecordShow::Saved;
+        std::snprintf(v.name, sizeof v.name, "%s", "rec-0003.wav");
+        v.seconds = 83.999;
+        formatRecordReadout(b, sizeof b, v);
+        check(std::strcmp(b, "SAVED REC-0003.WAV 1:23") == 0, std::string("REC readout after a stop: \"") + b + "\"");
+        v.show    = RecordShow::Message;
+        v.message = "REC: CARD FULL";
+        formatRecordReadout(b, sizeof b, v);
+        check(std::strcmp(b, "REC: CARD FULL") == 0, std::string("REC readout message: \"") + b + "\"");
     }
     return uitest::finish();
 }

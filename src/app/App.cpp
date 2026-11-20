@@ -125,9 +125,11 @@ std::string keyboardHelpText()
            "  Space          A button: feedback to maximum while held\n"
            "  B              B button: delay switch while held; Left Shift + B latches it\n"
            "  X              X button: hold to shift the d-pad to the tab's other parameters\n"
-           "  Y              Y button: hold + a d-pad direction resets that parameter\n"
+           "  Y              Y button: hold + a d-pad direction resets that parameter;\n"
+           "                 with Return (Start) held: start / stop recording\n"
            "  Left Shift     Select: fine adjust while held\n"
-           "  Return         Start (no function by itself)\n"
+           "  Return         Start: held + Y starts / stops recording to data/recordings\n"
+           "                 (no function by itself)\n"
            "  Escape, Alt+F4 quit (on a pad: Menu + Start)\n";
 }
 
@@ -159,6 +161,8 @@ std::string usageText(const char* program)
            "  --live-target-buffers <n>\n"
            "                           the live input's buffer in audio buffers, 1 to 32 (default 2); more\n"
            "                           is steadier with bursty capture devices but delays the input\n"
+           "  --record-dir <dir>       the folder Start + Y records into (rec-0001.wav, ...; default\n"
+           "                           data/recordings; created when a recording starts)\n"
            "  --input-dir <dir>        the folder the INPUT tab's FILE source lists (*.wav); a missing\n"
            "                           or empty folder is not an error (the launcher passes data/input)\n"
            "  --version                print the version and exit\n"
@@ -187,6 +191,7 @@ std::string usageText(const char* program)
            "                           self-test: the live input's ring overfilled at least n times\n"
            "  --expect-live-status <none|failed|lost|open>\n"
            "                           self-test: the live input's status at the end (open: a device is open)\n"
+           "  --expect-recordings <n>  self-test: exactly n recordings were saved\n"
            "  --help                   print this text and exit\n"
            "\n" +
            keyboardHelpText();
@@ -303,6 +308,29 @@ bool parseOptions(int argc, const char* const* argv, AppOptions& out, std::strin
                 return false;
             }
             o.inputDir = v;
+        }
+        else if(a == "--record-dir")
+        {
+            if(!value(v))
+                return false;
+            if(*v == '\0')
+            {
+                error = "--record-dir: empty folder name";
+                return false;
+            }
+            o.recordDir = v;
+        }
+        else if(a == "--expect-recordings")
+        {
+            if(!value(v))
+                return false;
+            int n = 0;
+            if(!parseInt(v, n) || n < 0)
+            {
+                error = std::string("--expect-recordings: expected a count of 0 or more, got '") + v + "'";
+                return false;
+            }
+            o.expectRecordings = n;
         }
         else if(a == "--expect-live-status")
         {
@@ -460,10 +488,10 @@ bool parseOptions(int argc, const char* const* argv, AppOptions& out, std::strin
     }
     if(!o.selftest() && (!o.expectKnobs.empty() || o.hasPeakMin || o.hasPeakMax || o.hasInputPeakMin ||
                          o.hasLiveUnderrunsMax || o.hasLiveUnderrunsMin || o.hasLiveRepeatsMin || o.hasLiveOverfillsMin ||
-                         !o.expectLiveStatus.empty()))
+                         !o.expectLiveStatus.empty() || o.expectRecordings >= 0))
     {
-        error = "--expect-knob, --expect-peak-min, --expect-peak-max, --expect-input-peak-min and --expect-live-* are "
-                "only used with --selftest";
+        error = "--expect-knob, --expect-peak-min, --expect-peak-max, --expect-input-peak-min, --expect-live-* and "
+                "--expect-recordings are only used with --selftest";
         return false;
     }
     out = std::move(o);
@@ -824,6 +852,24 @@ bool App::startUp(std::string& error)
               stage_->liveTargetFrames(), stage_->liveTargetBuffersConfigured(),
               stage_->liveTargetFrames() + stage_->liveMarginFrames(), stage_->liveRepeatFrames(), LiveInput::kCapacity);
     drainInputLog();
+
+    // REC: the recording's tap (a ring of 4 s at the device's rate) and the
+    // writer thread, both before audio starts (the device is still paused).
+    {
+        const std::size_t ringFrames = static_cast<std::size_t>(a.sampleRate > 0 ? a.sampleRate : 48000) * 4u;
+        recordTap_                   = std::make_unique<RecordTap>(ringFrames);
+        audio_->attachRecorder(recordTap_.get());
+        RecorderConfig rc;
+        rc.dir        = opts_.recordDir;
+        rc.sampleRate = static_cast<std::uint32_t>(a.sampleRate > 0 ? a.sampleRate : 48000);
+        recorder_     = std::make_unique<Recorder>(*recordTap_, recordFs_, rc);
+        std::string rerr;
+        if(recorder_->start(rerr))
+            log_.line(logTime(), "record: ready (Start + Y); folder %s; ring %zu frames (%.1f s), 16-bit stereo %u Hz",
+                      opts_.recordDir.c_str(), ringFrames, static_cast<double>(ringFrames) / rc.sampleRate, rc.sampleRate);
+        else
+            log_.line(logTime(), "record: not available: %s", rerr.c_str());
+    }
     logJoysticks(log_, logTime());
     input_.setSwapAB(opts_.swapAB);
     input_.setSwapXY(opts_.swapXY);
@@ -860,6 +906,9 @@ void App::shutDown() noexcept
     if(host_)
         host_->close();
     host_.reset();
+    // REC: finish a recording (its last blocks are in the ring) and join the
+    // writer; the tap goes after the render, which points at it.
+    stopRecorder();
     // 2. The input controller (joins the loader thread), the capture systems, then
     //    the instrument; the stage after the render (it frees the buffers it still
     //    holds; the render points at it), the ring last (M2b-B).
@@ -869,6 +918,8 @@ void App::shutDown() noexcept
     captureHost_.reset();
     captureSim_.reset();
     audio_.reset();
+    recorder_.reset();
+    recordTap_.reset();
     stage_.reset();
     live_.reset();
     model_.reset();
@@ -886,6 +937,135 @@ void App::shutDown() noexcept
     if(sdlInitialised_)
         SDL_Quit();
     sdlInitialised_ = false;
+}
+
+void App::stopRecorder()
+{
+    if(!recorder_)
+        return;
+    const bool wasActive = recorder_->active();
+    recorder_->shutdown();
+    drainRecorder();
+    if(wasActive)
+        log_.line(logTime(), "record: quitting: the recording above was finished before exit");
+}
+
+void App::drainRecorder()
+{
+    if(!recorder_)
+        return;
+    try
+    {
+        recordLog_.clear();
+        recorder_->takeLog(recordLog_);
+    }
+    catch(...)
+    {
+    }
+    for(const std::string& l : recordLog_)
+        log_.line(logTime(), "%s", l.c_str());
+    RecordResult r;
+    while(recorder_->takeResult(r))
+    {
+        const double wall = sdlInitialised_ ? now() : 0.0;
+        const char*  msg  = nullptr;
+        switch(r.outcome)
+        {
+            case RecordOutcome::Saved: msg = nullptr; break;
+            case RecordOutcome::StoppedFileLimit: msg = "REC STOPPED: FILE LIMIT"; break;
+            case RecordOutcome::StoppedCardFull: msg = "REC STOPPED: CARD FULL"; break;
+            case RecordOutcome::WriteError: msg = "REC: WRITE ERROR"; break;
+            case RecordOutcome::RefusedCardFull: msg = "REC: CARD FULL"; break;
+            case RecordOutcome::CannotCreate: msg = "REC: CANNOT CREATE FILE"; break;
+        }
+        if(msg == nullptr)
+        {
+            recordMessageShow_ = RecordShow::Saved;
+            copyString(recordSavedName_, sizeof recordSavedName_, r.name.c_str());
+            recordSavedSeconds_ = r.seconds;
+            recordMessageUntil_ = wall + 2.0;
+        }
+        else
+        {
+            recordMessageShow_  = RecordShow::Message;
+            recordMessage_      = msg;
+            recordMessageUntil_ = wall + 4.0;
+        }
+        if(opts_.selftest())
+            std::printf("selftest: record: %s %s, %llu frames (%.3f s), dropped %llu, largest ring fill %zu frames, "
+                        "finalised in %.1f ms\n",
+                        msg == nullptr ? "saved" : msg, r.path.empty() ? "(no file)" : r.path.c_str(),
+                        static_cast<unsigned long long>(r.frames), r.seconds,
+                        static_cast<unsigned long long>(r.dropped), r.maxFill, r.finaliseMs);
+        try
+        {
+            recordResults_.push_back(std::move(r));
+        }
+        catch(...)
+        {
+        }
+        r = RecordResult{};
+    }
+}
+
+void App::onRecordToggle()
+{
+    if(!recorder_)
+        return;
+    const Recorder::Toggle res = recorder_->toggle();
+    const char*            what = "?";
+    switch(res)
+    {
+        case Recorder::Toggle::Starting: what = "starting a recording"; break;
+        case Recorder::Toggle::Stopping: what = "stopping the recording"; break;
+        case Recorder::Toggle::Busy: what = "ignored: the previous file is still being finalised (REC BUSY)"; break;
+        case Recorder::Toggle::Unavailable: what = "ignored: recording is not available"; break;
+    }
+    log_.line(logTime(), "record: Start + Y: %s", what);
+    if(opts_.selftest())
+        std::printf("selftest: record: Start + Y: %s\n", what);
+    if(res == Recorder::Toggle::Busy)
+    {
+        recordMessageShow_  = RecordShow::Message;
+        recordMessage_      = "REC BUSY";
+        recordMessageUntil_ = now() + 2.0;
+    }
+    else if(res == Recorder::Toggle::Starting)
+    {
+        recordMessageShow_ = RecordShow::None; // a new recording replaces an old message
+    }
+}
+
+void App::fillRecordView(double wall) noexcept
+{
+    UiRecordView& v = snap_.record;
+    v               = UiRecordView{};
+    if(!recorder_)
+        return;
+    v.sampleRate = static_cast<int>(recorder_->config().sampleRate);
+    v.border     = recorder_->active();
+    if(recorder_->running())
+    {
+        // Until the writer has armed the tap, its counters still hold the last
+        // recording's: show 0:00.
+        const bool armed = recorder_->state() == RecordState::Recording;
+        v.show           = RecordShow::Recording;
+        v.frames         = armed ? recordTap_->framesQueued() : 0;
+        v.dropped        = armed ? recordTap_->framesDropped() : 0;
+        return;
+    }
+    if(recorder_->finalising())
+    {
+        v.show = RecordShow::Saving;
+        return;
+    }
+    if(recordMessageShow_ != RecordShow::None && wall < recordMessageUntil_)
+    {
+        v.show    = recordMessageShow_;
+        v.message = recordMessage_;
+        copyString(v.name, sizeof v.name, recordSavedName_);
+        v.seconds = recordSavedSeconds_;
+    }
 }
 
 void App::fillSnapshot(double t)
@@ -932,6 +1112,8 @@ void App::fillSnapshot(double t)
     prePeakSessionMax_  = std::max(prePeakSessionMax_, snap_.input.prePeak);
     statsPrePeak_       = std::max(statsPrePeak_, snap_.input.prePeak);
 
+    // REC.
+    fillRecordView(now());
 }
 
 void App::render(const UiSnapshot& s)
@@ -1000,6 +1182,19 @@ void App::logStats(double wall, const char* label)
     char buf[1600];
     formatStats(buf, sizeof buf, st);
     log_.line(logTime(), "%s%s", label, buf);
+    // REC: while recording, the writer's window.
+    if(recorder_ && recorder_->active())
+    {
+        const double      rate = recorder_->config().sampleRate;
+        const std::size_t fill = recorder_->takeWindowMaxFill();
+        log_.line(logTime(),
+                  "record: window: %llu frames written (%.1f s), ring fill max %zu frames (%.2f s of %.2f s), "
+                  "dropped %llu frames, longest write %.1f ms",
+                  static_cast<unsigned long long>(recorder_->framesWritten()),
+                  static_cast<double>(recorder_->framesWritten()) / rate, fill, static_cast<double>(fill) / rate,
+                  static_cast<double>(recorder_->ringFrames()) / rate,
+                  static_cast<unsigned long long>(recordTap_->framesDropped()), recorder_->takeWindowLongestWriteMs());
+    }
 
     statsStart_       = wall;
     statsCpuMax_      = 0.0f;
@@ -1175,7 +1370,7 @@ int App::run()
     std::uint64_t drainTarget = 0;
     double       lastPresent  = -1.0;
 
-    InputRouter router(*model_, quit_, selftest, inputCtl_.get());
+    InputRouter router(*model_, quit_, selftest, inputCtl_.get(), &recordChord_);
     bool        running = true;
     while(running)
     {
@@ -1224,6 +1419,10 @@ int App::run()
                 running     = false;
                 exitReason_ = "Menu + Start";
             }
+            else if(routed == InputRouter::Result::RecordToggle && running)
+            {
+                onRecordToggle(); // REC: Start + Y
+            }
         }
 
         if(selftest)
@@ -1235,7 +1434,9 @@ int App::run()
                 maxEventLateness_          = std::max(maxEventLateness_, t - ev.timeSeconds);
                 std::printf("selftest: t=%.3f s (audio) %s %s (script %.3f s)\n", t, buttonName(ev.event.button),
                             ev.event.pressed ? "down" : "up", ev.timeSeconds);
-                router.deliver(ev.event, t); // the model and the INPUT tab's panel (M2b-A)
+                // The Start + Y chord (REC), then the model and the INPUT tab's panel (M2b-A).
+                if(router.routeScripted(ev.event, t) == InputRouter::Result::RecordToggle)
+                    onRecordToggle();
             }
             // M2b-B: simulated capture devices plugged or unplugged.
             while(captureSim_ && nextCaptureEvent_ < captureScript_.events.size() &&
@@ -1254,6 +1455,7 @@ int App::run()
         model_->tick(t);
         inputCtl_->tick(t); // M2b-A: gain ramp, loader poll, buffers to free
         drainInputLog();
+        drainRecorder(); // REC: the writer's log lines and finished files
 
         if(selftest)
         {
@@ -1312,6 +1514,7 @@ int App::run()
     logStats(wall, "final (partial window) ");
     // Shutdown step 1 happens here so the report reads the final, settled values.
     host_->close();
+    stopRecorder(); // REC: a recording in progress is finished before the report and the exit
     const int code = selftest ? finishSelftest(wall, timedOut) : 0;
     log_.line(logTime(), "exit: %s, exit code %d", exitReason_.c_str(), code);
     shutDown();
@@ -1550,6 +1753,21 @@ int App::finishSelftest(double wallSeconds, bool timedOut)
             std::printf("selftest: ok: %s\n", buf);
         else
             fail(buf);
+    }
+    // REC: the recordings.
+    {
+        int saved = 0;
+        for(const RecordResult& r : recordResults_)
+            saved += r.outcome == RecordOutcome::Saved ? 1 : 0;
+        std::printf("recordings: %zu finished, %d saved by Start + Y or quit\n", recordResults_.size(), saved);
+        if(opts_.expectRecordings >= 0)
+        {
+            std::snprintf(buf, sizeof buf, "recordings saved: expected %d, actual %d", opts_.expectRecordings, saved);
+            if(saved == opts_.expectRecordings && static_cast<int>(recordResults_.size()) == saved)
+                std::printf("selftest: ok: %s\n", buf);
+            else
+                fail(buf);
+        }
     }
     if(problems == 0)
         std::printf("selftest: PASSED\n");

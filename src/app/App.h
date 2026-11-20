@@ -150,6 +150,30 @@
 //     clock-drift self-tests); --expect-live-status none|failed|lost|open checks
 //     the INPUT tab's live status at the end (open: a device is open).
 
+// Recording (docs/briefs/REC.md):
+//   - --record-dir <dir>: the recordings folder (the launcher passes
+//     audreybrick/data/recordings); default data/recordings, relative to the
+//     working directory like the launcher's data/ folder. Created by the writer
+//     when a recording starts (mkdir -p), not before.
+//   - After the output device opens (paused): the RecordTap with a ring of 4 s
+//     at the obtained rate is attached to the AudioRender, and the Recorder's
+//     writer thread is started (record/Recorder.h). Both before audio starts.
+//   - Start + Y (app/RecordChord.h, through InputRouter; in self-test mode the
+//     scripted events go through the same chord) toggles recording. While
+//     recording or finalising, the UiSnapshot's record view asks for the red
+//     border; the readout shows REC m:ss (frames queued / rate) and DROP n, then
+//     SAVED <name> m:ss for 2 s, or a refusal or failure for 4 s, or REC BUSY
+//     for 2 s when Start + Y comes while the previous file is being finalised.
+//   - The writer's log lines go to the diagnostic log every iteration; every
+//     statistics window while recording adds a "record:" line (frames written,
+//     ring fill maximum, dropped frames, longest write).
+//   - Quit (every path that reaches the normal shutdown: Menu + Start, Escape,
+//     window close, SIGTERM / SIGINT / SIGHUP, the parent dying): after the
+//     output device is closed, Recorder::shutdown() finishes the file and joins
+//     the writer; then the render (which points at the tap) and the tap go.
+//   - Self-test: the report lists every recording (name, frames, seconds,
+//     dropped, outcome); --expect-recordings <n> checks how many were saved.
+
 #pragma once
 
 #include <SDL.h>
@@ -166,6 +190,7 @@
 #include "app/DiagLog.h"
 #include "app/FramePacer.h"
 #include "app/MenuQuit.h"
+#include "app/RecordChord.h"
 #include "app/RestoreOnExit.h"
 #include "app/SdlDiagnostics.h"
 #include "app/UiSnapshot.h"
@@ -180,6 +205,9 @@
 #include "platform/AudioHost.h"
 #include "platform/AudioRender.h"
 #include "platform/InputMap.h"
+#include "record/RecordFs.h"
+#include "record/RecordTap.h"
+#include "record/Recorder.h"
 #include "ui/Renderer.h"
 
 namespace audreybrick
@@ -209,6 +237,7 @@ struct AppOptions
     bool        version   = false;   // --version: print the version and exit (M3-B)
     std::string inputDir;            // --input-dir <dir> (M2b-A): the FILE source's folder; empty = none
     int         liveTargetBuffers = 2; // --live-target-buffers <n> (M2b-B review, S1): 1..32
+    std::string recordDir = "data/recordings"; // --record-dir <dir> (REC)
     std::string selftestScript;      // --selftest; empty = normal mode
     double      selftestSeconds = 0; // --seconds (required with --selftest), seconds of audio
 
@@ -229,6 +258,7 @@ struct AppOptions
     bool                         hasLiveOverfillsMin = false;
     double                       liveOverfillsMin    = 0.0; // --expect-live-overfills-min (M2b-B)
     std::string                  expectLiveStatus;          // --expect-live-status none|failed|lost|open (M2b-B)
+    int                          expectRecordings = -1;     // --expect-recordings <n> (REC): files saved; -1 = no check
 
     bool selftest() const noexcept { return !selftestScript.empty(); }
 };
@@ -279,6 +309,10 @@ class App
     void   logGovernors(const char* when);
     void   drainInputLog(); // M2b-A: the input controller's lines into the diagnostic log
     void   formatLiveWindow(char* out, std::size_t size, std::uint64_t outputFrames); // M2b-B
+    void   onRecordToggle();   // REC: Start + Y
+    void   drainRecorder();    // REC: the writer's log lines and results
+    void   fillRecordView(double wall) noexcept; // REC: snap_.record
+    void   stopRecorder();     // REC: finishes a recording and joins the writer
     // A stop signal during start-up: true (with `error` set) if one has arrived.
     bool   stopAt(const char* stage, std::string& error);
     // Leaves through the normal shutdown with the exit actions; returns the exit code.
@@ -312,6 +346,18 @@ class App
     std::unique_ptr<LiveSim>             captureSim_;  // M2b-B: the self-test's simulated capture devices
     std::unique_ptr<InputController>     inputCtl_; // M2b-A: the INPUT tab's model and the loader thread
     std::vector<std::string>             inputLog_; // its log lines, drained every iteration
+    // REC: the recording. The tap outlives audio_ (the render points at it).
+    std::unique_ptr<RecordTap>           recordTap_;
+    PosixRecordFs                        recordFs_;
+    std::unique_ptr<Recorder>            recorder_;
+    RecordChord                          recordChord_;
+    std::vector<std::string>             recordLog_;
+    std::vector<RecordResult>            recordResults_; // every finished recording (self-test report)
+    const char*                          recordMessage_      = "";   // the readout's message (static string)
+    RecordShow                           recordMessageShow_  = RecordShow::None; // Saved or Message
+    char                                 recordSavedName_[24] = {};
+    double                               recordSavedSeconds_ = 0.0;
+    double                               recordMessageUntil_ = -1.0; // wall clock (now())
     InputMap                             input_;
 
     // Self-test.

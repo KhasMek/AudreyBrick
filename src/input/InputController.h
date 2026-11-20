@@ -131,14 +131,33 @@
 //     no device open X, up, release opens the cursor's device). X + Y and X +
 //     Select do nothing with the source LIVE. Nothing opens by itself.
 //   - Opening (howl safeguard): the input gain is set to 0 (-inf dB) first, then
-//     the ring's session is advanced, then the backend opens the device. So the
-//     stage never plays a sample of the new device before it has faded to
-//     silence and buffered, and its gain then snaps to the target, which is 0.
-//     Every open (a first choice, another choice, or the reopen below) does this.
-//     The player raises the gain with up/down (or Y + up/down, unity).
+//     the old device is closed and the ring's session advanced, then the backend
+//     opens the device. So the stage never plays a sample of the new device
+//     before it has faded to silence and buffered, and its gain then snaps to
+//     the target. Every open (a first choice, another choice, or the reopen
+//     below) does this. The first open of a device in a run stays at 0: the
+//     player raises the gain with up/down (or Y + up/down, unity).
+//   - Gain memory (GAIN, 2026-11-20; this run only, nothing is saved): the gain
+//     is kept per source. FILE has one slot (start-up: unity); each capture
+//     device one, keyed by its name as listed (exact comparison), at most
+//     kLiveGainMemorySlots names (8; a ninth forgets the least recently opened).
+//     A device gets its slot, at 0, on its first successful open. A later
+//     successful open of the same name (after OFF or FILE, after another device,
+//     after DEVICE LOST and a new choice) restores its gain once the open has
+//     succeeded, after the zero above, and asks the stage for a 100 ms fade-in
+//     (kLiveRestoreFadeFrames) for that session's start; logged as "gain
+//     restored to ...". A failed open leaves the gain at 0 and no slot changed.
+//     Every change the player makes (taps, ramps, Y + up/down) goes to the
+//     current source's slot at once: FILE's, or the open device's. With the
+//     source LIVE and no device open, or OFF, changes are not remembered.
+//     Selecting FILE applies FILE's slot; selecting OFF leaves the gain as it
+//     was; selecting LIVE with no device to reopen leaves it as it was too.
+//     The stage holds the gain while the old source fades out, so the change
+//     between sources is never heard (InputStage, "Fades").
 //   - The device stays open while the source is LIVE. Leaving LIVE closes it (so
 //     the mic is never open unseen); selecting LIVE again in the same run
-//     reopens the same device (gain to 0 again) if it is still listed.
+//     reopens the same device (gain to 0 first, then its remembered gain) if it
+//     is still listed.
 //   - A failed open: CANNOT OPEN <name>: <the backend's reason> until the next
 //     open or a source change; no device is chosen.
 //   - A lost device (the backend's lost(): SDL removed or stopped it; or no frame
@@ -154,7 +173,8 @@
 //   - Log lines: every listing that changed (all names), every open (the name
 //     asked for, the spec asked for and obtained, the route, the time taken, or
 //     the backend's error), every close with its reason, every gain reset to
-//     zero, and every loss; and (M2b-B2) the backend's own lines after each open
+//     zero, every gain restored (a device's, or FILE's when it differs), and
+//     every loss; and (M2b-B2) the backend's own lines after each open
 //     and close (LiveBackend::takeLog(): the route chosen, the mixer set and
 //     restored). The open device's route shows on the screen as DIRECT when it
 //     is the direct one (UiInputView::deviceDirect).
@@ -263,6 +283,11 @@ class InputController
     const char*        liveReason() const noexcept { return liveReason_; }
     std::uint64_t      deviceOpens() const noexcept { return opens_; } // open attempts
     const LiveOpenResult& lastOpen() const noexcept { return lastOpen_; }
+    // GAIN: the gains remembered for this session. FILE's slot; and a device's
+    // (by its name as listed): true and its gain if one is remembered.
+    float       fileGainNorm() const noexcept { return fileGain_; }
+    bool        rememberedGain(const std::string& name, float& gainNorm) const noexcept;
+    std::size_t rememberedDevices() const noexcept; // names in the table (at most kLiveGainMemorySlots)
 
   private:
     struct Press
@@ -313,7 +338,9 @@ class InputController
     bool settledAndDrained() noexcept; // !stageBusy() read first, then reclaim() and free
     void handleResult(InputLoadResult& r);
     void freeBuffer(std::unique_ptr<InputBuffer> b) noexcept;
-    void setGain(float n) noexcept;
+    void setGain(float n) noexcept;     // the gain to the stage; remembers nothing
+    void setUserGain(float n) noexcept; // a player's change: also the current source's slot (GAIN)
+    int  findGainSlot(const std::string& name) const noexcept; // -1 if not remembered
     int  indexOf(const std::string& name) const noexcept;
     void log(const std::string& line) noexcept;
     void log(const char* line) noexcept;
@@ -392,6 +419,19 @@ class InputController
     double                   lastCaptureT_   = 0.0;
     bool                     stallClock_     = false; // lastCaptureT_ not set yet
     std::uint64_t            raisesSeen_     = 0;     // the stage's target raises already logged
+
+    // GAIN (2026-11-20): the gain per source, for this run only.
+    struct GainSlot
+    {
+        bool          used   = false;
+        std::string   name;       // the device's name as listed
+        float         gain   = 0.0f;
+        std::uint64_t opened = 0; // openSeq_ at its last successful open (least recent is forgotten)
+    };
+    float         fileGain_ = kInputGainUnityNorm; // FILE's slot (the start-up default)
+    GainSlot      gainSlots_[kLiveGainMemorySlots];
+    int           devSlot_  = -1; // the open device's slot (-1: none open)
+    std::uint64_t openSeq_  = 0;  // successful opens
 };
 
 } // namespace audreybrick

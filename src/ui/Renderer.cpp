@@ -160,6 +160,20 @@ void Renderer::drawList(SDL_Renderer* r, const DrawList& list) noexcept
                 if(onLayer(list.texts[i].panel, overlay))
                     drawText(r, list.texts[i]);
     }
+    // REC: the recording border, last, over both layers.
+    if(list.recBorder)
+    {
+        const int   t = DrawList::kRecBorderPx;
+        const Color c = list.recBorderColor;
+        SDL_SetRenderDrawColor(r, c.r, c.g, c.b, 255);
+        const SDL_Rect sides[4] = {
+            {0, 0, kScreenWidth, t},
+            {0, kScreenHeight - t, kScreenWidth, t},
+            {0, t, t, kScreenHeight - 2 * t},
+            {kScreenWidth - t, t, t, kScreenHeight - 2 * t},
+        };
+        SDL_RenderFillRects(r, sides, 4);
+    }
 }
 
 void Renderer::drawTri(SDL_Renderer* r, const TriItem& t) noexcept
