@@ -253,4 +253,16 @@ Package `de2fc16-dirty` (the REC tree), default governor, three sessions, six re
 | Files | Six files; each size equals its logged data bytes plus the 44-byte header. Numbering continued across app restarts (`rec-0001` to `rec-0006`) |
 | Free space | `statvfs` on the card reports about 92.7 GiB free; the launcher and app agree |
 | Recording across sources | Recordings ran through source changes and capture-device opens with no drops |
-| Not exercised | No recording was stopped by quitting in these logs (all six stopped with Start + Y); the file limit and card-full stops have only been tested with injected limits |
+| Quit while recording | Run on 2026-11-20 (package `3bf3139-dirty`): Menu + Start during `rec-0007.wav` saved 5.4 s with reason `quit`, finalised in 61 ms, exit code 0; the human reports the file plays |
+| Not exercised | The file limit and card-full stops have only been tested with injected limits |
+
+### Gain memory run (2026-11-20)
+
+Package `3bf3139-dirty`. **[confirmed, device log and the human's report]** The human reports it working as expected.
+
+| Item | Finding |
+|---|---|
+| First open | The built-in mic and the USB interface each opened at -inf dB the first time in a session, in both sessions |
+| Restores | 12 restores in one session: the mic came back at 0.362 (-5.6 dB) five times and the USB interface (`LOOM-8 FM-1, USB Audio`) at 0.479 (-0.8 dB) four times, each independent of the other; FILE returned to its own 0.500 (0.0 dB) after every LIVE visit, including through OFF |
+| Order | Every restoring open logs gain to 0, then the open, then the restore, as designed |
+| Open times | Mic 211 to 226 ms (mixer included), USB 31 to 69 ms |

@@ -1,0 +1,21 @@
+# MOD-A: a square on the delay switch.
+#
+# Shows: the modulated switch request ORed with the manual switch (off here):
+# a 0.2 Hz square, depth 1, turns the switch on for 2.5 s and off for 2.5 s.
+# Each change goes through the echo time's two smoothers (14.5 ms, then the
+# engine's 0.5 s per-sample one), so the echo pitch-sweeps down and up like the
+# original's switch.
+# Drone with echo: FeedbackGain 0.6, EchoDelaySend 0.6, EchoDelayTime 0.8,
+# EchoDelayFeedback 0.5; others at their defaults.
+# Duration 26 s. Default wavcheck thresholds.
+#
+# @duration 26
+
+0 FeedbackGain 0.6
+0 EchoDelaySend 0.6
+0 EchoDelayTime 0.8
+0 EchoDelayFeedback 0.5
+0 mod1 shape square
+0 mod1 target DelaySwitch
+0 mod1 hz 0.2
+0 mod1 depth 1

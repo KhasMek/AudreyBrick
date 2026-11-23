@@ -31,6 +31,7 @@
 #include <SDL.h>
 
 #include <cmath>
+#include <cstdint>
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -41,6 +42,7 @@
 #include "app/ControlModel.h"
 #include "app/InputRouter.h"
 #include "app/MenuQuit.h"
+#include "app/ModPanel.h"
 #include "app/RecordChord.h"
 #include "control/ButtonControlSource.h"
 #include "input/InputController.h"
@@ -308,13 +310,15 @@ int main()
         check(ctl.source() == InputSource::Off, "LOOP: d-pad right does not reach the input panel");
         std::vector<std::string> log;
         ctl.takeLog(log);
-        feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)); // L1: LOOP -> INPUT
+        feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)); // L1: LOOP -> MOD (MOD-B)
+        feed(up(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
+        feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)); // L1: MOD -> INPUT
         feed(up(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
         ctl.takeLog(log);
         bool scanned = false;
         for(const std::string& l : log)
             scanned = scanned || l.find("input: scan of") != std::string::npos;
-        check(model->currentTab() == Tab::Input && scanned, "L1 from LOOP: INPUT, and entering it scans the folder");
+        check(model->currentTab() == Tab::Input && scanned, "L1 twice from LOOP: INPUT, and entering it scans the folder");
         const std::uint32_t heldBefore = model->heldWord();
         feed(down(kRight));
         feed(up(kRight));
@@ -380,12 +384,83 @@ int main()
         router.deliver({Button::DpadLeft, true}, t);
         router.deliver({Button::DpadLeft, false}, t);
         check(ctl.source() == InputSource::Off, "deliver(): d-pad left on INPUT selects OFF");
-        router.deliver({Button::R1, true}, t); // INPUT -> LOOP
+        router.deliver({Button::R1, true}, t); // INPUT -> MOD
+        router.deliver({Button::R1, false}, t);
+        router.deliver({Button::R1, true}, t); // MOD -> LOOP
         router.deliver({Button::R1, false}, t);
         router.deliver({Button::DpadRight, true}, t);
         check(model->currentTab() == Tab::Loop && ctl.source() == InputSource::Off,
-              "R1 from INPUT wraps to LOOP; the d-pad there does not reach the panel");
+              "R1 twice from INPUT wraps to LOOP; the d-pad there does not reach the panel");
         stage.setSource(InputSource::Off);
+    }
+
+    // --- MOD-B: the MOD tab's panel gets every event after the model ------------------------------
+    {
+        InputMap      input;
+        auto          src   = std::make_unique<ButtonControlSource>();
+        auto          model = std::make_unique<ControlModel>(*src);
+        MenuQuit      quit;
+        RecordChord   chord;
+        ModPanel      panel; // no decorator: every send is refused and kept
+        InputRouter   router(*model, quit, false, nullptr, &chord, &panel);
+        double        t    = 0.0;
+        auto          feed = [&](const SDL_Event& e) {
+            ButtonEvent be{};
+            t += 0.01;
+            return router.route(input.handle(e, be), be, t);
+        };
+        feed(down(SDL_CONTROLLER_BUTTON_DPAD_DOWN));
+        feed(up(SDL_CONTROLLER_BUTTON_DPAD_DOWN));
+        check(panel.row() == ModRow::Target, "MOD-B: on LOOP the d-pad does not reach the mod panel");
+        feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)); // L1: LOOP -> MOD
+        feed(up(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
+        const std::uint32_t heldBefore = model->heldWord();
+        const std::uint64_t sentBefore = model->commandsSent();
+        feed(down(SDL_CONTROLLER_BUTTON_DPAD_DOWN));
+        feed(up(SDL_CONTROLLER_BUTTON_DPAD_DOWN));
+        feed(down(SDL_CONTROLLER_BUTTON_DPAD_RIGHT));
+        // While right is held, past the hold delay: the model holds no ramp
+        // and sends nothing (it binds no knob on MOD).
+        t += 1.0;
+        model->tick(t);
+        const bool heldSame = model->heldWord() == heldBefore && model->commandsSent() == sentBefore;
+        feed(up(SDL_CONTROLLER_BUTTON_DPAD_RIGHT));
+        check(model->currentTab() == Tab::Mod && panel.row() == ModRow::Shape &&
+                  panel.slot(0).shape == ModShape::Triangle && heldSame && model->commandsSent() == sentBefore,
+              "MOD-B: L1 from LOOP is MOD; down moves the cursor to SHAPE, right steps it; the model binds nothing "
+              "(held word unchanged while right is held, no command sent)");
+        // MOD-D: X held selects the slot (wrapping), up / down do nothing, the cursor row is kept.
+        feed(down(kX));
+        feed(down(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
+        feed(up(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
+        feed(down(kUpPad));
+        feed(up(kUpPad));
+        check(panel.choosing() && panel.currentSlot() == 3 && panel.row() == ModRow::Shape,
+              "MOD-D: X + left on slot 1 wraps to slot 4; X + up does nothing; the cursor row kept");
+        // L1 with X held: the tab changes and the X state is dropped.
+        feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)); // MOD -> INPUT
+        feed(up(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
+        const bool dropped = model->currentTab() == Tab::Input && !panel.choosing();
+        feed(down(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)); // back to MOD, X still held
+        feed(up(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER));
+        feed(down(SDL_CONTROLLER_BUTTON_DPAD_RIGHT));
+        feed(up(SDL_CONTROLLER_BUTTON_DPAD_RIGHT));
+        check(dropped && model->currentTab() == Tab::Mod && panel.currentSlot() == 3,
+              "MOD-D: L1 with X held changes tab and drops the X state; back on MOD X + right does nothing");
+        feed(up(kX));
+        // On TARGET (up from SHAPE): right steps slot 4's target; left wraps.
+        feed(down(kUpPad));
+        feed(up(kUpPad));
+        feed(down(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
+        feed(up(SDL_CONTROLLER_BUTTON_DPAD_LEFT));
+        check(panel.row() == ModRow::Target && panel.slot(3).target == ModTarget::DelaySwitch &&
+                  panel.slot(0).target == ModTarget::None,
+              "MOD-D: left on TARGET wraps None -> DELAY SWITCH (slot 4 only)");
+        feed(down(kX));
+        ButtonEvent none{};
+        router.route(InputMap::Action::ReleaseAll, none, t);
+        check(!panel.choosing() && panel.slot(3).target == ModTarget::DelaySwitch,
+              "MOD-D: ReleaseAll drops the X state, the settings stay");
     }
     return ptest::finish();
 }

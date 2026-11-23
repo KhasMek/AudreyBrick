@@ -57,6 +57,8 @@ enum class PanelKind : std::uint8_t
     InputMeter, // M2b-A: the INPUT tab's large input meter
     InputPopup, // M2b-A3: the pop-up file list (an overlay panel); M2b-B: also the device list
     InputWarning, // M2b-B: the howl warning on the INPUT tab while the source is LIVE
+    ModRow,       // MOD-B: an editor row of the MOD tab (index 0 TARGET (MOD-D), 1 SHAPE, 2 RATE, 3 DEPTH, 4 POLARITY); active = the cursor row
+    ModSlot,      // MOD-B: a slot's card on the MOD tab (index = slot 0..3); active = the slot being edited
 };
 
 struct PanelItem
@@ -106,6 +108,8 @@ enum class TextRole : std::uint8_t
     PopupText,      // M2b-A3: the pop-up list's header, names, marks and hints
     InputWarning,   // M2b-B: SPEAKER + MIC CAN HOWL / USE HEADPHONES OR KEEP GAIN LOW
     RecStatus,      // REC: the header's REC m:ss / SAVED .. / REC: .. readout
+    ModText,        // MOD-B: the MOD tab's row labels, values and slot cards
+    ModTag,         // MOD-B: "M1", "M13", .. beside a modulated knob on the other tabs (knob set)
 };
 
 struct TextItem
@@ -132,6 +136,7 @@ enum class RectTag : std::uint8_t
     StoredMarker, // the stored-feedback marker while maximum is held
     UnityMark,    // the unity-gain tick on the REPEATS bars; never under text
     GainUnityMark, // M2b-A: the unity (0 dB) tick on the INPUT tab's gain bar; never under text
+    ModMarker,     // MOD-B: the moving value (knob + modulation) on a modulated value bar; never under text
 };
 
 struct RectItem

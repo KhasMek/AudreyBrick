@@ -10,12 +10,15 @@ void InputRouter::deliver(const ButtonEvent& be, double t) noexcept
 {
     const Tab before = model_.currentTab();
     model_.onButton(be, t);
-    if(input_ == nullptr)
-        return;
-    const bool onInput = model_.currentTab() == Tab::Input;
-    input_->onButton(be, t, onInput);
-    if(onInput && before != Tab::Input)
-        input_->onTabEntered();
+    if(input_ != nullptr)
+    {
+        const bool onInput = model_.currentTab() == Tab::Input;
+        input_->onButton(be, t, onInput);
+        if(onInput && before != Tab::Input)
+            input_->onTabEntered();
+    }
+    if(mod_ != nullptr)
+        mod_->onButton(be, t, model_.currentTab() == Tab::Mod); // MOD-B
 }
 
 bool InputRouter::chordAndDeliver(const ButtonEvent& be, double t) noexcept
@@ -59,6 +62,8 @@ InputRouter::Result InputRouter::route(InputMap::Action action, const ButtonEven
             model_.releaseAll(t);
             if(input_ != nullptr)
                 input_->releaseAll();
+            if(mod_ != nullptr)
+                mod_->releaseAll();
             quit_.releaseAll();
             if(record_ != nullptr)
                 record_->releaseAll();

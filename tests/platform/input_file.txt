@@ -1,11 +1,14 @@
 # M2b-A self-test (acceptance criterion 7): go to the INPUT tab, select FILE and
 # load the first file; nothing else is touched (feedback stays at its minimum,
 # -60 dB).
-# L1 from LOOP wraps to INPUT (the sixth tab); d-pad right: OFF -> FILE, which
+# L1 twice from LOOP: MOD, then INPUT (the sixth tab); d-pad right: OFF -> FILE, which
 # scans the input folder (the cursor is on its first file, tone.wav from the
 # fixture). Selecting FILE loads nothing by itself (M2b-A2). M2b-A3: hold X,
 # press d-pad right (the cursor steps, wrapping onto the only file), release X:
 # the file under the cursor loads.
+# MOD-B: seven tabs; L1 from LOOP goes to MOD, a second L1 to INPUT.
+0.02  L1        down
+0.04  L1        up
 0.10  L1        down
 0.15  L1        up
 0.30  DpadRight down

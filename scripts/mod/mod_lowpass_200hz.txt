@@ -1,0 +1,22 @@
+# MOD-A: an audio-rate (200 Hz) sine on the loop lowpass.
+#
+# Shows: modulation after the parameter smoother reaching audio rate: the
+# lowpass cutoff moves at 200 Hz (knob 0.6, about 2 kHz, +-0.15 of travel = 1.1
+# octaves requested; the cutoff slew limit of 0.035 octave per block holds it to
+# about 0.53 octave either way), which adds sidebands to the drone. Depth 0 for the
+# first 4 s (the plain drone), then 0.15 (through the 10 ms depth smoothing),
+# back to 0 at 16 s.
+# Drone: FeedbackGain 0.62, FeedbackLPFCutoff 0.6; others at their defaults.
+# Duration 20 s. Default wavcheck thresholds (largest click ratio 11.5).
+# Without that limit, deeper or faster cutoff modulation can make the vendored
+# loop filters unstable; see reference/mod/README.md.
+#
+# @duration 20
+
+0 FeedbackGain 0.62
+0 FeedbackLPFCutoff 0.6
+0 mod1 shape sine
+0 mod1 target FeedbackLPFCutoff
+0 mod1 hz 200
+4 mod1 depth 0.15
+16 mod1 depth 0

@@ -1,0 +1,23 @@
+# MOD-A: sample-and-hold (random steps) on the reverb mix.
+#
+# Shows: the reverb dry/wet jumping to a new random value 4 times a second
+# (knob 0.5, depth 0.5: anywhere from dry to wet). Modulation is applied after
+# the reverb mix's 7.2 ms knob smoother, so each step is a jump of the mix.
+# Drone: FeedbackGain 0.6, ReverbMix 0.5, ReverbDecay 0.6; others at defaults.
+# Duration 20 s.
+# Thresholds: each step is a jump of the dry/wet mix, a click by nature (the
+# brief accepts naive sample-and-hold steps): the largest click ratio is 862 and
+# the largest sample jump 0.24, so @click 1500 and @jump 0.5 (the default 80 and
+# 0.25 would fail on the modulation itself). The near-event check (30) stays.
+#
+# @duration 20
+# @click 1500
+# @jump 0.5
+
+0 FeedbackGain 0.6
+0 ReverbMix 0.5
+0 ReverbDecay 0.6
+0 mod1 shape samplehold
+0 mod1 target ReverbMix
+0 mod1 hz 4
+0 mod1 depth 0.5

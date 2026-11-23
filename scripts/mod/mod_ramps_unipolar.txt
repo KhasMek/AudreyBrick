@@ -1,0 +1,37 @@
+# MOD-C: the ramp shapes and the polarity.
+#
+# Shows: a singing drone (FeedbackGain 0.55) whose loop lowpass, from knob 0.3
+# (about 600 Hz), is opened by slot 1, an exponential ramp down at 0.5 Hz,
+# UNIPOLAR, depth 0.35: every 2 s the filter jumps open (slew-limited, see
+# reference/mod/README.md) and closes quickly, then ever more slowly, back to
+# the knob; it never goes below the knob. At 10 s slot 1 turns BIPOLAR (a 10 ms
+# blend): the filter now also closes below the knob in the second part of each
+# cycle. At 14 s slot 1 becomes an exponential ramp up (slow swell, fast
+# finish, then the jump down). Slot 2: a ramp up at 0.1 Hz on the echo time,
+# depth 0.15, bipolar (the engine's own 0.5 s smoothing turns its reset into a
+# glide). Slot 3: a ramp down at 0.25 Hz on the loop body, depth -0.2,
+# UNIPOLAR (the body only shortens from its knob, then glides back).
+# Echo send 0.3; others at their defaults. Duration 20 s. Default wavcheck
+# thresholds.
+#
+# @duration 20
+
+0 FeedbackGain 0.55
+0 FeedbackLPFCutoff 0.3
+0 EchoDelaySend 0.3
+0 mod1 shape expdown
+0 mod1 target FeedbackLPFCutoff
+0 mod1 hz 0.5
+0 mod1 depth 0.35
+0 mod1 polarity unipolar
+0 mod2 shape rampup
+0 mod2 target EchoDelayTime
+0 mod2 hz 0.1
+0 mod2 depth 0.15
+0 mod3 shape rampdown
+0 mod3 target FeedbackBody
+0 mod3 hz 0.25
+0 mod3 depth -0.2
+0 mod3 polarity unipolar
+10 mod1 polarity bipolar
+14 mod1 shape expup

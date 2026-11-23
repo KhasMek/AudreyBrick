@@ -9,6 +9,9 @@
 // M2b-A adds INPUT after OUT. It binds no knob (all four bindings are kNoKnob):
 // its d-pad, X and Y move the input panel's own state (source, gain, file),
 // which InputRouter sends to the InputController (input/InputController.h).
+//
+// MOD-B adds MOD after INPUT (L1/R1 wrap through it). It binds no knob either:
+// its d-pad, X and Y move the modulation panel's own state (app/ModPanel.h).
 
 #pragma once
 
@@ -27,6 +30,7 @@ enum class Tab : unsigned char
     Delay,
     Out,
     Input, // M2b-A: no knob bindings; the input panel (InputController)
+    Mod,   // MOD-B: no knob bindings; the modulation panel (ModPanel)
     Count
 };
 

@@ -19,6 +19,7 @@
 #include <cstdint>
 
 #include "app/Buttons.h"
+#include "app/ModView.h"
 #include "app/Tabs.h"
 #include "core/ControlSource.h"
 #include "input/InputView.h"
@@ -110,6 +111,12 @@ struct UiSnapshot
     // --- Recording (REC) -------------------------------------------------------------------
     // The red border and the header's REC readout (record/RecordView.h).
     UiRecordView record;
+
+    // --- Modulation (MOD-B) ------------------------------------------------------------------
+    // The MOD tab's slots, cursor and X state (MOD-D), and the modulation read-back
+    // (app/ModView.h). With every slot's target None or depth 0 (the default)
+    // no other tab shows anything of it.
+    UiModView mod;
 };
 
 } // namespace audreybrick

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate the reference set from every parameter script in scripts/.
 #
-#   scripts/make_reference.sh [--check] [--out <dir>] [--build <dir>]
+#   scripts/make_reference.sh [--set mod] [--check] [--out <dir>] [--build <dir>]
 #
 #   (no options)    render into reference/, run wavcheck, rewrite reference/SHA256SUMS
 #   --check         render and run wavcheck, then compare the hashes with
@@ -10,6 +10,10 @@
 #                   Without --check, the hashes go to <dir>/SHA256SUMS. reference/
 #                   is never written: with --check, reference/SHA256SUMS is only read.
 #                   This is how a read-only checkout (M1-D, Linux) renders the set.
+#   --set mod       MOD-A: the modulation set instead of the reference set: the
+#                   scripts in scripts/mod/, rendered into reference/mod/ (or --out),
+#                   hashes in reference/mod/SHA256SUMS. The reference set (the 25
+#                   files of reference/SHA256SUMS) never includes reference/mod/.
 #   --build <dir>   build directory with audrey-render, wavcheck and audrey-gen-input
 #                   (default $BUILD_DIR, else build/host). It must already be
 #                   configured; the three tools are (re)built in it.
@@ -32,20 +36,28 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 REF="$REPO_ROOT/reference"
+SCRIPTS="$REPO_ROOT/scripts"
 BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build/host}"
-OUT="$REF"
+OUT=""
 MODE="write"
+SET="reference"
 
-usage() { echo "usage: scripts/make_reference.sh [--check] [--out <dir>] [--build <dir>]" >&2; exit 2; }
+usage() { echo "usage: scripts/make_reference.sh [--set mod] [--check] [--out <dir>] [--build <dir>]" >&2; exit 2; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --check) MODE="check" ;;
+        --set)   [ $# -ge 2 ] && [ "$2" = "mod" ] || usage; SET="mod"; shift ;;
         --out)   [ $# -ge 2 ] || usage; OUT="$2"; shift ;;
         --build) [ $# -ge 2 ] || usage; BUILD_DIR="$2"; shift ;;
         *) usage ;;
     esac
     shift
 done
+if [ "$SET" = "mod" ]; then
+    REF="$REPO_ROOT/reference/mod"
+    SCRIPTS="$REPO_ROOT/scripts/mod"
+fi
+[ -n "$OUT" ] || OUT="$REF"
 
 if command -v shasum >/dev/null 2>&1; then
     sha256() { shasum -a 256 "$@"; }
@@ -77,7 +89,7 @@ echo "make_reference: build $BUILD_DIR ($(grep '^CMAKE_CXX_COMPILER:' "$BUILD_DI
 "$BUILD_DIR/audrey-gen-input" "$OUT/inputs"
 
 status=0
-for script in "$REPO_ROOT"/scripts/*.txt; do
+for script in "$SCRIPTS"/*.txt; do
     name="$(basename "$script" .txt)"
     if ! "$RENDER" --inputs-dir "$OUT/inputs" "$script" "$OUT/$name.wav"; then
         status=1
@@ -88,7 +100,8 @@ for script in "$REPO_ROOT"/scripts/*.txt; do
     fi
 done
 
-sums="$(cd "$OUT" && find . -name '*.wav' | sed 's|^\./||' | LC_ALL=C sort | while IFS= read -r f; do sha256 "$f"; done)"
+# The reference set leaves out reference/mod/ (the modulation set, MOD-A).
+sums="$(cd "$OUT" && find . -path ./mod -prune -o -name '*.wav' -print | sed 's|^\./||' | LC_ALL=C sort | while IFS= read -r f; do sha256 "$f"; done)"
 if [ "$MODE" = "write" ]; then
     target="$OUT/SHA256SUMS" # reference/SHA256SUMS only when OUT is reference/
     if [ -f "$target" ] && [ "$(cat "$target")" = "$sums" ]; then
@@ -108,7 +121,7 @@ else
     fi
 fi
 
-total="$(cd "$OUT" && find . -name '*.wav' -exec cat {} + | wc -c | tr -d ' ')"
-echo "make_reference: $(cd "$OUT" && find . -name '*.wav' | wc -l | tr -d ' ') WAV files, $total bytes in total"
+total="$(cd "$OUT" && find . -path ./mod -prune -o -name '*.wav' -print0 | xargs -0 cat | wc -c | tr -d ' ')"
+echo "make_reference: $(cd "$OUT" && find . -path ./mod -prune -o -name '*.wav' -print | wc -l | tr -d ' ') WAV files, $total bytes in total ($SET set)"
 if [ "$status" -eq 0 ]; then echo "make_reference: OK"; else echo "make_reference: FAILED"; fi
 exit "$status"

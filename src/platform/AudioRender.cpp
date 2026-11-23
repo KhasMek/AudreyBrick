@@ -27,6 +27,8 @@ void AudioRender::prepare(std::size_t frames)
     right_    = std::make_unique<float[]>(capacity_);
     if(input_ != nullptr)
         input_->prepare(capacity_, frames); // M2b-B: the live target from the device's buffer size
+    if(mod_ != nullptr)
+        mod_->prepare(capacity_); // MOD-A
 }
 
 void AudioRender::render(float* out, std::size_t frames) noexcept
@@ -56,7 +58,20 @@ void AudioRender::render(float* out, std::size_t frames) noexcept
         {
             const std::size_t n = std::min(frames - done, capacity_);
             const float*      in = input_ != nullptr ? input_->pull(n) : nullptr;
-            voice_.process(controls_, in, left_.get(), right_.get(), n);
+            if(mod_ != nullptr)
+            {
+                // MOD-A: the modulation decorator, and the input through it.
+                const float* trace = (input_ != nullptr && in != nullptr) ? input_->gainTrace() : nullptr;
+                // MOD-C: the envelope followers read the input before the stage's gain.
+                const float* pre   = (input_ != nullptr && in != nullptr) ? input_->preGain() : nullptr;
+                const float* min   = mod_->beginChunk(in, n, trace, 1.0f, pre);
+                voice_.process(*mod_, min, left_.get(), right_.get(), n);
+                mod_->endChunk();
+            }
+            else
+            {
+                voice_.process(controls_, in, left_.get(), right_.get(), n);
+            }
             float* o = out + 2 * done;
             for(std::size_t i = 0; i < n; ++i)
             {

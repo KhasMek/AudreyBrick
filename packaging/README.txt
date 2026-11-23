@@ -48,7 +48,8 @@ Always:
                    has no function in AudreyBrick; it is KNULLI's screenshot, see below)
   SELECT + B       latch the delay switch on or off
   X (hold)         the d-pad moves the tab's other parameter (DELAY: repeats;
-                   INPUT: choosing the file or the capture device, see below)
+                   INPUT: choosing the file or the capture device; MOD:
+                   left/right select the slot; see below)
   Y + d-pad        reset that parameter to its default
   START            nothing by itself
   START + Y        start / stop recording the output (see Recording below)
@@ -67,6 +68,7 @@ Tabs (d-pad left/right, d-pad up/down):
            with LIVE: hold X to choose a capture device the same way,
            release X to open it (the gain goes to -inf dB first; a device
            opened before in this run then gets its own gain back)
+  MOD      the four modulation slots (see Modulation below)
 
 
 Audio input (INPUT tab)
@@ -83,7 +85,7 @@ microphone or a USB audio interface. LIVE is described further down.
      folder if it is missing. Files directly in that folder are used; folders
      inside it, links and files whose names start with "." are ignored (so are
      the "._" files a Mac leaves next to each file it copies).
-  2. In AudreyBrick go to the INPUT tab (L1 from LOOP, or R1 past OUT).
+  2. In AudreyBrick go to the INPUT tab (L1 twice from LOOP, or R1 past OUT).
   3. D-pad right selects FILE. Nothing loads by itself. To choose a file,
      hold X:
        X + left/right  the previous / next file (by name, wrapping round),
@@ -240,6 +242,107 @@ The built-in microphone and why there is no SYSTEM DEFAULT on the Brick:
     recorded through the audio server some other way) since the Brick last
     started, the microphone may be blocked ("Device or resource busy"): reboot
     the Brick.
+
+
+Modulation (MOD tab)
+--------------------
+Not part of the original instrument: four modulation slots that move any
+setting by themselves. Each slot has a shape, a rate, a depth, a polarity and
+one target.
+With every slot off (the start, and whenever a slot's target is NONE or its
+depth 0) AudreyBrick sounds exactly as without it.
+
+  Shapes   SINE, TRIANGLE, SQUARE, RAMP UP (rises steadily, then jumps back
+           down), RAMP DOWN (the reverse), EXP UP (rises slowly, then faster
+           and faster, then jumps back), EXP DOWN (jumps up, falls fast, then
+           ever more slowly), S&H (sample and hold: a new random value each
+           cycle) and ENVELOPE (follows the level of the audio input before
+           the INPUT tab's gain, so it still works with the gain at -inf dB,
+           where you do not hear the input; it is still while the input is
+           OFF).
+  Rate     0.010 HZ (one cycle in 100 s) to 2.00 KHZ. With ENVELOPE the same
+           row is RELEASE: how fast the envelope falls back, 5.00 S to 5.00 MS
+           (it rises in 2 ms).
+  Depth    -100 % to +100 % of the target's travel (a knob from end to end).
+           Several slots on one target add up; the result stops at the knob's
+           ends.
+  Polarity BIPOLAR (the start): the target swings both ways round the knob.
+           UNIPOLAR: it only moves to one side: above the knob with a positive
+           depth, below it with a negative one. ENVELOPE is always unipolar.
+           On the slot cards: +/- or +.
+  Targets  NONE, every knob in the order of the value strip (FEEDBACK,
+           FREQUENCY, BODY, LOWPASS, HIGHPASS, DRY/WET, DECAY, TIME, MIX,
+           REPEATS, VOLUME), INPUT GAIN and DELAY SWITCH (on while the
+           modulation is above zero, in addition to B and SELECT + B).
+
+The MOD tab (L1 from LOOP, or R1 past INPUT) shows the selected slot's
+settings in five rows and all four slots underneath as cards, each with a
+small bar that moves with what the slot does right now. The selected card has
+a bright frame and its number in a bright box. The cards are dimmed while you
+edit the rows; hold X and they light up (the rows dim) so you can pick a slot.
+A slot with no target or no depth has a darker card.
+
+  d-pad up/down        the row: TARGET, SHAPE, RATE (RELEASE), DEPTH, POLARITY
+  d-pad left/right     the row's value for the selected slot: TARGET
+                       (previous / next, at once, round from DELAY SWITCH to
+                       NONE and back; held, it keeps stepping, 8 per second),
+                       SHAPE, RATE (a tap is 1/100 of the range, about 13 %
+                       faster or slower; held, it ramps), DEPTH (2 % per tap;
+                       held, it ramps through 0). SELECT held: fine steps
+                       (RATE 1/1000, DEPTH 0.2 %). For RELEASE, right makes
+                       the release longer. POLARITY: right UNIPOLAR, left
+                       BIPOLAR (with ENVELOPE it stays UNIPOLAR).
+  X + left/right       select the slot, 1 to 4 (round from 4 to 1 and back),
+                       one per press; the rows keep their place, so on DEPTH
+                       you land on the next slot's DEPTH
+  Y + left/right       the row back to its default: TARGET NONE, SHAPE sine,
+                       RATE 1 Hz, DEPTH 0, POLARITY bipolar (nothing with
+                       ENVELOPE)
+  Y + X + left/right   the whole selected slot back to its start (all five
+                       rows)
+
+Everything else (L2/R2, A, B, SELECT + B, L1/R1, START + Y, MENU + START) works
+on MOD as on every tab. On the other tabs a modulated knob carries a small
+violet tag with the slot numbers (M1, M13, ...; in the value strip, where
+there is no room for them, M and the number of slots, or just M) and a thin
+violet line on its bar showing where the modulation has moved it (a short stub
+when that is the bottom of the range); the number printed is still the knob's
+own setting. On the switch box, ON and MOD in green on a dark box mean
+that only the modulation holds the switch on. With a slot on INPUT GAIN, the
+INPUT tab's meter shows the level after the modulation.
+
+Good to know:
+  - Fast, deep modulation of LOWPASS and HIGHPASS gets shallower as the rate
+    rises: the filter cutoffs may only move so fast (that keeps the feedback
+    loop from blowing up). At 200 Hz about half an octave either way is left,
+    at 1 kHz about a tenth.
+  - BODY and TIME respond slowly by the instrument's nature: the original
+    smooths both inside its sound engine (0.2 s and 0.5 s; the slow sweep of
+    TIME is the delay's pitch-bending character). Modulating them faster than a
+    few hertz mostly averages out. The same goes for DELAY SWITCH.
+  - Modulation cannot open an input whose gain is at -inf dB: a closed input
+    stays silent (the safeguard against howling stays in your hands).
+  - Square, S&H and the ends of the ramps jump; on VOLUME or the filters that
+    is heard as clicks, by design. Depth, target and polarity changes
+    themselves fade in over about 10 ms.
+  - ENVELOPE listens before the gain: turn the INPUT gain down to -inf dB and
+    a microphone, USB input or file can still drive a filter or the feedback
+    without being heard. The input must still be on (FILE or LIVE).
+  - Careful with ENVELOPE on INPUT GAIN with a positive depth: because the
+    envelope no longer shrinks when you turn the gain down, it can boost a
+    turned-down input a lot (gain knob at -12 dB, an envelope of 0.3, depth
+    +100 %: about +13.7 dB). With the speaker and the microphone that is a
+    loop that feeds on its own level and can howl: use headphones, or a
+    negative depth (which ducks the input instead). A gain at exactly -inf dB
+    still stays silent whatever the modulation.
+  - EXP UP and EXP DOWN are not symmetric round the knob's setting: EXP DOWN
+    spends most of each cycle near its low end, and so does EXP UP (its mirror
+    in time) before its fast rise. At very high rates
+    the ramps get coarse: at 2 kHz a cycle has only 6 steps.
+  - The settings last until you quit; nothing is saved yet. The log
+    (data/audreybrick.log) has a line for a slot once its settings have stayed
+    unchanged for half a second, for example
+    "mod: slot 2 triangle -> FeedbackLPFCutoff 3.20 Hz depth +34.0%".
 
 
 Quitting

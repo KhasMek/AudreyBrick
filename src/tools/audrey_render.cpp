@@ -3,7 +3,8 @@
 //
 // audrey-render: renders a parameter script through AudreyVoice to a WAV file.
 //
-//   audrey-render [--inputs-dir <dir>] <script.txt> <out.wav> [<duration_seconds>|- [<input.wav>]]
+//   audrey-render [--inputs-dir <dir>] [--chunk <frames>] <script.txt> <out.wav>
+//                 [<duration_seconds>|- [<input.wav>]]
 //
 // Duration and input come from the command line if given, otherwise from the
 // script header (# @duration, # @input; see tools/ScriptMeta.h). "-" as the
@@ -16,6 +17,13 @@
 // mono or stereo; stereo is mixed as L + R. An input shorter than the render is
 // followed by silence; a longer one is cut. Without an input, the voice gets
 // silence (nullptr).
+//
+// MOD-A: the voice always runs through a ModControlSource wrapped around the
+// script, which receives the script's mod lines (ScriptControlSource.h). A
+// script without mod lines renders exactly as before (the decorator writes no
+// offsets and copies the input unchanged). The input is at unity gain for the
+// InputGain modulation (gain knob 0.5). --chunk sets the frames per process()
+// call (1..4096, default 256); the output does not depend on it.
 //
 // Exit status: 0 on success, 1 on any error (message on stderr), 2 on bad usage.
 // Warnings (events after the end of the render, input length mismatch) go to
@@ -30,6 +38,7 @@
 
 #include "control/ScriptControlSource.h"
 #include "core/AudreyVoice.h"
+#include "mod/ModControlSource.h"
 #include "tools/ScriptMeta.h"
 #include "tools/WavIO.h"
 
@@ -37,16 +46,18 @@ using namespace audreybrick;
 
 namespace
 {
-constexpr std::size_t kChunk = 256; // frames per process() call, a typical device buffer
+constexpr std::size_t kChunk    = 256;  // default frames per process() call, a typical device buffer
+constexpr std::size_t kMaxChunk = 4096; // --chunk limit
 
 int usage()
 {
     std::fprintf(stderr,
-                 "usage: audrey-render [--inputs-dir <dir>] <script.txt> <out.wav> [<duration_seconds>|- [<input.wav>]]\n"
+                 "usage: audrey-render [--inputs-dir <dir>] [--chunk <frames>] <script.txt> <out.wav>\n"
+                 "                      [<duration_seconds>|- [<input.wav>]]\n"
                  "  Renders the script through AudreyVoice at 48 kHz to a stereo 32-bit float WAV.\n"
                  "  Duration and input default to the script's '# @duration' and '# @input' header lines\n"
                  "  (@input is looked up in --inputs-dir). input.wav must be 48 kHz mono or stereo;\n"
-                 "  stereo is mixed as L + R.\n");
+                 "  stereo is mixed as L + R. --chunk: frames per process() call (1..4096, default 256).\n");
     return 2;
 }
 
@@ -61,6 +72,7 @@ int main(int argc, char** argv)
 {
     std::vector<std::string> pos;
     std::string              inputsDir;
+    std::size_t              chunk = kChunk;
     for(int a = 1; a < argc; ++a)
     {
         const std::string arg = argv[a];
@@ -69,6 +81,14 @@ int main(int argc, char** argv)
             if(a + 1 >= argc)
                 return usage();
             inputsDir = argv[++a];
+        }
+        else if(arg == "--chunk")
+        {
+            double c = 0.0;
+            if(a + 1 >= argc || !tools::parsePlainDecimal(argv[++a], c) || c < 1.0 ||
+               c > static_cast<double>(kMaxChunk) || c != std::floor(c))
+                return usage();
+            chunk = static_cast<std::size_t>(c);
         }
         else if(arg.size() > 2 && arg.compare(0, 2, "--") == 0)
             return usage();
@@ -128,6 +148,14 @@ int main(int argc, char** argv)
                          "before the end of the render (%g s)\n",
                          scriptPath.c_str(), ev.line, ev.timeSeconds, ev.rampSeconds, duration);
     }
+    for(const auto& ev : script.modEvents())
+    {
+        if(ev.startBlock >= blocks)
+            std::fprintf(stderr,
+                         "audrey-render: warning: %s:%d: mod line at %g s is at or after the end of the "
+                         "render (%g s) and has no effect\n",
+                         scriptPath.c_str(), ev.line, ev.timeSeconds, duration);
+    }
 
     std::vector<float> input;
     if(!inPath.empty())
@@ -150,14 +178,18 @@ int main(int argc, char** argv)
 
     AudreyVoice voice;
     voice.init();
+    ModControlSource mod(script);
+    mod.prepare(chunk);
+    mod.attachScript(script);
 
     std::vector<float> left(frames), right(frames);
     const auto         t0 = std::chrono::steady_clock::now();
-    for(std::size_t pos = 0; pos < frames; pos += kChunk)
+    for(std::size_t pos = 0; pos < frames; pos += chunk)
     {
-        const std::size_t n = frames - pos < kChunk ? frames - pos : kChunk;
-        voice.process(script, input.empty() ? nullptr : input.data() + pos, left.data() + pos,
-                      right.data() + pos, n);
+        const std::size_t n  = frames - pos < chunk ? frames - pos : chunk;
+        const float*      in = mod.beginChunk(input.empty() ? nullptr : input.data() + pos, n, nullptr, 1.0f);
+        voice.process(mod, in, left.data() + pos, right.data() + pos, n);
+        mod.endChunk();
     }
     const double elapsed =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();

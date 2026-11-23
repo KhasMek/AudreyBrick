@@ -23,7 +23,12 @@
 //      one-pole (time constant kInputGainSmoothingSeconds), the sample is read
 //      from the current buffer (and, during a crossfade between files, from the
 //      old one too) and written as sample * gain * level into the stage's own
-//      preallocated buffer.
+//      preallocated buffer. Two records go along, neither of which changes the
+//      output: the gain each sample carries (gainTrace(), MOD-A) and the
+//      sample without the gain, sample * level (preGain(), MOD-C: the envelope
+//      followers' input). At gain 0 (-inf dB) the stage runs exactly as at any
+//      other gain: the source is read and advances, the output is the sample
+//      times 0, and preGain() holds the input.
 //   5. Takes the peak |in| of the chunk into peak() (a MaxHold, like the output
 //      meters) and publishes a few status atomics.
 // No allocation, free, lock, file access, logging, trigonometry or wait.
@@ -318,6 +323,28 @@ class InputStage
     // --- Any thread ----------------------------------------------------------------------
     // The largest |in| (after gain and fades) since the last take().
     MaxHold& peak() noexcept { return peak_; }
+    // MOD-A, audio thread only: per sample of the last pull() that returned a
+    // buffer (`frames` values), the smoothed linear gain that sample carries:
+    // the gain it was computed with, or for a held live value the gain the
+    // held value was taken with. The fade level is separate. A record only:
+    // writing it changes no output. Valid until the next pull(); nullptr
+    // before prepare().
+    const float* gainTrace() const noexcept { return gainTrace_.get(); }
+    // MOD-C, audio thread only: per sample of the last pull() that returned a
+    // buffer (`frames` values), the input BEFORE the gain: the source's sample
+    // after the fades and crossfades (file: the player's sample, or the
+    // crossfade of two, times the fade level; live: the captured sample, or the
+    // skip/repeat crossfade, times the fade level; a held live value: the last
+    // sample read, times the falling level), i.e. the output sample with the
+    // gain left out. The envelope followers read it (ModControlSource), so they
+    // follow the input at any gain, 0 (-inf dB) included. A record only: writing
+    // it changes no output, no file position and no ring read. The gain never
+    // decides whether pull() returns a buffer; it returns nullptr (nothing
+    // recorded; the pre-gain input then counts as silence) with the source OFF,
+    // with nothing to play, and for LIVE while the ring fills to its target
+    // (after a device opens, after an underrun, when LIVE is chosen again).
+    // Valid until the next pull(); nullptr before prepare().
+    const float* preGain() const noexcept { return preGain_.get(); }
     // True while pull() returned a buffer in its last call (a source is audible
     // or fading).
     bool active() const noexcept { return active_.load(std::memory_order_relaxed); }
@@ -410,6 +437,8 @@ class InputStage
     float                    gain_    = 1.0f; // smoothed linear gain
     float                    gainCoef_;
     std::unique_ptr<float[]> out_;
+    std::unique_ptr<float[]> gainTrace_; // MOD-A: gain_ per sample of the last pull()
+    std::unique_ptr<float[]> preGain_;   // MOD-C: the sample before the gain, per sample of the last pull()
     std::unique_ptr<float[]> xfTable_; // kInputFileCrossfadeFrames weights
     std::size_t              capacity_ = 0;
 
@@ -436,6 +465,7 @@ class InputStage
     std::size_t   liveXfLen_       = 0;
     float         liveRaw_         = 0.0f;             // the last live sample read (before the gain)
     float         liveHoldOut_     = 0.0f;             // the last live value after the gain (held when dry)
+    float         liveHoldGain_    = 0.0f;             // MOD-A: the gain liveHoldOut_ was taken with (record only)
     std::uint32_t liveSessionSeen_ = 0;
     std::uint64_t liveClock_       = 0;                // frames pulled since start
     std::uint64_t liveLastUnderrun_ = kNoUnderrun;     // liveClock_ at the last underrun

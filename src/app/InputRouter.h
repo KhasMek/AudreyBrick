@@ -33,6 +33,10 @@
 // directly (real input is ignored there, as before). The model never sees the
 // panel: on INPUT it binds no knob, so its d-pad, X and Y do nothing there.
 //
+// MOD-B: with a ModPanel attached, deliver() passes every event to it last,
+// with whether the MOD tab is current after the model has seen it; ReleaseAll
+// reaches it too. Like INPUT, MOD binds no knob in the model.
+//
 // UI thread only. No allocation (apart from what the input panel does when it
 // rescans or logs, M2b-A). Nothing throws: everything route() and deliver() call
 // is noexcept (the input panel catches at its own boundary).
@@ -42,6 +46,7 @@
 #include "app/Buttons.h"
 #include "app/ControlModel.h"
 #include "app/MenuQuit.h"
+#include "app/ModPanel.h"
 #include "app/RecordChord.h"
 #include "input/InputController.h"
 #include "platform/InputMap.h"
@@ -61,15 +66,16 @@ class InputRouter
     };
 
     // `input`: the INPUT tab's panel (M2b-A), or nullptr for none. `record`: the
-    // Start + Y chord (REC), or nullptr for none.
+    // Start + Y chord (REC), or nullptr for none. `mod`: the MOD tab's panel
+    // (MOD-B), or nullptr for none.
     InputRouter(ControlModel& model, MenuQuit& quit, bool selftest, InputController* input = nullptr,
-                RecordChord* record = nullptr) noexcept
-        : model_(model), quit_(quit), selftest_(selftest), input_(input), record_(record)
+                RecordChord* record = nullptr, ModPanel* mod = nullptr) noexcept
+        : model_(model), quit_(quit), selftest_(selftest), input_(input), record_(record), mod_(mod)
     {
     }
 
     Result route(InputMap::Action action, const ButtonEvent& be, double t) noexcept;
-    // One button event to the model and the input panel (not to MenuQuit).
+    // One button event to the model, the input panel and the mod panel (not to MenuQuit).
     void deliver(const ButtonEvent& be, double t) noexcept;
     // REC: a scripted (self-test) button event: the chord, then deliver().
     // Returns RecordToggle or Continue.
@@ -81,6 +87,7 @@ class InputRouter
     bool             selftest_;
     InputController* input_;
     RecordChord*     record_;
+    ModPanel*        mod_;
 
     // The chord and deliver(); true if it fired.
     bool chordAndDeliver(const ButtonEvent& be, double t) noexcept;

@@ -1,6 +1,9 @@
 # M2b-B self-test: a capture clock 1 % slow (rate 47520 per 48000 output frames):
 # the stage repeats a buffer with a crossfade about every 0.5 s (M2b-B review, S3).
 capture device slow 1 330 0.4 47520
+# MOD-B: seven tabs; L1 from LOOP goes to MOD, a second L1 to INPUT.
+0.02  L1        down
+0.04  L1        up
 0.10  L1        down
 0.15  L1        up
 0.30  DpadRight down

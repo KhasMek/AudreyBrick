@@ -1,0 +1,22 @@
+# MOD-A: the envelope follower on the audio input, opening the loop lowpass.
+#
+# Shows: the input (noise_burst.wav: white noise +-0.25 from 2 to 3 s) excites
+# the drone and, through slot 1 (envelope, release rate 0.6 = about 80 ms,
+# depth 0.6), opens the lowpass from knob 0.25 (about 480 Hz) while the burst
+# lasts; it closes again after the burst. The follower sees the input after the
+# input stage and before any InputGain modulation.
+# Drone: FeedbackGain 0.5, FeedbackBody 0.3, FeedbackLPFCutoff 0.25,
+# ReverbMix 0.25; others at their defaults.
+# Duration 12 s. Default wavcheck thresholds.
+#
+# @duration 12
+# @input noise_burst.wav
+
+0 FeedbackGain 0.5
+0 FeedbackBody 0.3
+0 FeedbackLPFCutoff 0.25
+0 ReverbMix 0.25
+0 mod1 shape envelope
+0 mod1 target FeedbackLPFCutoff
+0 mod1 rate 0.6
+0 mod1 depth 0.6

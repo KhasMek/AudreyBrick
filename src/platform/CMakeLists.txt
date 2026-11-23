@@ -1,14 +1,16 @@
 # audrey_platform (static, no SDL): the body of the audio callback (AudioRender),
 # the meters and flush-to-zero. M2b-A: AudioRender calls the input stage
 # (audrey_input_stage, src/input). REC: it offers each finished output block to
-# the recording's tap (audrey_record_tap, src/record). Built with or without SDL so the render path is
-# tested everywhere. It includes AudreyVoice.h (upstream DSP headers), so it
-# applies AB_DSP_OPT_OPTIONS like any DSP target.
+# the recording's tap (audrey_record_tap, src/record). MOD-A: it runs the voice
+# through the modulation decorator when one is attached (audrey_mod, src/mod).
+# Built with or without SDL so the render path is tested everywhere. It includes
+# AudreyVoice.h (upstream DSP headers), so it applies AB_DSP_OPT_OPTIONS like any
+# DSP target.
 add_library(audrey_platform STATIC
     AudioRender.cpp
 )
 target_include_directories(audrey_platform PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(audrey_platform PUBLIC audrey_core audrey_input_stage audrey_record_tap)
+target_link_libraries(audrey_platform PUBLIC audrey_core audrey_input_stage audrey_record_tap audrey_mod)
 target_compile_options(audrey_platform PRIVATE ${AB_DSP_OPT_OPTIONS} ${AB_WARNING_OPTIONS})
 
 # audrey_platform_sdl (static, SDL2): the audio device, the capture devices

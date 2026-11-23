@@ -115,6 +115,9 @@ void ButtonControlSource::read(ControlFrame& out) noexcept
     if(h.feedbackMax)
         out.knob[kFb] = 1.0f;
     out.delaySwitch = latch_ != h.switchHeld;
+    for(std::size_t i = 0; i < kKnobCount; ++i)
+        out.knobMod[i] = 0.0f; // no modulation here (MOD-A: ModControlSource adds it)
+    out.delaySwitchMod = false;
 
     // 6. Publish.
     publish(out);

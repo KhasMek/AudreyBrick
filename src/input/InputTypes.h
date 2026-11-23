@@ -78,6 +78,17 @@ constexpr float inputGainFromNorm(float n) noexcept
     return g * g;
 }
 
+// The inverse of inputGainFromNorm (MOD-A): the knob position 0..1 whose gain is
+// g (clamped to 0..kInputGainMax; NaN -> 0).
+inline float inputNormFromGain(float g) noexcept
+{
+    if(!(g > 0.0f))
+        return 0.0f;
+    if(g >= kInputGainMax)
+        return 1.0f;
+    return clampInputNorm(0.5f * std::sqrt(g)); // gain = (2n)^2  =>  n = sqrt(gain) / 2
+}
+
 // The gain in dB; -infinity at n = 0.
 inline float inputGainDb(float n) noexcept
 {

@@ -150,6 +150,26 @@
 //     clock-drift self-tests); --expect-live-status none|failed|lost|open checks
 //     the INPUT tab's live status at the end (open: a device is open).
 
+// Modulation (docs/briefs/MOD.md, MOD-A and MOD-B):
+//   - A ModControlSource (src/mod) wraps the ButtonControlSource and is attached
+//     to the AudioRender before the device opens; with every slot's target None
+//     (the start-up state) the output is exactly as without it.
+//   - MOD-B: the MOD tab's panel (app/ModPanel.h) owns the four slots and talks
+//     to it through modulation() (a ModUiPort: setModSlot() and the read-back
+//     only). It gets every button event through InputRouter::deliver() (in
+//     self-test mode the scripted events too, so a button script can drive the
+//     tab), its tick() runs every loop iteration after the INPUT panel's, and
+//     its log lines (one per slot once its settings have been stable for 0.5 s)
+//     go to the diagnostic log. fillSnapshot() fills the snapshot's mod view
+//     from it once per frame; while a slot modulates the input gain, the input
+//     meter shows the effective level (the peak times inputGainRatio()).
+//   - --mod <slot 1-4> <shape> <target> <rate 0..1> <depth -1..1> [bipolar|unipolar] (self-test only,
+//     repeatable): sets that slot through the panel (ModPanel::setSlot) before
+//     audio starts, so the screen shows it. The self-test report prints every
+//     slot's settings (the panel's) and the read-back, and the largest offset
+//     seen per target during the run; --expect-mod-active <target> checks that
+//     target's offset was not 0 at some UI frame.
+
 // Recording (docs/briefs/REC.md):
 //   - --record-dir <dir>: the recordings folder (the launcher passes
 //     audreybrick/data/recordings); default data/recordings, relative to the
@@ -190,6 +210,7 @@
 #include "app/DiagLog.h"
 #include "app/FramePacer.h"
 #include "app/MenuQuit.h"
+#include "app/ModPanel.h"
 #include "app/RecordChord.h"
 #include "app/RestoreOnExit.h"
 #include "app/SdlDiagnostics.h"
@@ -201,6 +222,7 @@
 #include "input/InputStage.h"
 #include "input/LiveInput.h"
 #include "input/LiveSim.h"
+#include "mod/ModControlSource.h"
 #include "platform/CaptureHost.h"
 #include "platform/AudioHost.h"
 #include "platform/AudioRender.h"
@@ -218,6 +240,12 @@ struct KnobExpectation
     Knob   knob;
     double min; // inclusive, normalised
     double max; // inclusive, normalised
+};
+
+struct ModOption
+{
+    std::size_t     slot; // 0-based
+    ModSlotSettings settings;
 };
 
 struct AppOptions
@@ -259,6 +287,8 @@ struct AppOptions
     double                       liveOverfillsMin    = 0.0; // --expect-live-overfills-min (M2b-B)
     std::string                  expectLiveStatus;          // --expect-live-status none|failed|lost|open (M2b-B)
     int                          expectRecordings = -1;     // --expect-recordings <n> (REC): files saved; -1 = no check
+    std::vector<ModOption>       mods;                      // --mod <slot> <shape> <target> <rate> <depth> [polarity] (MOD-A, MOD-C)
+    std::vector<ModTarget>       expectModActive;           // --expect-mod-active <target> (MOD-B), repeatable
 
     bool selftest() const noexcept { return !selftestScript.empty(); }
 };
@@ -294,6 +324,11 @@ class App
     // self-test script, 3 for a failed self-test.
     int run();
 
+    // MOD-A: the UI thread's port to the modulation decorator (empty before
+    // start-up): setModSlot() and the read-back only (ModUiPort,
+    // mod/ModControlSource.h). MOD-B's tab uses it.
+    ModUiPort modulation() noexcept { return mod_ ? ModUiPort(*mod_) : ModUiPort(); }
+
   private:
     bool   startUp(std::string& error);
     void   shutDown() noexcept;
@@ -308,6 +343,7 @@ class App
     void   exitActions(); // --remove-on-exit and --restore-on-exit, once per run
     void   logGovernors(const char* when);
     void   drainInputLog(); // M2b-A: the input controller's lines into the diagnostic log
+    void   drainModLog();   // MOD-B: the mod panel's lines into the diagnostic log
     void   formatLiveWindow(char* out, std::size_t size, std::uint64_t outputFrames); // M2b-B
     void   onRecordToggle();   // REC: Start + Y
     void   drainRecorder();    // REC: the writer's log lines and results
@@ -337,6 +373,9 @@ class App
     // Instrument (destroyed after the audio device is closed).
     std::unique_ptr<AudreyVoice>         voice_;
     std::unique_ptr<ButtonControlSource> source_;
+    std::unique_ptr<ModControlSource>    mod_;      // MOD-A: wraps source_ (destroyed with it, after audio_)
+    std::unique_ptr<ModPanel>            modPanel_; // MOD-B: the MOD tab (holds a port to mod_; destroyed before it)
+    std::vector<std::string>             modLog_;   // its log lines, drained every iteration
     std::unique_ptr<ControlModel>        model_;
     std::unique_ptr<LiveInput>           live_;     // M2b-B: the capture ring (outlives stage_ and the capture systems)
     std::unique_ptr<InputStage>          stage_;    // M2b-A: the input (outlives audio_)
@@ -398,6 +437,7 @@ class App
     float      cpuMaxAfterFirstSecond_ = 0.0f; // self-test report: excludes start-up
     float      peakSessionMax_[2]      = {0.0f, 0.0f};
     float      inputPeakSessionMax_    = 0.0f; // M2b-A
+    float      modOffsetMax_[kModTargetCount] = {}; // MOD-B: the largest |targetOffset| seen per target (UI frames)
     float      statsInputPeak_         = 0.0f; // M2b-A: input peak in the statistics window
     // M2b-B: the live input in the statistics window (counters at its start).
     float         statsPrePeak_        = 0.0f;

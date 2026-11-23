@@ -18,9 +18,10 @@ target_include_directories(audrey_tools SYSTEM PRIVATE ${AB_THIRD_PARTY}/dr_libs
 target_compile_options(audrey_tools PRIVATE ${AB_WARNING_OPTIONS})
 
 # audrey-render includes AudreyVoice.h and ScriptControlSource.h, which compile
-# upstream inline DSP, so it applies AB_DSP_OPT_OPTIONS.
+# upstream inline DSP, so it applies AB_DSP_OPT_OPTIONS. MOD-A: it runs the voice
+# through ModControlSource (audrey_mod).
 add_executable(audrey-render audrey_render.cpp)
-target_link_libraries(audrey-render PRIVATE audrey_core audrey_tools)
+target_link_libraries(audrey-render PRIVATE audrey_mod audrey_tools) # audrey_mod brings audrey_core
 target_compile_options(audrey-render PRIVATE ${AB_DSP_OPT_OPTIONS} ${AB_WARNING_OPTIONS})
 
 # wavcheck --script reads events through ScriptControlSource (audrey_core), so it

@@ -16,11 +16,13 @@
 #include <vector>
 
 #include "app/Buttons.h"
+#include "app/ModView.h"
 #include "app/Tabs.h"
 #include "app/UiSnapshot.h"
 #include "core/ControlSource.h"
 #include "core/ParamTable.h"
 #include "input/InputTypes.h"
+#include "mod/ModTypes.h"
 #include "ui/DrawList.h"
 #include "ui/Layout.h"
 #include "ui/MeterBallistics.h"
@@ -758,6 +760,273 @@ inline UiSnapshot recordMessageSnapshot()
     return s;
 }
 
+// --- MOD-B: the MOD tab and modulated knobs -----------------------------------------------------
+inline ModSlotSettings modSlot(ModShape shape, ModTarget target, float rateNorm, float depth)
+{
+    ModSlotSettings m;
+    m.shape    = shape;
+    m.target   = target;
+    m.rateNorm = rateNorm;
+    m.depth    = depth;
+    return m;
+}
+
+// Every slot at the panel's default (sine, None, 1 Hz, depth 0).
+inline void setModDefaults(UiSnapshot& s)
+{
+    for(std::size_t i = 0; i < kModSlots; ++i)
+        s.mod.slot[i] = modSlot(ModShape::Sine, ModTarget::None, modRateNormFromHz(1.0), 0.0f);
+}
+
+// Sets slot i and its share of the target's offset (output * depth, summed).
+inline void setModSlotView(UiSnapshot& s, std::size_t i, const ModSlotSettings& m, float output)
+{
+    s.mod.slot[i]   = m;
+    s.mod.output[i] = output;
+    if(m.target != ModTarget::None)
+        s.mod.offset[static_cast<std::size_t>(m.target)] += output * m.depth;
+}
+
+// MOD, nothing set: the start-up state of the tab.
+inline UiSnapshot modEmptySnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Mod);
+    setModDefaults(s);
+    return s;
+}
+
+// MOD, slot 1: triangle on LOWPASS at 3.20 Hz, +34 %; the cursor on RATE.
+inline UiSnapshot modOneSlotSnapshot()
+{
+    UiSnapshot s = modEmptySnapshot();
+    setModSlotView(s, 0, modSlot(ModShape::Triangle, ModTarget::FeedbackLPFCutoff, modRateNormFromHz(3.2), 0.34f), 0.6f);
+    s.mod.row = ModRow::Rate;
+    return s;
+}
+
+// MOD, all four slots active (the envelope with RELEASE), slot 3 edited on
+// DEPTH; the switch requested by slot 4.
+inline UiSnapshot modFourSlotsSnapshot()
+{
+    UiSnapshot s = modEmptySnapshot();
+    setModSlotView(s, 0, modSlot(ModShape::Sine, ModTarget::Frequency, 0.05f, 0.08f), -0.7f);
+    setModSlotView(s, 1, modSlot(ModShape::Envelope, ModTarget::FeedbackLPFCutoff, 0.6f, -0.5f), 0.4f);
+    setModSlotView(s, 2, modSlot(ModShape::SampleHold, ModTarget::InputGain, 1.0f, -1.0f), 0.9f);
+    setModSlotView(s, 3, modSlot(ModShape::Square, ModTarget::DelaySwitch, 0.62f, 1.0f), 1.0f);
+    s.mod.current         = 2;
+    s.mod.row             = ModRow::Depth;
+    s.mod.switchRequested = true;
+    s.mod.inputGainRatio  = 0.25f;
+    return s;
+}
+
+// MOD with slot 2 edited on SHAPE (the envelope: RELEASE on its row) and one
+// slot with depth 0 (dimmed though it has a target).
+inline UiSnapshot modEnvelopeSnapshot()
+{
+    UiSnapshot s = modEmptySnapshot();
+    setModSlotView(s, 0, modSlot(ModShape::Triangle, ModTarget::ReverbMix, 0.4f, 0.0f), 0.3f);
+    setModSlotView(s, 1, modSlot(ModShape::Envelope, ModTarget::OutputVolume, 0.0f, -1.0f), 1.0f);
+    s.mod.current = 1;
+    s.mod.row     = ModRow::Shape;
+    return s;
+}
+
+// MOD-D: X held on MOD (pressed there): the cards lit, the rows dimmed (the
+// cursor row DEPTH kept with a thin frame), the X cap on TARGET lit; four
+// active slots, slot 3 selected, as modFourSlotsSnapshot.
+inline UiSnapshot modXHeldSnapshot()
+{
+    UiSnapshot s   = modFourSlotsSnapshot();
+    s.mod.choosing = true;
+    s.xHeld        = true;
+    setButton(s, Button::X, true);
+    return s;
+}
+
+// MOD-D: X held, but pressed on another tab (choosing false): nothing lit, the
+// rows as without X except no held-arrow frames.
+inline UiSnapshot modXFromOtherTabSnapshot()
+{
+    UiSnapshot s = modFourSlotsSnapshot();
+    s.xHeld      = true;
+    setButton(s, Button::X, true);
+    setButton(s, Button::DpadRight, true);
+    return s;
+}
+
+// MOD-D: the selected card idle (slot 2: a target but depth 0) among dimmed
+// active cards: the selected mark on an idle card, the dimmed-but-active
+// cards beside it; the cursor on TARGET (a knob: its tab after the name).
+inline UiSnapshot modSelectedIdleSnapshot()
+{
+    UiSnapshot s = modEmptySnapshot();
+    setModSlotView(s, 1, modSlot(ModShape::Sine, ModTarget::FeedbackBody, modRateNormFromHz(1.0), 0.0f), 0.4f);
+    setModSlotView(s, 0, modSlot(ModShape::Triangle, ModTarget::FeedbackHPFCutoff, modRateNormFromHz(0.3), 0.6f), 0.5f);
+    setModSlotView(s, 2, modSlot(ModShape::ExpDown, ModTarget::ReverbDecay, modRateNormFromHz(5.0), -0.2f), 0.9f);
+    setModSlotView(s, 3, modSlot(ModShape::Square, ModTarget::EchoDelayTime, modRateNormFromHz(0.2), 0.1f), -1.0f);
+    s.mod.current = 1;
+    s.mod.row     = ModRow::Target;
+    return s;
+}
+
+// MOD-D: TARGET on a knob (its tab after the name) with the longest names.
+inline UiSnapshot modTargetKnobSnapshot()
+{
+    UiSnapshot s = modEmptySnapshot();
+    setModSlotView(s, 0, modSlot(ModShape::Sine, ModTarget::Frequency, modRateNormFromHz(2.0), 0.2f), 0.3f);
+    s.mod.row = ModRow::Target;
+    setButton(s, Button::DpadRight, true);
+    return s;
+}
+
+// MOD-D: TARGET DELAY SWITCH (the longest name, no tab) on the X-held screen.
+inline UiSnapshot modTargetSwitchXSnapshot()
+{
+    UiSnapshot s = modEmptySnapshot();
+    setModSlotView(s, 3, modSlot(ModShape::Square, ModTarget::DelaySwitch, modRateNormFromHz(0.5), 1.0f), 1.0f);
+    s.mod.current  = 3;
+    s.mod.row      = ModRow::Target;
+    s.mod.choosing = true;
+    s.xHeld        = true;
+    setButton(s, Button::X, true);
+    return s;
+}
+
+// MOD-C: the four ramps, two of them unipolar (cards "+"), slot 2 (RAMP DOWN,
+// unipolar) edited on POLARITY; the activity bars show the unipolar outputs
+// (0..1) times depth.
+inline UiSnapshot modRampsSnapshot()
+{
+    UiSnapshot      s = modEmptySnapshot();
+    ModSlotSettings a = modSlot(ModShape::RampUp, ModTarget::FeedbackLPFCutoff, modRateNormFromHz(0.5), 0.4f);
+    ModSlotSettings b = modSlot(ModShape::RampDown, ModTarget::ReverbMix, modRateNormFromHz(2.0), -0.3f);
+    b.polarity        = ModPolarity::Unipolar;
+    ModSlotSettings c = modSlot(ModShape::ExpUp, ModTarget::EchoDelaySend, modRateNormFromHz(8.0), 0.25f);
+    ModSlotSettings e = modSlot(ModShape::ExpDown, ModTarget::OutputVolume, modRateNormFromHz(120.0), -1.0f);
+    e.polarity        = ModPolarity::Unipolar;
+    setModSlotView(s, 0, a, -0.5f);
+    setModSlotView(s, 1, b, 0.8f);
+    setModSlotView(s, 2, c, 0.9f);
+    setModSlotView(s, 3, e, 0.35f);
+    s.mod.current = 1;
+    s.mod.row     = ModRow::Polarity;
+    return s;
+}
+
+// MOD-C: an envelope edited on POLARITY: UNIPOLAR dimmed, outline arrows and
+// FIXED BY ENVELOPE, although its stored polarity is bipolar.
+inline UiSnapshot modEnvelopePolaritySnapshot()
+{
+    UiSnapshot s = modEmptySnapshot();
+    setModSlotView(s, 0, modSlot(ModShape::Envelope, ModTarget::FeedbackLPFCutoff, 0.6f, 0.5f), 0.7f);
+    s.mod.row = ModRow::Polarity;
+    setButton(s, Button::DpadRight, true); // held: no frame on a fixed row
+    return s;
+}
+
+// LOOP with FEEDBACK (slot 2), FREQUENCY (slot 1) and BODY (slots 1 and 3)
+// modulated: tags and moving-value markers on the rows, the band and the strip.
+inline UiSnapshot modLoopSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Loop);
+    setModDefaults(s);
+    setModSlotView(s, 0, modSlot(ModShape::Sine, ModTarget::Frequency, 0.3f, 0.1f), 0.5f);
+    setModSlotView(s, 1, modSlot(ModShape::Triangle, ModTarget::FeedbackGain, 0.2f, 0.3f), 0.8f);
+    setModSlotView(s, 2, modSlot(ModShape::Square, ModTarget::FeedbackBody, 0.5f, -0.4f), 1.0f);
+    s.mod.slot[0].target = ModTarget::Frequency;
+    s.mod.slot[3]        = modSlot(ModShape::Sine, ModTarget::FeedbackBody, 0.5f, 0.2f);
+    s.mod.output[3]      = -0.5f;
+    s.mod.offset[static_cast<std::size_t>(ModTarget::FeedbackBody)] += -0.1f;
+    return s;
+}
+
+// DELAY (compact rows) with the switch on, feedback maximum and modulation on
+// TIME (slot 4), REPEATS (slots 1 and 2) and the feedback gain (slot 3): the
+// strip's tags beside B and MAX.
+inline UiSnapshot modDelaySnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Delay);
+    s.switchOn    = true;
+    s.switchLatch = true;
+    refreshEngine(s);
+    setFeedback(s, feedbackNorm(-10.0f), true);
+    setModDefaults(s);
+    setModSlotView(s, 0, modSlot(ModShape::Sine, ModTarget::EchoDelayFeedback, 0.5f, 0.2f), 0.5f);
+    setModSlotView(s, 1, modSlot(ModShape::Sine, ModTarget::EchoDelayFeedback, 0.5f, 0.2f), 0.5f);
+    setModSlotView(s, 2, modSlot(ModShape::Sine, ModTarget::EchoDelayFeedback, 0.5f, 0.2f), 0.5f);
+    setModSlotView(s, 3, modSlot(ModShape::Sine, ModTarget::EchoDelayFeedback, 0.5f, 0.2f), 0.5f);
+    s.mod.slot[3].target = ModTarget::EchoDelayTime;
+    s.mod.offset[static_cast<std::size_t>(ModTarget::EchoDelayFeedback)] -= 0.1f;
+    s.mod.offset[static_cast<std::size_t>(ModTarget::EchoDelayTime)] += 0.1f;
+    s.mod.slot[2].target = ModTarget::FeedbackGain;
+    s.mod.offset[static_cast<std::size_t>(ModTarget::EchoDelayFeedback)] -= 0.1f;
+    s.mod.offset[static_cast<std::size_t>(ModTarget::FeedbackGain)] += 0.1f;
+    s.xHeld = true;
+    setButton(s, Button::X, true);
+    return s;
+}
+
+// INPUT (FILE playing) with all four slots on the input gain at +12 dB (the
+// widest tag beside the widest gain value); the meter shows the effective
+// level (the app scales the peak by the ratio before the snapshot).
+inline UiSnapshot modInputSnapshot()
+{
+    UiSnapshot s = inputPlayingSnapshot();
+    setInputGain(s, 1.0f);
+    setModDefaults(s);
+    for(std::size_t i = 0; i < kModSlots; ++i)
+        setModSlotView(s, i, modSlot(ModShape::Sine, ModTarget::InputGain, 0.5f, -0.1f), 1.0f);
+    s.mod.inputGainRatio = 0.4f;
+    s.input.peak         = modEffectiveInputPeak(s.mod, s.input.peak);
+    return s;
+}
+
+// FILTER with all four slots on LOWPASS: the full tag "M1234" in the row; the
+// strip cell has room only for the short form (MOD-B review).
+inline UiSnapshot modStripFullSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Filter);
+    setModDefaults(s);
+    for(std::size_t i = 0; i < kModSlots; ++i)
+        setModSlotView(s, i, modSlot(ModShape::Sine, ModTarget::FeedbackLPFCutoff, 0.3f, 0.2f), 0.25f);
+    return s;
+}
+
+// REVERB with three slots on HIGHPASS (an unbound knob: the strip's tag only)
+// and slot 4 pulling BODY's moving value down to 0 (the strip marker's stub).
+inline UiSnapshot modStripStubSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Reverb);
+    setModDefaults(s);
+    for(std::size_t i = 0; i < 3; ++i)
+        setModSlotView(s, i, modSlot(ModShape::Triangle, ModTarget::FeedbackHPFCutoff, 0.3f, 0.3f), 0.5f);
+    setModSlotView(s, 3, modSlot(ModShape::Square, ModTarget::FeedbackBody, 0.2f, -1.0f), 1.0f);
+    return s;
+}
+
+// INPUT LIVE (compact rows) with slots 1 and 2 on the input gain.
+inline UiSnapshot modInputLiveSnapshot()
+{
+    UiSnapshot s = inputLiveOpenSnapshot();
+    setModDefaults(s);
+    setModSlotView(s, 0, modSlot(ModShape::Envelope, ModTarget::InputGain, 0.5f, 0.3f), 0.5f);
+    setModSlotView(s, 1, modSlot(ModShape::Sine, ModTarget::InputGain, 0.9f, -0.2f), -0.4f);
+    s.mod.inputGainRatio = 1.6f;
+    s.input.peak         = modEffectiveInputPeak(s.mod, s.input.peak);
+    return s;
+}
+
+// FILTER with only the modulation holding the delay switch on (slot 3).
+inline UiSnapshot modSwitchSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Filter);
+    setModDefaults(s);
+    setModSlotView(s, 2, modSlot(ModShape::Square, ModTarget::DelaySwitch, 0.4f, 1.0f), 1.0f);
+    s.mod.switchRequested = true;
+    return s;
+}
+
 struct NamedSnapshot
 {
     const char* name;
@@ -845,6 +1114,24 @@ inline std::vector<NamedSnapshot> allSnapshots()
         {"rec_saving_live_popup", recordSavingLiveSnapshot()},
         {"rec_saved", recordSavedSnapshot()},
         {"rec_message_max", recordMessageSnapshot()},
+        {"mod_empty", modEmptySnapshot()},
+        {"mod_one_slot", modOneSlotSnapshot()},
+        {"mod_four_slots", modFourSlotsSnapshot()},
+        {"mod_envelope_dimmed", modEnvelopeSnapshot()},
+        {"mod_x_held", modXHeldSnapshot()},
+        {"mod_x_from_other_tab", modXFromOtherTabSnapshot()},
+        {"mod_selected_idle", modSelectedIdleSnapshot()},
+        {"mod_target_knob", modTargetKnobSnapshot()},
+        {"mod_target_switch_x", modTargetSwitchXSnapshot()},
+        {"mod_ramps_polarity", modRampsSnapshot()},
+        {"mod_envelope_polarity_fixed", modEnvelopePolaritySnapshot()},
+        {"mod_tags_loop", modLoopSnapshot()},
+        {"mod_tags_delay", modDelaySnapshot()},
+        {"mod_tags_input_gain", modInputSnapshot()},
+        {"mod_tags_input_live", modInputLiveSnapshot()},
+        {"mod_tags_strip_m1234", modStripFullSnapshot()},
+        {"mod_tags_strip_stub", modStripStubSnapshot()},
+        {"mod_switch_only", modSwitchSnapshot()},
     };
 }
 

@@ -18,6 +18,13 @@
 //      while the stage has nothing to give: the voice then runs exactly as with
 //      no input) into the two preallocated channel buffers, then interleaves them
 //      into the output and takes the per-channel peaks.
+//   3a. MOD-A: if a ModControlSource is attached (attachModulation), the
+//      voice runs with it as its control source, and the input goes through
+//      it: beginChunk() with what pull() returned and the stage's per-sample
+//      gain record (InputStage::gainTrace(); a constant 1 without a stage) gives
+//      the pointer the voice reads; endChunk() after the voice. MOD-C: also the
+//      stage's pre-gain record (InputStage::preGain()), which the envelope
+//      followers read instead of the input. Without one, exactly as before.
 //   3b. REC: if a recording tap is attached, offers it the finished
 //      interleaved block (`out`, exactly what goes to the device): copied into
 //      its ring only while it is armed (RecordTap::offer: a memory copy and
@@ -48,6 +55,7 @@
 #include "core/AudreyVoice.h"
 #include "core/ControlSource.h"
 #include "input/InputStage.h"
+#include "mod/ModControlSource.h"
 #include "record/RecordTap.h"
 #include "platform/Meters.h"
 
@@ -94,6 +102,21 @@ class AudioRender
     void attachInput(InputStage* stage) noexcept { input_ = stage; }
     InputStage* input() const noexcept { return input_; }
 
+    // MOD-A: runs the voice through `mod` (nullptr: none), which must wrap this
+    // render's control source (returns false, and nothing changes, if it wraps
+    // another). Call before prepare(), never while render() may run; prepare()
+    // prepares it for the same capacity. It must outlive every render() call,
+    // and it must start together with the voice (both fresh, or reset() with
+    // the voice's init()), so its block schedule matches the voice's.
+    bool attachModulation(ModControlSource* mod) noexcept
+    {
+        if(mod != nullptr && &mod->inner() != &controls_)
+            return false;
+        mod_ = mod;
+        return true;
+    }
+    ModControlSource* modulation() const noexcept { return mod_; }
+
     // REC: offers every finished output block to `tap` (nullptr: none). Call
     // before audio starts, never while render() may run. The tap must outlive
     // every render() call.
@@ -124,6 +147,7 @@ class AudioRender
     double         ticksPerSecond_;
     InputStage*    input_ = nullptr;
     RecordTap*     record_ = nullptr;
+    ModControlSource* mod_ = nullptr;
 
     std::unique_ptr<float[]> left_;
     std::unique_ptr<float[]> right_;

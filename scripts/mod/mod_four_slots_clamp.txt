@@ -1,0 +1,35 @@
+# MOD-A: all four slots on one target at full depth, with the knob at each end.
+#
+# Shows: the clamp. Four slots (sine 0.5 Hz, triangle 0.3 Hz, square 0.2 Hz,
+# sample-and-hold 2 Hz), each with depth 1 (the square -1), all on Frequency.
+# Their sum reaches -4..+4 of knob travel; the voice clamps knob + sum to 0..1,
+# so the pitch sits at note 16 or note 72 much of the time. Knob at 0 for the
+# first 10 s, then at 1.
+# Drone: FeedbackGain 0.62; others at their defaults.
+# Duration 20 s.
+# Thresholds: the sample-and-hold and square steps of the pitch are jumps of
+# the string's delay length (no smoother after the modulation): largest click
+# ratio 107.8 (at 2.5 s, a square edge), so @click 200 instead of 80.
+#
+# @duration 20
+# @click 200
+
+0 FeedbackGain 0.62
+0 Frequency 0
+10 Frequency 1
+0 mod1 shape sine
+0 mod1 target Frequency
+0 mod1 hz 0.5
+0 mod1 depth 1
+0 mod2 shape triangle
+0 mod2 target Frequency
+0 mod2 hz 0.3
+0 mod2 depth 1
+0 mod3 shape square
+0 mod3 target Frequency
+0 mod3 hz 0.2
+0 mod3 depth -1
+0 mod4 shape samplehold
+0 mod4 target Frequency
+0 mod4 hz 2
+0 mod4 depth 1

@@ -1,0 +1,21 @@
+# MOD-A: slow sine on the frequency (drift) plus a faster, shallow one (vibrato).
+#
+# Shows: the drone's pitch wandering slowly (slot 1: 0.25 Hz, depth 0.1 = 5.6
+# semitones either way) with a vibrato on top (slot 2: 5.5 Hz, depth 0.006 =
+# 0.34 semitone). Both on Frequency, so their offsets add. The frequency
+# setter has no smoother of its own, so the pitch follows the modulators.
+# Drone: FeedbackGain 0.62, ReverbMix 0.3; others at their defaults.
+# Duration 24 s. Default wavcheck thresholds.
+#
+# @duration 24
+
+0 FeedbackGain 0.62
+0 ReverbMix 0.3
+0 mod1 shape sine
+0 mod1 target Frequency
+0 mod1 hz 0.25
+0 mod1 depth 0.1
+2 mod2 shape sine
+2 mod2 target Frequency
+2 mod2 hz 5.5
+2 mod2 depth 0.006

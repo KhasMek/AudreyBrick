@@ -280,8 +280,9 @@ int main()
             {Tab::Delay, Knob::EchoDelayTime, Knob::EchoDelaySend, kNoKnob, Knob::EchoDelayFeedback},
             {Tab::Out, kNoKnob, Knob::OutputVolume, kNoKnob, kNoKnob},
             {Tab::Input, kNoKnob, kNoKnob, kNoKnob, kNoKnob}, // M2b-A: the input panel, no knobs
+            {Tab::Mod, kNoKnob, kNoKnob, kNoKnob, kNoKnob},   // MOD-B: the mod panel, no knobs
         };
-        const char* names[] = {"LOOP", "FILTER", "REVERB", "DELAY", "OUT", "INPUT"};
+        const char* names[] = {"LOOP", "FILTER", "REVERB", "DELAY", "OUT", "INPUT", "MOD"};
         for(const Expect& e : table)
         {
             check(std::string(tabSpec(e.tab).name) == names[static_cast<int>(e.tab)],
@@ -340,14 +341,17 @@ int main()
     // ---- Tab change, wrapping, and tab change while a direction is held -------------------------
     {
         Rig r;
-        // M2b-A: six tabs, INPUT after OUT.
+        // M2b-A: INPUT after OUT; MOD-B: seven tabs, MOD after INPUT.
         r.tap(Button::L1);
-        check(r.model.currentTab() == Tab::Input, "L1 from LOOP wraps to INPUT");
+        check(r.model.currentTab() == Tab::Mod, "L1 from LOOP wraps to MOD");
+        r.tap(Button::L1);
+        check(r.model.currentTab() == Tab::Input, "L1 from MOD: INPUT");
         r.tap(Button::R1);
-        check(r.model.currentTab() == Tab::Loop, "R1 from INPUT wraps to LOOP");
-        for(int i = 0; i < 6; ++i)
+        r.tap(Button::R1);
+        check(r.model.currentTab() == Tab::Loop, "R1 from INPUT: MOD, and from MOD it wraps to LOOP");
+        for(int i = 0; i < 7; ++i)
             r.tap(Button::R1);
-        check(r.model.currentTab() == Tab::Loop, "six R1 presses come back to LOOP");
+        check(r.model.currentTab() == Tab::Loop && kTabCount == 7, "seven R1 presses come back to LOOP");
 
         r.press(Button::DpadRight); // Frequency
         r.run(6000);

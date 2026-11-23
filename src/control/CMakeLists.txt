@@ -3,6 +3,9 @@
 #                queue and the tuning constants.
 #   src/app:     ControlModel (UI side), the tab table, the Button enum and the
 #                button script parser. No SDL anywhere in this library.
+#   MOD-B:       the MOD tab's panel (ModPanel, UI side) and its names and
+#                formatting (ModFormat); they talk to the modulation decorator
+#                through ModUiPort, so the library links audrey_mod.
 # ButtonControlSource includes ParamTable.h, which pulls in upstream DSP headers,
 # so the library applies AB_DSP_OPT_OPTIONS like any DSP target.
 add_library(audrey_control STATIC
@@ -10,7 +13,9 @@ add_library(audrey_control STATIC
     ${CMAKE_SOURCE_DIR}/src/app/ControlModel.cpp
     ${CMAKE_SOURCE_DIR}/src/app/Tabs.cpp
     ${CMAKE_SOURCE_DIR}/src/app/ButtonScript.cpp
+    ${CMAKE_SOURCE_DIR}/src/app/ModPanel.cpp
+    ${CMAKE_SOURCE_DIR}/src/app/ModFormat.cpp
 )
 target_include_directories(audrey_control PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(audrey_control PUBLIC audrey_core)
+target_link_libraries(audrey_control PUBLIC audrey_core audrey_mod)
 target_compile_options(audrey_control PRIVATE ${AB_DSP_OPT_OPTIONS} ${AB_WARNING_OPTIONS})

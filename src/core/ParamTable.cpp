@@ -29,6 +29,8 @@
 
 #include "core/ParamTable.h"
 
+#include <cmath>
+
 #include "DSPUtils.h"
 
 namespace audreybrick
@@ -108,6 +110,72 @@ float knobToEngine(Knob knob, float n, bool delaySwitch) noexcept
     // Same expression as ParameterRegistry::UpdateNormalized.
     const ParamSpec& s = paramSpec(knob);
     return daisysp::fmap(daisysp::fclamp(preShape(knob, n, delaySwitch), 0.0f, 1.0f), s.min, s.max, s.curve);
+}
+
+double engineToKnob(Knob knob, float v, bool delaySwitch) noexcept
+{
+    const ParamSpec& s   = paramSpec(knob);
+    const double     lo  = s.min;
+    const double     hi  = s.max;
+    double           x   = static_cast<double>(v);
+    if(!(x >= lo)) // also NaN
+        x = lo;
+    if(x > hi)
+        x = hi;
+
+    // The registry's fmap, inverted: the pre-shaped value p in 0..1.
+    double p = 0.0;
+    switch(s.curve)
+    {
+        case daisysp::Mapping::EXP: p = std::sqrt((x - lo) / (hi - lo)); break;
+        case daisysp::Mapping::LOG: p = std::log(x / lo) / std::log(hi / lo); break;
+        case daisysp::Mapping::LINEAR:
+        default: p = (x - lo) / (hi - lo); break;
+    }
+    p = p < 0.0 ? 0.0 : (p > 1.0 ? 1.0 : p);
+
+    // preShape, inverted.
+    switch(knob)
+    {
+        case Knob::ReverbDecay:
+        {
+            // p = expm1(k n) / expm1(k)  =>  n = log1p(p expm1(k)) / k
+            const double k = static_cast<double>(kReverbDecayTension);
+            return std::log1p(p * std::expm1(k)) / k;
+        }
+        case Knob::EchoDelayTime: return delaySwitch ? p / static_cast<double>(kDelaySwitchScale) : p;
+        default: return p;
+    }
+}
+
+float modulateEngineValue(Knob knob, float smoothed, float offset, bool delaySwitch) noexcept
+{
+    if(offset == 0.0f || offset != offset) // 0, -0 or NaN: not modulated
+        return smoothed;
+    const ParamSpec& s = paramSpec(knob);
+    if(std::isfinite(smoothed) && smoothed >= s.min && smoothed <= s.max && knob != Knob::ReverbDecay)
+    {
+        // The same result computed in the mapped domain (cheaper): for a linear
+        // knob an offset adds offset * (max - min); for a LOG knob it multiplies
+        // by (max / min)^offset; then the range clamp, which is the knob clamp.
+        if(s.curve == daisysp::Mapping::LINEAR)
+        {
+            const float v = smoothed + offset * (s.max - s.min);
+            return v < s.min ? s.min : (v > s.max ? s.max : v);
+        }
+        if(s.curve == daisysp::Mapping::LOG)
+        {
+            const float o = offset < -2.0f ? -2.0f : (offset > 2.0f ? 2.0f : offset); // inf-safe, beyond the clamp
+            const float v = smoothed * std::exp2(o * std::log2(s.max / s.min));
+            return v < s.min ? s.min : (v > s.max ? s.max : v);
+        }
+    }
+    const double ns = engineToKnob(knob, smoothed, delaySwitch);
+    const double lo = ns < 0.0 ? ns : 0.0;
+    const double hi = ns > 1.0 ? ns : 1.0;
+    double       n  = ns + static_cast<double>(offset);
+    n               = n < lo ? lo : (n > hi ? hi : n);
+    return knobToEngine(knob, static_cast<float>(n), delaySwitch);
 }
 
 } // namespace audreybrick

@@ -24,7 +24,7 @@
 //
 // --script <file>: reads the script's header (tools/ScriptMeta.h) for @jump, @click and
 // @click-near,
-// and its events (ScriptControlSource::events()). For every distinct event time and
+// and its events (ScriptControlSource::events(), and since MOD-A modEvents()). For every distinct event time and
 // every ramp end, prints the largest click ratio in the --event-window seconds
 // (default 0.1) that follow it, and the summary then gives the largest ratio near
 // events and elsewhere separately, each against its own threshold. --jump, --click and
@@ -274,6 +274,11 @@ int main(int argc, char** argv)
                 std::string& e = marks[static_cast<std::uint64_t>(ev.startBlock + ev.rampBlocks) * kBlock];
                 e += (e.empty() ? "ramp end of line " : ",") + std::to_string(ev.line);
             }
+        }
+        for(const auto& ev : script.modEvents()) // MOD-A: mod lines are events too
+        {
+            std::string& m = marks[static_cast<std::uint64_t>(ev.startBlock) * kBlock];
+            m += (m.empty() ? "line " : ",") + std::to_string(ev.line);
         }
     }
     if(jump == 0.0)

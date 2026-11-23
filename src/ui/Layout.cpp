@@ -10,6 +10,8 @@
 #include <cstring>
 
 #include "app/Buttons.h"
+#include "app/ModFormat.h"
+#include "app/ModView.h"
 #include "app/Tabs.h"
 #include "core/ParamTable.h"
 #include "input/InputTypes.h"
@@ -133,6 +135,24 @@ constexpr int kLivePreW     = 120;
 constexpr int kLiveLineX    = 16;  // DEVICE row status lines use the row's whole width
 constexpr int kSmallArrowA = 84; // the compact rows' arrows (RowGeom kSmall)
 constexpr int kSmallArrowB = 122;
+
+// MOD-B: the MOD tab. Editor rows over the tab's area, then four slot cards
+// side by side (x 8..872, y 184..472). MOD-C: five rows (POLARITY added) of
+// 36 px every 38 px (the 32 px value's glyphs use 28 px: rows y+4..y+31, clear
+// of the 3 px cursor frame), the cards 94 px high.
+constexpr int kModRowY      = 184;
+constexpr int kModRowH      = 36;
+constexpr int kModRowStep   = 38;
+constexpr int kModArrowA    = 20;  // the left / right arrows (24 px)
+constexpr int kModArrowB    = 52;
+constexpr int kModLabelX    = 92;  // the row's label at 24 px ("POLARITY": to x 284)
+constexpr int kModValueX    = 300; // its value at 32 px (8 characters: to x 556)
+constexpr int kModBarX      = 576; // RATE and DEPTH bars, to x 856
+constexpr int kModBarW      = 280;
+constexpr int kModCardY     = 378; // 184 + 5 * 38
+constexpr int kModCardW     = 210;
+constexpr int kModCardH     = 94;  // to y 472
+constexpr int kModCardStep  = 218;
 
 constexpr int kStripY    = 480;
 constexpr int kStripStep = 60;
@@ -353,10 +373,30 @@ int fraction(int w, float v) noexcept
     return static_cast<int>(std::lround(static_cast<double>(clamp01(v)) * w));
 }
 
+// MOD-B: a moving-value marker's width: the fraction, at least a 4 px stub, so
+// a value clamped at 0 still shows that the knob is modulated.
+constexpr int kMarkerMinW = 4;
+int markerWidth(int w, float v) noexcept
+{
+    const int f = fraction(w, v);
+    return f > kMarkerMinW ? f : kMarkerMinW;
+}
+
 bool boundOnTab(Tab t, Knob k) noexcept
 {
     const TabSpec& s = tabSpec(t);
     return k != kNoKnob && (s.leftRight == k || s.upDown == k || s.xLeftRight == k || s.xUpDown == k);
+}
+
+// MOD-B: the bar position (as barPosition) of the knob position the engine
+// receives: clamp(knob + the modulation offset, 0, 1), its engine value for
+// the unitless bars.
+float movingBarPosition(const UiSnapshot& s, Knob k, float knobNorm) noexcept
+{
+    UiKnobView v = knobView(s, k);
+    v.norm       = modMovingNorm(s.mod, modTargetFromKnob(k), knobNorm);
+    v.engine     = knobToEngine(k, v.norm, k == Knob::FeedbackGain ? false : s.switchOn);
+    return barPosition(k, v);
 }
 
 // Copies at most `maxChars` characters of `src` into `dst` at `at`; if `src` is
@@ -494,6 +534,16 @@ void feedbackBand(Builder& b, const UiSnapshot& s) noexcept
         b.text(plateX + 10, kFbBarY + 6, 3, pal::maxFill, TextRole::FeedbackMax, "MAX");
         b.text(plateX + 10 + textWidth("MAX", 3) + 8, kFbBarY + 12, 2, pal::maxFill, TextRole::FeedbackMax, db);
     }
+    // MOD-B: the feedback gain modulated: the tag after FEEDBACK, and the moving
+    // value (the frame's knob value plus the offset) along the bar's bottom.
+    if(modTargetActive(s.mod, ModTarget::FeedbackGain))
+    {
+        char tag[8];
+        modTagText(tag, sizeof tag, s.mod, ModTarget::FeedbackGain);
+        b.text(20 + textWidth("FEEDBACK", 3) + 12, 74, 2, pal::mod, TextRole::ModTag, tag, knobIndex(Knob::FeedbackGain));
+        const float mv = modMovingNorm(s.mod, ModTarget::FeedbackGain, knobView(s, Knob::FeedbackGain).norm);
+        b.fill(kFbBarX, kFbBarY + kFbBarH - 6, markerWidth(kFbBarW, mv), 6, pal::mod, RectTag::ModMarker);
+    }
     b.frame(kFbBarX, kFbBarY, kFbBarW, kFbBarH, pal::edge, 1);
 
     // Scale: a tick every 12 dB, a taller one at 0 dB (unity loop gain, 60/72 of
@@ -520,9 +570,40 @@ void feedbackBand(Builder& b, const UiSnapshot& s) noexcept
     }
 }
 
+void switchBoxPlain(Builder& b, const UiSnapshot& s) noexcept;
+
 void switchBox(Builder& b, const UiSnapshot& s) noexcept
 {
     b.panel(PanelKind::SwitchBox, kSwX, kBandY, kSwW, kBandH);
+    const bool on = s.switchOn;
+    // MOD-B: a slot on the delay switch: its tag after SWITCH; and while only
+    // the modulation holds the switch on, the box says so in its own style.
+    const bool modActive = modTargetActive(s.mod, ModTarget::DelaySwitch);
+    if(!on && modActive && s.mod.switchRequested)
+    {
+        b.fill(kSwX, kBandY, kSwW, kBandH, pal::panel);
+        b.frame(kSwX, kBandY, kSwW, kBandH, pal::switchOn, 3);
+        b.text(kSwX + 12, 70, 3, pal::text, TextRole::SwitchLabel, "SWITCH");
+        const int capW = textWidth("B", 2) + 8;
+        b.keyCap(kSwX + kSwW - 12 - capW, 68, "B", 2, pal::text, pal::panel, s.switchHeld);
+        b.text(kSwX + 12, 98, 5, pal::switchOn, TextRole::SwitchState, "ON");
+        b.text(kSwX + 12, 144, 3, pal::switchOn, TextRole::SwitchDetail, "MOD");
+    }
+    else
+    {
+        switchBoxPlain(b, s);
+    }
+    if(modActive)
+    {
+        char tag[8];
+        modTagText(tag, sizeof tag, s.mod, ModTarget::DelaySwitch);
+        b.text(kSwX + 12 + textWidth("SWITCH", 3) + 12, 74, 2, on ? pal::bg : pal::mod, TextRole::ModTag, tag);
+    }
+}
+
+// The switch box without modulation (as before MOD-B).
+void switchBoxPlain(Builder& b, const UiSnapshot& s) noexcept
+{
     const bool  on = s.switchOn;
     const Color fg = on ? pal::bg : pal::text;
     b.fill(kSwX, kBandY, kSwW, kBandH, on ? pal::switchOn : pal::panel);
@@ -680,6 +761,20 @@ void tabRow(Builder& b, const UiSnapshot& s, const Row& row, int y, const RowGeo
     {
         const int tx = kRowNameX + fraction(barW, repeatsUnityPosition());
         b.fill(tx - 1, barY - 5, 3, g.barH + 10, active ? pal::text : pal::faint, RectTag::UnityMark);
+    }
+
+    // MOD-B: a modulated knob: the slots' tag under the name, and the moving
+    // value as a thin bar along the bottom of the value bar.
+    const ModTarget mt = modTargetFromKnob(row.knob);
+    if(modTargetActive(s.mod, mt))
+    {
+        char tag[8];
+        modTagText(tag, sizeof tag, s.mod, mt);
+        const int tagY = y + g.nameY + 32 + (g.h == kTallH ? 6 : 0); // tall: y + 60; compact: y + 44 (bar at y + 60)
+        b.text(kRowNameX, tagY, 2, pal::mod, TextRole::ModTag, tag, ki);
+        const int mh = g.barH / 4 > 3 ? g.barH / 4 : 3;
+        b.fill(kRowNameX, barY + g.barH - mh, markerWidth(barW, movingBarPosition(s, row.knob, knobView(s, row.knob).norm)),
+               mh, pal::mod, RectTag::ModMarker);
     }
 }
 
@@ -867,6 +962,23 @@ void inputGainRow(Builder& b, const UiSnapshot& s, int y, bool compact) noexcept
     b.frame(kRowNameX, barY, barW, barH, pal::edge, 1);
     const int tx = kRowNameX + fraction(barW, kInputGainUnityNorm);
     b.fill(tx - 1, barY - tick, 3, barH + 2 * tick, pal::text, RectTag::GainUnityMark);
+    // MOD-B: a slot on the input gain: its tag beside GAIN, and the moved knob
+    // position clamp(knob + offset) along the bar's bottom (none while the
+    // knob is at 0).
+    if(modTargetActive(s.mod, ModTarget::InputGain))
+    {
+        char tag[8];
+        modTagText(tag, sizeof tag, s.mod, ModTarget::InputGain);
+        // Under GAIN in the full row (16 px free above the bar); beside it in
+        // LIVE's compact row (whose bar is 10 px under the name).
+        if(compact)
+            b.text(kRowNameX + textWidth("GAIN", 4) + 4, midY - 8, 2, pal::mod, TextRole::ModTag, tag);
+        else
+            b.text(kRowNameX, midY + 16, 2, pal::mod, TextRole::ModTag, tag);
+        const int mh = compact ? 4 : 5;
+        b.fill(kRowNameX, barY + barH - mh, markerWidth(barW, modEffectiveInputNorm(s.mod, s.input.gainNorm)), mh,
+               pal::mod, RectTag::ModMarker);
+    }
 }
 
 void inputFileRow(Builder& b, const UiSnapshot& s) noexcept
@@ -1621,6 +1733,193 @@ void inputTab(Builder& b, const UiSnapshot& s, const MeterView& m) noexcept
     inputMeter(b, m, kAreaH);
 }
 
+// --- MOD tab (MOD-B) ----------------------------------------------------------------------------
+// A bar centred on zero: `v` -1..+1 filled from the centre, a tick at the centre.
+void centredBar(Builder& b, int x, int y, int w, int h, float v, Color fill) noexcept
+{
+    const float c  = v > 1.0f ? 1.0f : (v < -1.0f ? -1.0f : (v == v ? v : 0.0f)); // NaN -> 0
+    const int   cx = x + w / 2;
+    const int   fw = static_cast<int>(std::lround(static_cast<double>(c < 0.0f ? -c : c) * (w / 2)));
+    b.fill(x, y, w, h, pal::panelDark, RectTag::Bar);
+    if(fw > 0)
+        b.fill(c < 0.0f ? cx - fw : cx, y, fw, h, fill, RectTag::Bar);
+    b.frame(x, y, w, h, pal::edge, 1);
+    b.fill(cx - 1, y - 3, 2, h + 6, pal::dim, RectTag::Bar);
+}
+
+// MOD-D: X held (pressed on MOD): the cards are lit and the rows dimmed;
+// otherwise the reverse.
+bool modSlotsMode(const UiSnapshot& s) noexcept
+{
+    return s.mod.choosing && s.xHeld;
+}
+
+void modRow(Builder& b, const UiSnapshot& s, ModRow r) noexcept
+{
+    const UiModView&       m      = s.mod;
+    const int              ri     = static_cast<int>(r);
+    const int              y      = kModRowY + ri * kModRowStep;
+    const bool             cursor = m.row == r;
+    // MOD-D: while X selects the slot every row is dimmed as the DELAY tab
+    // dims the rows of the other X state (panelDark, faint text, outline
+    // arrows); the cursor row keeps a thin frame so it is still seen to be
+    // kept for the next slot.
+    const bool             dimmed = modSlotsMode(s);
+    const bool             lit    = cursor && !dimmed;
+    const Color            fg     = lit ? pal::text : (dimmed ? pal::faint : pal::dim);
+    const std::size_t      cur    = static_cast<std::size_t>(m.current >= 0 && m.current < static_cast<int>(kModSlots)
+                                                                 ? m.current
+                                                                 : 0);
+    const ModSlotSettings& slot   = m.slot[cur];
+    b.panel(PanelKind::ModRow, kRowX, y, kRowW, kModRowH, kNoKnobIndex, ri, cursor);
+    b.fill(kRowX, y, kRowW, kModRowH, lit ? pal::panel : pal::panelDark);
+    if(lit)
+        b.frame(kRowX, y, kRowW, kModRowH, pal::accent, 3);
+    else
+        b.frame(kRowX, y, kRowW, kModRowH, cursor ? pal::faint : pal::edge, cursor ? 2 : 1);
+
+    // Left / right change the cursor row's value: filled arrows there (framed
+    // while held), outline arrows on the other rows.
+    // MOD-C: POLARITY under the Envelope is fixed (UNIPOLAR, dimmed): outline
+    // arrows and no held frames there, as on a row left / right do not change.
+    const bool fixed = r == ModRow::Polarity && slot.shape == ModShape::Envelope;
+    const int  ay    = y + 6;
+    const bool live  = lit && !s.xHeld && !fixed;
+    if(live && down(s, Button::DpadLeft))
+        b.frame(kModArrowA - 3, ay - 3, 30, 30, pal::accent, 2);
+    if(live && down(s, Button::DpadRight))
+        b.frame(kModArrowB - 3, ay - 3, 30, 30, pal::accent, 2);
+    arrowPair(b, kModArrowA, kModArrowB, ay, 24, true, lit && !fixed ? pal::text : pal::faint, lit && !fixed);
+
+    const char* label = "TARGET";
+    char        value[32];
+    value[0] = '\0';
+    switch(r)
+    {
+        case ModRow::Target:
+            label = "TARGET";
+            std::snprintf(value, sizeof value, "%s", modTargetDisplayName(slot.target));
+            break;
+        case ModRow::Shape:
+            label = "SHAPE";
+            std::snprintf(value, sizeof value, "%s", modShapeDisplayName(slot.shape));
+            break;
+        case ModRow::Rate:
+            label = slot.shape == ModShape::Envelope ? "RELEASE" : "RATE";
+            formatModRate(value, sizeof value, slot.rateNorm, slot.shape);
+            break;
+        case ModRow::Depth:
+            label = "DEPTH";
+            formatModDepth(value, sizeof value, slot.depth);
+            break;
+        case ModRow::Polarity:
+            label = "POLARITY";
+            std::snprintf(value, sizeof value, "%s", modPolarityDisplayName(modEffectivePolarity(slot)));
+            break;
+        case ModRow::Count: break;
+    }
+    b.text(kModLabelX, y + 7, 3, fg, TextRole::ModText, label);
+    // A fixed POLARITY and the target NONE are drawn a step dimmer.
+    const bool  none = r == ModRow::Target && slot.target == ModTarget::None;
+    const Color vc   = fixed ? pal::faint : (none ? (lit ? pal::dim : pal::faint) : fg);
+    b.text(kModValueX, y + 4, 4, vc, TextRole::ModText, value);
+
+    switch(r)
+    {
+        case ModRow::Target:
+        {
+            // The knob's tab at 16 px after its name (MOD-D: the list that
+            // showed it is gone). No X hint here: the footer's X cell says
+            // SLOT on this tab.
+            if(modTargetIsKnob(slot.target))
+            {
+                const char* tab = knobTabName(modTargetKnob(slot.target));
+                if(tab[0] != '\0')
+                    b.text(kModValueX + textWidth(value, 4) + 12, y + 12, 2, lit ? pal::dim : pal::faint, TextRole::ModText,
+                           tab);
+            }
+            break;
+        }
+        case ModRow::Rate:
+        {
+            // The control's position (left: slow / long release).
+            const float pos = slot.shape == ModShape::Envelope ? 1.0f - slot.rateNorm : slot.rateNorm;
+            b.fill(kModBarX, y + 12, kModBarW, 12, pal::panelDark, RectTag::Bar);
+            b.fill(kModBarX, y + 12, fraction(kModBarW, pos), 12, lit ? pal::accent : pal::faint, RectTag::Bar);
+            b.frame(kModBarX, y + 12, kModBarW, 12, pal::edge, 1);
+            break;
+        }
+        case ModRow::Depth:
+            centredBar(b, kModBarX, y + 12, kModBarW, 12, slot.depth, lit ? pal::accent : pal::faint);
+            break;
+        case ModRow::Polarity:
+            if(fixed)
+                b.text(kModBarX, y + 12, 2, pal::faint, TextRole::ModText, "FIXED BY ENVELOPE");
+            break;
+        case ModRow::Shape:
+        case ModRow::Count: break;
+    }
+}
+
+void modCard(Builder& b, const UiSnapshot& s, std::size_t i) noexcept
+{
+    const UiModView&       m        = s.mod;
+    const ModSlotSettings& slot     = m.slot[i];
+    const int              x        = kRowX + static_cast<int>(i) * kModCardStep;
+    const int              y        = kModCardY;
+    const bool             selected = static_cast<int>(i) == m.current;
+    const bool             active   = modSlotActive(slot);
+    // MOD-D: the cards are dimmed as a group (the text one step darker, as the
+    // DELAY tab's dimmed rows: an active card's in the dimmed grey, an idle
+    // one's faint) except while X selects the slot, when they are lit (an
+    // active card's text bright, an idle one's in the dimmed grey). In both
+    // states an active card (target set, depth not 0) is on the panel colour
+    // with its activity bar in the accent colour, an idle one dark; the
+    // selected card has the accent frame and its number in inverse video.
+    const bool  lit = modSlotsMode(s);
+    const Color fg  = lit ? (active ? pal::text : pal::dim) : (active ? pal::dim : pal::faint);
+    b.panel(PanelKind::ModSlot, x, y, kModCardW, kModCardH, kNoKnobIndex, static_cast<int>(i), selected);
+    b.fill(x, y, kModCardW, kModCardH, active ? pal::panel : pal::panelDark);
+    b.frame(x, y, kModCardW, kModCardH, selected ? pal::accent : pal::edge, selected ? 3 : 1);
+
+    char num[4];
+    std::snprintf(num, sizeof num, "%zu", i + 1);
+    // MOD-C: 94 px high (five editor rows above): 16 px lines at y+6, 25, 44,
+    // 63 (the glyphs use 14 px), the activity bar at y+82.
+    if(selected)
+        b.fill(x + 8, y + 4, 24, 20, pal::accent);
+    else
+        b.frame(x + 8, y + 4, 24, 20, fg, 1);
+    b.text(x + 12, y + 6, 2, selected ? pal::bg : fg, TextRole::ModText, num);
+    b.text(x + 40, y + 6, 2, fg, TextRole::ModText, modShapeDisplayName(slot.shape));
+    b.text(x + 8, y + 25, 2, fg, TextRole::ModText,
+           slot.target == ModTarget::None ? "NO TARGET" : modTargetDisplayName(slot.target));
+    char text[32];
+    char rate[24];
+    formatModRate(rate, sizeof rate, slot.rateNorm, slot.shape);
+    std::snprintf(text, sizeof text, "%s%s", slot.shape == ModShape::Envelope ? "REL " : "", rate);
+    b.text(x + 8, y + 44, 2, fg, TextRole::ModText, text);
+    formatModDepth(text, sizeof text, slot.depth);
+    b.text(x + 8, y + 63, 2, fg, TextRole::ModText, text);
+    // MOD-C: the polarity at the right of the depth line, "+/-" or "+" (the
+    // depth is at most 7 characters, to x+120; this starts at x+154 or later).
+    b.textRight(x + kModCardW - 8, y + 63, 2, fg, TextRole::ModText,
+                modPolarityShortName(modEffectivePolarity(slot)));
+
+    // Activity: output * depth (still with depth 0 or no target), centred on
+    // zero; the output is after the polarity (0..1 when unipolar).
+    const float v = active ? m.output[i] * slot.depth : 0.0f;
+    centredBar(b, x + 8, y + 82, kModCardW - 16, 6, v, active ? pal::accent : pal::faint);
+}
+
+void modTab(Builder& b, const UiSnapshot& s) noexcept
+{
+    for(std::size_t r = 0; r < kModRowCount; ++r)
+        modRow(b, s, static_cast<ModRow>(r));
+    for(std::size_t i = 0; i < kModSlots; ++i)
+        modCard(b, s, i);
+}
+
 // --- Value strip ---------------------------------------------------------------------------
 // Strip cells: label line y+6..22, value y+25..49 (scale 3) or y+29..45
 // (scale 2), bar y+50..53 (never under the value).
@@ -1676,6 +1975,44 @@ void strip(Builder& b, const UiSnapshot& s) noexcept
                k == Knob::FeedbackGain ? pal::feedback : (current ? pal::accent : pal::faint), RectTag::Bar);
         if(k == Knob::EchoDelayFeedback)
             b.fill(x + 8 + fraction(bw, repeatsUnityPosition()) - 1, y + 48, 2, 7, pal::text, RectTag::UnityMark);
+
+        // MOD-B: a modulated knob: the moving value as a 2 px line under the
+        // bar (at least a stub), and the tag right-aligned on the label line
+        // if it fits there (left of MAX or the B mark), else on the value
+        // line. If the full tag ("M134") fits neither, the short form "M" and
+        // the number of slots ("M3"), then "M" alone (MOD-B review: the strip
+        // always shows that a knob is modulated).
+        const ModTarget mt = modTargetFromKnob(k);
+        if(modTargetActive(s.mod, mt))
+        {
+            b.fill(x + 8, y + 53, markerWidth(bw, movingBarPosition(s, k, knobView(s, k).norm)), 2, pal::mod,
+                   RectTag::ModMarker);
+            char forms[3][8];
+            const std::size_t n = modTagText(forms[0], sizeof forms[0], s.mod, mt);
+            std::snprintf(forms[1], sizeof forms[1], "M%zu", n > 0 ? n - 1 : 0);
+            std::snprintf(forms[2], sizeof forms[2], "M");
+            int right = innerR;
+            if(k == Knob::FeedbackGain && s.feedbackMax)
+                right = innerR - textWidth("MAX", 2) - 4 - 8;
+            if(k == Knob::EchoDelayTime && s.switchOn)
+                right = innerR - (textWidth("B", 2) + 8) - 8;
+            const int labelEnd = lx + textWidth(knobShortName(k), 2);
+            const int valueEnd = x + 8 + textWidth(value, vs);
+            for(const char* tag : {forms[0], forms[1], forms[2]})
+            {
+                const int tw = textWidth(tag, 2);
+                if(right - tw >= labelEnd + 8)
+                {
+                    b.text(right - tw, y + 6, 2, pal::mod, TextRole::ModTag, tag, knobIndex(k));
+                    break;
+                }
+                if(innerR - tw >= valueEnd + 8)
+                {
+                    b.text(innerR - tw, y + 29, 2, pal::mod, TextRole::ModTag, tag, knobIndex(k));
+                    break;
+                }
+            }
+        }
     }
 
     // The twelfth cell: CPU, the smoothed load, the maximum of the last second
@@ -1798,7 +2135,7 @@ void footer(Builder& b, const UiSnapshot& s) noexcept
         {"B", nullptr, false, false, "SWITCH", s.switchHeld},
         {"SELECT", nullptr, false, false, "FINE", s.fine},
         {"SELECT", "B", true, false, "LATCH", latchPress},
-        {"X", nullptr, false, false, "SHIFT", s.xHeld},
+        {"X", nullptr, false, false, s.tab == Tab::Mod ? "SLOT" : "SHIFT", s.xHeld}, // MOD-D: X picks the slot
         {"Y", nullptr, false, true, "RESET", s.yHeld},
     };
     for(int i = 0; i < 8; ++i)
@@ -1899,6 +2236,8 @@ void buildLayout(const UiSnapshot& s, const MeterView& m, DrawList& out) noexcep
     switchBox(b, s);
     if(s.tab == Tab::Input)
         inputTab(b, s, m); // M2b-A: no knob rows on INPUT
+    else if(s.tab == Tab::Mod)
+        modTab(b, s); // MOD-B: the editor rows and the slot cards
     else
         currentTab(b, s);
     meters(b, m);

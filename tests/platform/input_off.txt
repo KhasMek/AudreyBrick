@@ -1,4 +1,7 @@
 # M2b-A self-test (acceptance criterion 7), the same run with the source left
 # OFF: go to the INPUT tab (which scans the input folder) and touch nothing else.
+# MOD-B: seven tabs; L1 from LOOP goes to MOD, a second L1 to INPUT.
+0.02  L1        down
+0.04  L1        up
 0.10  L1        down
 0.15  L1        up

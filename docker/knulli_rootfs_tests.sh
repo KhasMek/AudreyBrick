@@ -132,7 +132,7 @@ cp "$SQ" "$DATA/input/._square.wav"
 cp "$SQ" "$DATA/input/.hidden.wav"
 mkdir -p "$DATA/input/folder.wav"
 # M2b-A3: FILE (no automatic load), then hold X, d-pad right, release X: the file loads.
-printf '0.10 L1 down\n0.15 L1 up\n0.30 DpadRight down\n0.35 DpadRight up\n0.40 X down\n0.45 DpadRight down\n0.50 DpadRight up\n0.55 X up\n' > /tmp/input_file.txt
+printf '0.02 L1 down\n0.04 L1 up\n0.10 L1 down\n0.15 L1 up\n0.30 DpadRight down\n0.35 DpadRight up\n0.40 X down\n0.45 DpadRight down\n0.50 DpadRight up\n0.55 X up\n' > /tmp/input_file.txt
 launch AUDREY_ARGS="--selftest /tmp/input_file.txt --seconds 3 --no-video --expect-knob FeedbackGain 0 0 --expect-input-peak-min 0.2 --expect-peak-min 0.02 --expect-peak-max 1.0"
 rc=$?
 grep -E "^launcher: input folder|^input:|^selftest: (ok|FAIL|PASSED|FAILED)|^output peak" "$DATA/stdout.log" | sed 's/^/  /'
@@ -154,7 +154,7 @@ section "M2b-B: LIVE with a simulated capture device through the launcher; the c
 # then usb (the gain forced to -inf dB), Y + up: unity; the tone reaches the
 # input meter and the output at minimum feedback.
 printf '%s\n' 'capture device usb 2 220 0.25 48000' 'capture device busy fail' \
-    '0.10 L1 down' '0.15 L1 up' '0.30 DpadRight down' '0.35 DpadRight up' '0.40 DpadRight down' '0.45 DpadRight up' \
+    '0.02 L1 down' '0.04 L1 up' '0.10 L1 down' '0.15 L1 up' '0.30 DpadRight down' '0.35 DpadRight up' '0.40 DpadRight down' '0.45 DpadRight up' \
     '0.60 X down' '0.65 DpadRight down' '0.70 DpadRight up' '0.75 DpadRight down' '0.80 DpadRight up' '0.85 X up' \
     '1.00 X down' '1.05 DpadLeft down' '1.10 DpadLeft up' '1.15 X up' \
     '1.50 Y down' '1.55 DpadUp down' '1.60 DpadUp up' '1.65 Y up' '2.50 capture unplug usb' > /tmp/input_live.txt

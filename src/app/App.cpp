@@ -192,6 +192,16 @@ std::string usageText(const char* program)
            "  --expect-live-status <none|failed|lost|open>\n"
            "                           self-test: the live input's status at the end (open: a device is open)\n"
            "  --expect-recordings <n>  self-test: exactly n recordings were saved\n"
+           "  --mod <slot> <shape> <target> <rate> <depth> [bipolar|unipolar]\n"
+           "                           self-test: set modulation slot 1-4 before audio starts; shape sine,\n"
+           "                           triangle, square, rampup, rampdown, expup, expdown, samplehold or\n"
+           "                           envelope; target none, a knob name, InputGain or DelaySwitch; rate 0..1\n"
+           "                           (0.01 Hz to 2 kHz, envelope: release 5 s to 5 ms); depth -1..1; an\n"
+           "                           optional polarity (default bipolar) (repeatable); through the MOD tab's\n"
+           "                           panel, so the screen shows it\n"
+           "  --expect-mod-active <target>\n"
+           "                           self-test: that target's modulation offset was not 0 at some UI frame\n"
+           "                           (repeatable)\n"
            "  --help                   print this text and exit\n"
            "\n" +
            keyboardHelpText();
@@ -409,6 +419,70 @@ bool parseOptions(int argc, const char* const* argv, AppOptions& out, std::strin
             }
             o.selftestScript = v;
         }
+        else if(a == "--mod")
+        {
+            if(i + 5 >= argc)
+            {
+                error = "--mod needs <slot> <shape> <target> <rate> <depth>";
+                return false;
+            }
+            const char* slot   = argv[++i];
+            const char* shape  = argv[++i];
+            const char* target = argv[++i];
+            const char* rate   = argv[++i];
+            const char* depth  = argv[++i];
+            ModOption   m{};
+            double      sl = 0.0, r = 0.0, d = 0.0;
+            if(slot == nullptr || !parseNumber(slot, sl) || sl < 1.0 || sl > static_cast<double>(kModSlots) ||
+               sl != std::floor(sl))
+            {
+                error = std::string("--mod: slot must be 1 to ") + std::to_string(kModSlots);
+                return false;
+            }
+            if(shape == nullptr || !modShapeFromName(shape, m.settings.shape))
+            {
+                error = std::string("--mod: unknown shape '") + (shape ? shape : "") +
+                        "' (sine, triangle, square, rampup, rampdown, expup, expdown, samplehold, envelope)";
+                return false;
+            }
+            if(target == nullptr || !modTargetFromName(target, m.settings.target))
+            {
+                error = std::string("--mod: unknown target '") + (target ? target : "") +
+                        "' (none, a knob name such as FeedbackLPFCutoff, InputGain, DelaySwitch)";
+                return false;
+            }
+            if(rate == nullptr || !parseNumber(rate, r) || r < 0.0 || r > 1.0)
+            {
+                error = "--mod: rate must be a number from 0 to 1";
+                return false;
+            }
+            if(depth == nullptr || !parseNumber(depth, d) || d < -1.0 || d > 1.0)
+            {
+                error = "--mod: depth must be a number from -1 to 1";
+                return false;
+            }
+            m.slot              = static_cast<std::size_t>(sl) - 1;
+            m.settings.rateNorm = static_cast<float>(r);
+            m.settings.depth    = static_cast<float>(d);
+            // MOD-C: an optional polarity word after the depth (an option or a
+            // number that follows is left alone).
+            if(i + 1 < argc && argv[i + 1] != nullptr && modPolarityFromName(argv[i + 1], m.settings.polarity))
+                ++i;
+            o.mods.push_back(m);
+        }
+        else if(a == "--expect-mod-active")
+        {
+            if(!value(v))
+                return false;
+            ModTarget t = ModTarget::None;
+            if(!modTargetFromName(v, t) || t == ModTarget::None)
+            {
+                error = std::string("--expect-mod-active: unknown target '") + v +
+                        "' (a knob name such as FeedbackLPFCutoff, InputGain or DelaySwitch)";
+                return false;
+            }
+            o.expectModActive.push_back(t);
+        }
         else if(a == "--expect-knob")
         {
             if(i + 3 >= argc)
@@ -486,12 +560,17 @@ bool parseOptions(int argc, const char* const* argv, AppOptions& out, std::strin
         error = "--seconds is only used with --selftest";
         return false;
     }
+    if(!o.selftest() && !o.mods.empty())
+    {
+        error = "--mod is only used with --selftest (use the MOD tab)";
+        return false;
+    }
     if(!o.selftest() && (!o.expectKnobs.empty() || o.hasPeakMin || o.hasPeakMax || o.hasInputPeakMin ||
                          o.hasLiveUnderrunsMax || o.hasLiveUnderrunsMin || o.hasLiveRepeatsMin || o.hasLiveOverfillsMin ||
-                         !o.expectLiveStatus.empty() || o.expectRecordings >= 0))
+                         !o.expectLiveStatus.empty() || o.expectRecordings >= 0 || !o.expectModActive.empty()))
     {
-        error = "--expect-knob, --expect-peak-min, --expect-peak-max, --expect-input-peak-min, --expect-live-* and "
-                "--expect-recordings are only used with --selftest";
+        error = "--expect-knob, --expect-peak-min, --expect-peak-max, --expect-input-peak-min, --expect-live-*, "
+                "--expect-recordings and --expect-mod-active are only used with --selftest";
         return false;
     }
     out = std::move(o);
@@ -666,6 +745,23 @@ void App::logGovernors(const char* when)
         log_.line(logTime(), "cpu governor %s: %s", when, cpuFreq_.governors().c_str());
 }
 
+void App::drainModLog()
+{
+    if(!modPanel_)
+        return;
+    try
+    {
+        modLog_.clear();
+        modPanel_->takeLog(modLog_);
+    }
+    catch(...)
+    {
+        // Out of memory: these log lines are lost, nothing else.
+    }
+    for(const std::string& l : modLog_)
+        log_.line(logTime(), "%s", l.c_str());
+}
+
 void App::drainInputLog()
 {
     try
@@ -794,6 +890,19 @@ bool App::startUp(std::string& error)
     model_  = std::make_unique<ControlModel>(*source_);
     audio_  = std::make_unique<AudioRender>(*voice_, *source_, AudioRender::FlushToZero::Enable, &performanceCounter,
                                            counterFreq_);
+    // MOD-A: the modulation decorator around the button source (all slots off).
+    mod_ = std::make_unique<ModControlSource>(*source_);
+    audio_->attachModulation(mod_.get());
+    // MOD-B: the MOD tab's panel; --mod goes through it (applied at the first audio chunk).
+    modPanel_ = std::make_unique<ModPanel>(modulation());
+    for(const ModOption& m : opts_.mods)
+    {
+        modPanel_->setSlot(m.slot, m.settings);
+        log_.line(logTime(), "mod: slot %zu %s -> %s, rate %.3f, depth %+.3f, %s (--mod)", m.slot + 1,
+                  modShapeName(m.settings.shape), modTargetName(m.settings.target),
+                  static_cast<double>(m.settings.rateNorm), static_cast<double>(m.settings.depth),
+                  modPolarityName(modEffectivePolarity(m.settings)));
+    }
     // M2b-A: the input stage, prepared with the render buffers when the device opens.
     // M2b-B: with the live input's ring.
     live_  = std::make_unique<LiveInput>();
@@ -914,6 +1023,11 @@ void App::shutDown() noexcept
     //    holds; the render points at it), the ring last (M2b-B).
     if(inputCtl_)
         drainInputLog();
+    if(modPanel_)
+    {
+        modPanel_->flushLog(); // MOD-B review: a slot changed less than 0.5 s before quitting
+        drainModLog();
+    }
     inputCtl_.reset();
     captureHost_.reset();
     captureSim_.reset();
@@ -923,6 +1037,8 @@ void App::shutDown() noexcept
     stage_.reset();
     live_.reset();
     model_.reset();
+    modPanel_.reset();
+    mod_.reset();
     source_.reset();
     voice_.reset();
     // 3. Input, window, SDL.
@@ -1111,6 +1227,19 @@ void App::fillSnapshot(double t)
     snap_.input.prePeak = live_->prePeak().take();
     prePeakSessionMax_  = std::max(prePeakSessionMax_, snap_.input.prePeak);
     statsPrePeak_       = std::max(statsPrePeak_, snap_.input.prePeak);
+
+    // MOD-B: the MOD tab and the read-back, once per frame. While a slot
+    // modulates the input gain the input meter shows the effective level (the
+    // stage's meter reads before the InputGain modulation); the session and
+    // statistics peaks above stay the stage's.
+    modPanel_->fill(snap_.mod);
+    snap_.input.peak = modEffectiveInputPeak(snap_.mod, snap_.input.peak);
+    for(std::size_t i = 0; i < kModTargetCount; ++i)
+    {
+        const float a = std::fabs(snap_.mod.offset[i]);
+        if(a > modOffsetMax_[i])
+            modOffsetMax_[i] = a;
+    }
 
     // REC.
     fillRecordView(now());
@@ -1370,7 +1499,7 @@ int App::run()
     std::uint64_t drainTarget = 0;
     double       lastPresent  = -1.0;
 
-    InputRouter router(*model_, quit_, selftest, inputCtl_.get(), &recordChord_);
+    InputRouter router(*model_, quit_, selftest, inputCtl_.get(), &recordChord_, modPanel_.get());
     bool        running = true;
     while(running)
     {
@@ -1455,6 +1584,8 @@ int App::run()
         model_->tick(t);
         inputCtl_->tick(t); // M2b-A: gain ramp, loader poll, buffers to free
         drainInputLog();
+        modPanel_->tick(t); // MOD-B: ramps, the TARGET repeat (MOD-D), unsent settings, log lines
+        drainModLog();
         drainRecorder(); // REC: the writer's log lines and finished files
 
         if(selftest)
@@ -1610,6 +1741,60 @@ int App::finishSelftest(double wallSeconds, bool timedOut)
                 static_cast<unsigned long long>(model_->commandsSent()),
                 static_cast<unsigned long long>(model_->commandsDropped()),
                 static_cast<unsigned long long>(source_->commandsProcessed()));
+
+    // MOD-A/B: the modulation slots (the MOD tab's settings: --mod and the
+    // scripted buttons; read-back at the end).
+    {
+        for(std::size_t i = 0; i < kModSlots; ++i)
+        {
+            const ModSlotSettings& sl  = modPanel_->slot(i);
+            const float            out = mod_->slotOutput(i);
+            allFinite                  = allFinite && finite(out);
+            std::printf("mod %zu: %s -> %s, rate %.3f, depth %+.3f, %s; output now %+.4f%s\n", i + 1,
+                        modShapeName(sl.shape), modTargetName(sl.target), static_cast<double>(sl.rateNorm),
+                        static_cast<double>(sl.depth), modPolarityName(modEffectivePolarity(sl)),
+                        static_cast<double>(out),
+                        modPanel_->unsent(i) ? " (UNSENT)" : "");
+        }
+        std::printf("mod offsets now:");
+        bool anyOffset = false;
+        for(std::size_t t = 1; t < kModTargetCount; ++t)
+        {
+            const float off = mod_->targetOffset(static_cast<ModTarget>(t));
+            allFinite       = allFinite && finite(off);
+            if(off != 0.0f)
+            {
+                std::printf(" %s %+.4f", modTargetName(static_cast<ModTarget>(t)), static_cast<double>(off));
+                anyOffset = true;
+            }
+        }
+        std::printf("%s; switch request %s; settings applied %llu\n", anyOffset ? "" : " (none)",
+                    mod_->switchRequested() ? "on" : "off",
+                    static_cast<unsigned long long>(mod_->settingsApplied()));
+        std::printf("mod offsets max during the run:");
+        bool anyMax = false;
+        for(std::size_t t = 1; t < kModTargetCount; ++t)
+        {
+            allFinite = allFinite && finite(modOffsetMax_[t]);
+            if(modOffsetMax_[t] > 0.0f)
+            {
+                std::printf(" %s %.4f", modTargetName(static_cast<ModTarget>(t)), static_cast<double>(modOffsetMax_[t]));
+                anyMax = true;
+            }
+        }
+        std::printf("%s; MOD tab: slot %zu, row %d\n", anyMax ? "" : " (none)", modPanel_->currentSlot() + 1,
+                    static_cast<int>(modPanel_->row()));
+        for(ModTarget t : opts_.expectModActive)
+        {
+            char mbuf[128];
+            std::snprintf(mbuf, sizeof mbuf, "mod offset on %s: expected non-zero at some frame, largest %.4f",
+                          modTargetName(t), static_cast<double>(modOffsetMax_[static_cast<std::size_t>(t)]));
+            if(modOffsetMax_[static_cast<std::size_t>(t)] > 0.0f)
+                std::printf("selftest: ok: %s\n", mbuf);
+            else
+                fail(mbuf);
+        }
+    }
 
     // M2b-A: the input.
     const float inPeak = std::max(inputPeakSessionMax_, stage_->peak().take());

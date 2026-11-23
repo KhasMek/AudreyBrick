@@ -53,6 +53,8 @@ void InputStage::prepare(std::size_t frames, std::size_t blockFrames)
     liveRepeat_ = std::min<std::size_t>(liveBlock_, kLiveMaxRepeatFrames);
     setLiveBuffers(liveConfBuffers_);
     out_      = std::make_unique<float[]>(capacity_);
+    gainTrace_ = std::make_unique<float[]>(capacity_); // MOD-A: read-only record of gain_
+    preGain_   = std::make_unique<float[]>(capacity_); // MOD-C: read-only record of the pre-gain input
     if(!xfTable_)
     {
         xfTable_ = std::make_unique<float[]>(kXf);
@@ -380,6 +382,7 @@ void InputStage::liveChunkStart(InputSource src, float& gt, std::size_t frames) 
             liveXf_        = 0;
             liveXfLen_     = 0;
             liveHoldOut_   = 0.0f;
+            liveHoldGain_  = 0.0f;
             gt             = startGain;
             gain_          = gt;
             liveFadeStep_  = 1.0f / static_cast<float>(liveStartFade_);
@@ -566,6 +569,8 @@ const float* InputStage::pull(std::size_t frames) noexcept
     constexpr float kStep = 1.0f / static_cast<float>(kInputFadeFrames);
     const float*    tab   = xfTable_.get();
     float*          out   = out_.get();
+    float*          trace = gainTrace_.get();
+    float*          pre   = preGain_.get(); // MOD-C
     float           peak  = 0.0f;
     // GAIN: while the sounding source fades out because another one is chosen,
     // the gain is held (that source fades at its own gain); it snaps to the
@@ -589,8 +594,10 @@ const float* InputStage::pull(std::size_t frames) noexcept
         // Snap once the step no longer changes the float (or is negligible), so
         // the target is reached exactly instead of stalling a few ULPs short.
         gain_ = (std::fabs(d) < kGainSnap || next == gain_) ? gUse : next;
+        trace[i] = gain_; // MOD-A: the gain this sample carries (record only; a held live value: below)
 
         float v = 0.0f;
+        float u = 0.0f; // MOD-C: the same sample without the gain (a record only)
         if(level_ > 0.0f && sounding_ == InputSource::Live)
         {
             // M2b-B. A held value is the last output value after the gain, so
@@ -599,13 +606,16 @@ const float* InputStage::pull(std::size_t frames) noexcept
             const float x    = liveNext(held);
             if(held)
             {
-                v = liveHoldOut_ * level_;
+                v        = liveHoldOut_ * level_;
+                trace[i] = liveHoldGain_; // MOD-A: a held value carries the gain it was taken with
             }
             else
             {
-                liveHoldOut_ = x * gain_;
-                v            = liveHoldOut_ * level_;
+                liveHoldOut_  = x * gain_;
+                liveHoldGain_ = gain_;
+                v             = liveHoldOut_ * level_;
             }
+            u = x * level_; // held: x is the last sample read (the hold before its gain)
         }
         else if(level_ > 0.0f)
         {
@@ -624,6 +634,7 @@ const float* InputStage::pull(std::size_t frames) noexcept
                 s = cur_.next(mode);
             }
             v = s * gain_ * level_;
+            u = s * level_;
             if(cur_.ended && target > 0.0f)
                 target = targetNow(); // ONCE: the end reached (silence from here)
         }
@@ -663,6 +674,7 @@ const float* InputStage::pull(std::size_t frames) noexcept
             }
         }
         out[i]        = v;
+        pre[i]        = u;
         const float a = std::fabs(v);
         peak          = a > peak ? a : peak;
     }

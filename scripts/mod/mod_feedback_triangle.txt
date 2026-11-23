@@ -1,0 +1,16 @@
+# MOD-A: a slow triangle on the feedback gain, across the point where the loop
+# starts to sing.
+#
+# Shows: the knob at 0.47 (about -26 dB, where the default drone starts to
+# sing, see feedback_rise.txt) moved by a 0.1 Hz triangle of depth 0.12 (from
+# 0.35, silent, to 0.59, singing): the drone builds up and dies away every
+# 10 seconds.
+# Others at their defaults. Duration 40 s. Default wavcheck thresholds.
+#
+# @duration 40
+
+0 FeedbackGain 0.47
+0 mod1 shape triangle
+0 mod1 target FeedbackGain
+0 mod1 hz 0.1
+0 mod1 depth 0.12

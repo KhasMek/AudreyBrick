@@ -83,6 +83,53 @@
 //                  else is drawn within 4 pixels of the edge.
 //   footer         the global buttons; an entry is drawn in inverse video while
 //                  its button is held (this is also where FINE, X and Y show).
+//   MOD tab        (MOD-B, in place of the rows; x 8..872, y 184..472)
+//                  five editor rows (ModRow panels, MOD-C: y 184/222/260/298/
+//                  336, 36 px): TARGET (MOD-D, in the SLOT row's place), SHAPE,
+//                  RATE (RELEASE for the envelope), DEPTH, POLARITY (MOD-C):
+//                  the selected slot's properties. The cursor row is bright
+//                  with an accent frame and filled left/right arrows; the
+//                  others dimmed with outline arrows. Label at 24 px (x 92),
+//                  value at 32 px (x 300). TARGET: the target's name (NONE a
+//                  step dimmer), the knob's tab at 16 px after it, and at the
+//                  right an X cap with SLOT (x 760..856). RATE: a position bar;
+//                  DEPTH: a bar centred on zero (bars x 576..856). POLARITY:
+//                  BIPOLAR or UNIPOLAR; with the envelope UNIPOLAR dimmed,
+//                  outline arrows even as the cursor row, and FIXED BY
+//                  ENVELOPE at 16 px.
+//                  Under them four slot cards (ModSlot panels, x 8/226/444/662,
+//                  y 378, 210 x 94): the number (inverse on the selected slot,
+//                  whose card has the accent frame), shape, target ("NO
+//                  TARGET"), rate ("REL" and the release for the envelope),
+//                  depth with the polarity at its right ("+/-" or "+") at 16 px,
+//                  and the activity bar (6 px) centred on zero showing output *
+//                  depth (the output after the polarity), in the accent colour
+//                  on an active card (target set, depth not 0).
+//                  An active card is on the panel colour, an idle one dark.
+//                  MOD-D: normally the cards are dimmed as a group (all text
+//                  faint). While X is held (pressed on MOD) the cards are lit
+//                  (an active card's text bright, an idle one's dim) and
+//                  every row is dimmed as the DELAY tab's other-X rows (dark,
+//                  faint text, outline arrows; the cursor row keeps a thin
+//                  faint frame), and the X cap on TARGET is lit. The selected
+//                  card's frame and number are bright in both states.
+//   modulated knob (MOD-B, every tab) while at least one slot with a non-zero
+//                  depth targets a knob: a tag in the modulation colour with
+//                  the slot numbers ("M1", "M13") at 16 px beside its name
+//                  (tab rows: under the name; strip: on the label line or the
+//                  value line, wherever it fits; feedback band: after
+//                  FEEDBACK), and a thin bar in that colour along the bottom
+//                  of its value bar to the moving value clamp(knob + offset)
+//                  (RectTag::ModMarker). The printed value stays the knob's
+//                  own setting; the marker is at least a 4 px stub (a value
+//                  clamped at 0). The strip falls back to "M" and the number
+//                  of slots ("M3"), then "M", where the full tag does not
+//                  fit. INPUT's gain row the same (the tag under GAIN;
+//                  beside it in LIVE's compact row), the marker at
+//                  clamp(knob + offset), none moved while the knob is 0. The
+//                  switch box: tag after SWITCH; while only the modulation
+//                  holds the switch on, the box is dark with a green frame,
+//                  ON and MOD in green. With no active slot nothing changes.
 
 #pragma once
 
@@ -119,6 +166,7 @@ inline constexpr Color switchOn{140, 228, 112, 255};
 inline constexpr Color meter{110, 214, 130, 255};
 inline constexpr Color meterHot{240, 210, 80, 255};
 inline constexpr Color clip{255, 64, 64, 255};
+inline constexpr Color mod{214, 150, 255, 255}; // MOD-B: modulation tags and moving-value markers
 } // namespace palette
 
 struct MeterView

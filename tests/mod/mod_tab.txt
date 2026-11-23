@@ -1,0 +1,174 @@
+# MOD-B self-test (tests/mod/CMakeLists.txt, mod_tab_selftest): the MOD tab driven by
+# scripted buttons only (no --mod). MOD-D: the rows TARGET, SHAPE, RATE, DEPTH,
+# POLARITY edit the selected slot; X + left / right selects the slot. Expected at
+# the end:
+#   slot 1: square -> FeedbackLPFCutoff, rate about 7.8 Hz (held right), depth +30 %;
+#   slot 2: sample-and-hold -> ReverbMix (TARGET left from NONE, wrapping), 1 Hz,
+#   depth +50 %, unipolar (MOD-C);
+#   the feedback raised with R2 so the instrument sounds.
+# L1 from LOOP wraps to MOD (the seventh tab). The cursor starts on TARGET.
+0.05  L1        down
+0.07  L1        up
+# Slot 1: right four times on TARGET: None -> FEEDBACK -> FREQUENCY -> BODY -> LOWPASS.
+0.10  DpadRight down
+0.12  DpadRight up
+0.15  DpadRight down
+0.17  DpadRight up
+0.20  DpadRight down
+0.22  DpadRight up
+0.25  DpadRight down
+0.27  DpadRight up
+# Down: SHAPE; right twice: sine -> triangle -> square.
+0.30  DpadDown  down
+0.32  DpadDown  up
+0.35  DpadRight down
+0.37  DpadRight up
+0.40  DpadRight down
+0.42  DpadRight up
+# Down: RATE; right held 1 s (a tap, then 0.75 s of the knob ramp).
+0.45  DpadDown  down
+0.47  DpadDown  up
+0.50  DpadRight down
+1.50  DpadRight up
+# Down: DEPTH; right fifteen times: +30 %.
+1.55  DpadDown  down
+1.57  DpadDown  up
+1.60  DpadRight down
+1.62  DpadRight up
+1.64  DpadRight down
+1.66  DpadRight up
+1.68  DpadRight down
+1.70  DpadRight up
+1.72  DpadRight down
+1.74  DpadRight up
+1.76  DpadRight down
+1.78  DpadRight up
+1.80  DpadRight down
+1.82  DpadRight up
+1.84  DpadRight down
+1.86  DpadRight up
+1.88  DpadRight down
+1.90  DpadRight up
+1.92  DpadRight down
+1.94  DpadRight up
+1.96  DpadRight down
+1.98  DpadRight up
+2.00  DpadRight down
+2.02  DpadRight up
+2.04  DpadRight down
+2.06  DpadRight up
+2.08  DpadRight down
+2.10  DpadRight up
+2.12  DpadRight down
+2.14  DpadRight up
+2.16  DpadRight down
+2.18  DpadRight up
+# X held + right: slot 2 (the cursor stays on DEPTH); release X.
+2.25  X         down
+2.30  DpadRight down
+2.32  DpadRight up
+2.35  X         up
+# Slot 2's DEPTH: right 25 times: +50 %.
+2.40  DpadRight down
+2.42  DpadRight up
+2.44  DpadRight down
+2.46  DpadRight up
+2.48  DpadRight down
+2.50  DpadRight up
+2.52  DpadRight down
+2.54  DpadRight up
+2.56  DpadRight down
+2.58  DpadRight up
+2.60  DpadRight down
+2.62  DpadRight up
+2.64  DpadRight down
+2.66  DpadRight up
+2.68  DpadRight down
+2.70  DpadRight up
+2.72  DpadRight down
+2.74  DpadRight up
+2.76  DpadRight down
+2.78  DpadRight up
+2.80  DpadRight down
+2.82  DpadRight up
+2.84  DpadRight down
+2.86  DpadRight up
+2.88  DpadRight down
+2.90  DpadRight up
+2.92  DpadRight down
+2.94  DpadRight up
+2.96  DpadRight down
+2.98  DpadRight up
+3.00  DpadRight down
+3.02  DpadRight up
+3.04  DpadRight down
+3.06  DpadRight up
+3.08  DpadRight down
+3.10  DpadRight up
+3.12  DpadRight down
+3.14  DpadRight up
+3.16  DpadRight down
+3.18  DpadRight up
+3.20  DpadRight down
+3.22  DpadRight up
+3.24  DpadRight down
+3.26  DpadRight up
+3.28  DpadRight down
+3.30  DpadRight up
+3.32  DpadRight down
+3.34  DpadRight up
+3.36  DpadRight down
+3.38  DpadRight up
+# Up three times: TARGET; left eight times from NONE, wrapping: DELAY SWITCH, INPUT GAIN,
+# VOLUME, REPEATS, MIX, TIME, DECAY, DRY/WET.
+3.40  DpadUp    down
+3.42  DpadUp    up
+3.44  DpadUp    down
+3.46  DpadUp    up
+3.48  DpadUp    down
+3.50  DpadUp    up
+3.52  DpadLeft  down
+3.54  DpadLeft  up
+3.56  DpadLeft  down
+3.58  DpadLeft  up
+3.60  DpadLeft  down
+3.62  DpadLeft  up
+3.64  DpadLeft  down
+3.66  DpadLeft  up
+3.68  DpadLeft  down
+3.70  DpadLeft  up
+3.72  DpadLeft  down
+3.74  DpadLeft  up
+3.76  DpadLeft  down
+3.78  DpadLeft  up
+3.80  DpadLeft  down
+3.82  DpadLeft  up
+# Down: SHAPE; right seven times: sample-and-hold (MOD-C: after the four ramps).
+3.84  DpadDown  down
+3.86  DpadDown  up
+3.89  DpadRight down
+3.91  DpadRight up
+3.93  DpadRight down
+3.95  DpadRight up
+3.97  DpadRight down
+3.99  DpadRight up
+4.01  DpadRight down
+4.03  DpadRight up
+4.05  DpadRight down
+4.07  DpadRight up
+4.09  DpadRight down
+4.11  DpadRight up
+4.13  DpadRight down
+4.15  DpadRight up
+# Down three times: POLARITY; right: UNIPOLAR (MOD-C).
+4.17  DpadDown  down
+4.19  DpadDown  up
+4.21  DpadDown  down
+4.23  DpadDown  up
+4.25  DpadDown  down
+4.27  DpadDown  up
+4.29  DpadRight down
+4.31  DpadRight up
+# Feedback: R2 held 3 s (0.5 dB tap + 2.75 s at 24 dB/s: about +7 dB), as tests/platform/rise.txt.
+4.50  R2        down
+7.50  R2        up

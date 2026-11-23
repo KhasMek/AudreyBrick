@@ -57,14 +57,98 @@ void registerKnobParams(KnobRegistry& registry, const KnobHandlers& handlers)
 // Upstream Controls::Update calls UpdateNormalized for each parameter in enum
 // order with (1 - adc); ControlFrame already holds that value. ReverbDecay gets
 // ftension(n, -3) and EchoDelayTime gets n * (switch ? 0.5 : 1); preShape does
-// both and leaves the others unchanged.
+// both and leaves the others unchanged. MOD-A: the switch is the manual switch
+// OR the modulated request (exactly the manual switch while the request is off).
 void updateKnobParams(KnobRegistry& registry, const ControlFrame& frame) noexcept
 {
+    const bool sw = frame.delaySwitch || frame.delaySwitchMod;
     for(std::size_t i = 0; i < kKnobCount; ++i)
     {
         const Knob knob = static_cast<Knob>(i);
-        registry.UpdateNormalized(knob, preShape(knob, frame.knob[i], frame.delaySwitch));
+        registry.UpdateNormalized(knob, preShape(knob, frame.knob[i], sw));
     }
+}
+
+namespace
+{
+using EngineSetter = void (infrasonic::FeedbackSynth::Engine::*)(float);
+
+// The engine setter of each knob, in Knob order (upstream registerParams).
+constexpr EngineSetter kSetters[kKnobCount] = {
+    &infrasonic::FeedbackSynth::Engine::SetStringPitch,
+    &infrasonic::FeedbackSynth::Engine::SetFeedbackGain,
+    &infrasonic::FeedbackSynth::Engine::SetFeedbackDelay,
+    &infrasonic::FeedbackSynth::Engine::SetFeedbackLPFCutoff,
+    &infrasonic::FeedbackSynth::Engine::SetFeedbackHPFCutoff,
+    &infrasonic::FeedbackSynth::Engine::SetReverbMix,
+    &infrasonic::FeedbackSynth::Engine::SetReverbFeedback,
+    &infrasonic::FeedbackSynth::Engine::SetEchoDelaySendAmount,
+    &infrasonic::FeedbackSynth::Engine::SetEchoDelayTime,
+    &infrasonic::FeedbackSynth::Engine::SetEchoDelayFeedback,
+    &infrasonic::FeedbackSynth::Engine::SetOutputLevel,
+};
+} // namespace
+
+void AudreyVoice::applyKnob(std::size_t i, float smoothed) noexcept
+{
+    // MOD-A: the modulation goes in after the original's smoother. With an
+    // offset of exactly 0 the setter gets the smoothed value untouched, as
+    // upstream's std::bind(&Engine::SetX, &engine, _1) handler did.
+    const float offset = frame_.knobMod[i];
+    const Knob  knob   = static_cast<Knob>(i);
+    float       v      = smoothed;
+    if(knob == Knob::FeedbackLPFCutoff || knob == Knob::FeedbackHPFCutoff)
+        v = slewCutoff(knob == Knob::FeedbackLPFCutoff ? 0 : 1, knob, smoothed, offset);
+    else if(offset != 0.0f)
+        v = modulateEngineValue(knob, smoothed, offset, switchOn_);
+    (engine_.get()->*kSetters[i])(v);
+}
+
+float AudreyVoice::slewCutoff(std::size_t f, Knob knob, float smoothed, float offset) noexcept
+{
+    const bool modulated = offset != 0.0f && offset == offset;
+    if(!modulated && !cutActive_[f])
+    {
+        cutLast_[f] = smoothed; // the unmodulated path: the smoothed value as it is
+        return smoothed;
+    }
+    if(!(cutoffSlew_ > 0.0f)) // no limit (scans)
+    {
+        cutActive_[f] = false;
+        cutLast_[f]   = modulated ? modulateEngineValue(knob, smoothed, offset, switchOn_) : smoothed;
+        return cutLast_[f];
+    }
+    if(!cutActive_[f])
+    {
+        cutActive_[f] = true;
+        cutLog_[f]    = std::log2(cutLast_[f] > 0.0f ? cutLast_[f] : smoothed); // from the cutoff last given
+    }
+    // The target in log2(Hz): for a LOG knob an offset adds offset * log2(max/min)
+    // (the same as modulateEngineValue, without leaving the log domain), then
+    // the range clamp.
+    const ParamSpec& s    = paramSpec(knob);
+    const float      lmin = cutLogMin_[f];
+    const float      lmax = cutLogMax_[f];
+    float            tl   = std::log2(smoothed);
+    if(modulated)
+    {
+        const float o = offset < -2.0f ? -2.0f : (offset > 2.0f ? 2.0f : offset);
+        tl += o * (lmax - lmin);
+        tl = tl < lmin ? lmin : (tl > lmax ? lmax : tl);
+    }
+    const float d = tl - cutLog_[f];
+    if(!modulated && std::fabs(d) <= cutoffSlew_)
+    {
+        cutActive_[f] = false; // converged: back to the unmodulated path
+        cutLast_[f]   = smoothed;
+        return smoothed;
+    }
+    const float step = d > cutoffSlew_ ? cutoffSlew_ : (d < -cutoffSlew_ ? -cutoffSlew_ : d);
+    cutLog_[f] += step;
+    float v = std::exp2(cutLog_[f]);
+    v       = v < s.min ? s.min : (v > s.max ? s.max : v);
+    cutLast_[f] = v;
+    return v;
 }
 
 AudreyVoice::AudreyVoice()  = default;
@@ -72,8 +156,6 @@ AudreyVoice::~AudreyVoice() = default;
 
 void AudreyVoice::init()
 {
-    using namespace std::placeholders;
-
     // Release the old state first, so a re-init does not hold two engines at once.
     params_.reset();
     engine_.reset();
@@ -86,20 +168,12 @@ void AudreyVoice::init()
     auto params = std::make_unique<KnobRegistry>();
     params->Init(static_cast<float>(kSampleRate) / static_cast<float>(kControlBlock));
 
-    Engine* e = engine.get();
-    const KnobHandlers handlers = {
-        std::bind(&Engine::SetStringPitch, e, _1),
-        std::bind(&Engine::SetFeedbackGain, e, _1),
-        std::bind(&Engine::SetFeedbackDelay, e, _1),
-        std::bind(&Engine::SetFeedbackLPFCutoff, e, _1),
-        std::bind(&Engine::SetFeedbackHPFCutoff, e, _1),
-        std::bind(&Engine::SetReverbMix, e, _1),
-        std::bind(&Engine::SetReverbFeedback, e, _1),
-        std::bind(&Engine::SetEchoDelaySendAmount, e, _1),
-        std::bind(&Engine::SetEchoDelayTime, e, _1),
-        std::bind(&Engine::SetEchoDelayFeedback, e, _1),
-        std::bind(&Engine::SetOutputLevel, e, _1),
-    };
+    // Upstream binds each setter directly (std::bind(&Engine::SetX, &engine, _1)).
+    // MOD-A: each handler goes through applyKnob, which calls the same setter with
+    // the same value unless the knob has a modulation offset.
+    KnobHandlers handlers;
+    for(std::size_t i = 0; i < kKnobCount; ++i)
+        handlers[i] = [this, i](const float v) { applyKnob(i, v); };
     registerKnobParams(*params, handlers);
 
     for(auto& lim : limiter_)
@@ -108,6 +182,16 @@ void AudreyVoice::init()
     engine_   = std::move(engine);
     params_   = std::move(params);
     frame_    = ControlFrame{};
+    switchOn_ = false;
+    for(std::size_t f = 0; f < 2; ++f)
+    {
+        cutLast_[f]   = 0.0f;
+        cutLog_[f]    = 0.0f;
+        cutActive_[f] = false;
+        const ParamSpec& s = paramSpec(f == 0 ? Knob::FeedbackLPFCutoff : Knob::FeedbackHPFCutoff);
+        cutLogMin_[f]      = std::log2(s.min);
+        cutLogMax_[f]      = std::log2(s.max);
+    }
     blockPos_ = 0;
 }
 
@@ -115,6 +199,7 @@ void AudreyVoice::startControlBlock(ControlSource& controls) noexcept
 {
     // AudioCallback: controls.Update(hw); controls.Process();
     controls.read(frame_);
+    switchOn_ = frame_.delaySwitch || frame_.delaySwitchMod;
     updateKnobParams(*params_, frame_);
     params_->Process();
 }

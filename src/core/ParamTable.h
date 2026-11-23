@@ -48,4 +48,24 @@ float preShape(Knob knob, float n, bool delaySwitch) noexcept;
 // display: preShape, then the registry's clamp and daisysp::fmap.
 float knobToEngine(Knob knob, float n, bool delaySwitch) noexcept;
 
+// MOD-A: the inverse of knobToEngine. The knob position whose mapping is the
+// engine value v (computed in double): v is clamped to the parameter's range,
+// the curve is inverted (linear; square root for EXP; log ratio for LOG), then
+// the pre-shaping (ReverbDecay: the inverse of ftension(n, -3), i.e.
+// log1p(t * expm1(-3)) / -3; EchoDelayTime: divided by the switch scale when
+// the switch is on). For EchoDelayTime with the switch on the result can lie
+// above 1 (up to 1 / kDelaySwitchScale = 2): that is a value the smoother is
+// still carrying from before the switch turned on. Never NaN for a finite v.
+double engineToKnob(Knob knob, float v, bool delaySwitch) noexcept;
+
+// MOD-A: the engine value for the smoothed engine value `smoothed` moved by
+// `offset` in normalised knob travel. With offset 0 (or NaN) returns `smoothed`
+// unchanged. Otherwise n_s = engineToKnob(smoothed), n = clamp(n_s + offset,
+// min(0, n_s), max(1, n_s)), and the result is knobToEngine(n): the original
+// mapping of the moved knob position. The clamp range is [0, 1] whenever n_s
+// is (always, except EchoDelayTime while the smoother still carries a value
+// from before the switch turned on, where it widens to include n_s so that a
+// small offset gives a small change rather than a jump).
+float modulateEngineValue(Knob knob, float smoothed, float offset, bool delaySwitch) noexcept;
+
 } // namespace audreybrick

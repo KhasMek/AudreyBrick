@@ -10,7 +10,7 @@ namespace audreybrick
 namespace
 {
 // docs/CONTROL_SCHEME_PROPOSAL.md section 0, "Tabs". OUT's left/right is the
-// safety limiter (M4), unbound in M2. INPUT (M2b-A) binds no knob.
+// safety limiter (M4), unbound in M2. INPUT (M2b-A) and MOD (MOD-B) bind no knob.
 const TabSpec kTabs[kTabCount] = {
     {"LOOP", Knob::Frequency, Knob::FeedbackBody, kNoKnob, kNoKnob},
     {"FILTER", Knob::FeedbackLPFCutoff, Knob::FeedbackHPFCutoff, kNoKnob, kNoKnob},
@@ -18,6 +18,7 @@ const TabSpec kTabs[kTabCount] = {
     {"DELAY", Knob::EchoDelayTime, Knob::EchoDelaySend, kNoKnob, Knob::EchoDelayFeedback},
     {"OUT", kNoKnob, Knob::OutputVolume, kNoKnob, kNoKnob},
     {"INPUT", kNoKnob, kNoKnob, kNoKnob, kNoKnob},
+    {"MOD", kNoKnob, kNoKnob, kNoKnob, kNoKnob},
 };
 
 std::size_t index(Tab t) noexcept

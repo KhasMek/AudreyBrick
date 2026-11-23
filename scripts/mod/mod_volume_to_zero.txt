@@ -1,0 +1,16 @@
+# MOD-A: the volume modulated to zero and back.
+#
+# Shows: a 0.1 Hz sine of depth -1 on OutputVolume (knob 0.707, level 0.5):
+# the offset swings from +1 to -1, so the level reaches the top (1.0) and, for
+# about a third of each cycle, the bottom (exactly 0: knob + offset clamped
+# to 0), and comes back without a click.
+# Drone: FeedbackGain 0.6; others at their defaults.
+# Duration 24 s. Default wavcheck thresholds.
+#
+# @duration 24
+
+0 FeedbackGain 0.6
+0 mod1 shape sine
+0 mod1 target OutputVolume
+0 mod1 hz 0.1
+0 mod1 depth -1

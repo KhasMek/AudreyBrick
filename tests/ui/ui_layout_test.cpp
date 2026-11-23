@@ -33,7 +33,7 @@
 // row dimmed unless the source is FILE and armed only with X, the file name cut
 // with "..", "n OF m", the length and the status line; the IN indicator on the
 // other tabs whenever the source is not OFF (and never with it OFF), without
-// moving anything else on the screen; six tabs in the tab bar.
+// moving anything else on the screen; seven tabs in the tab bar (MOD-B).
 // REC: in every snapshot nothing is drawn within 4 pixels of the screen's edge
 // (where the recording border goes); the border flag and colour follow the
 // record view; the REC readout is one red 16 px text in the feedback band, left
@@ -56,6 +56,8 @@
 #include <string>
 #include <vector>
 
+#include "app/ModFormat.h"
+#include "app/ModView.h"
 #include "app/Tabs.h"
 #include "input/InputTypes.h"
 #include "input/InputView.h"
@@ -187,6 +189,8 @@ const char* kindName(PanelKind k)
         case PanelKind::InputMeter: return "input meter";
         case PanelKind::InputPopup: return "input pop-up";
         case PanelKind::InputWarning: return "input warning";
+        case PanelKind::ModRow: return "mod row";
+        case PanelKind::ModSlot: return "mod slot";
     }
     return "?";
 }
@@ -345,7 +349,8 @@ void checkStructure(const std::string& n, const DrawList& d)
             }
         for(std::size_t r = 0; r < d.rectCount; ++r)
             if((d.rects[r].tag == RectTag::Bar || d.rects[r].tag == RectTag::UnityMark ||
-                d.rects[r].tag == RectTag::GainUnityMark) && d.rects[r].w > 0 && d.rects[r].h > 0 &&
+                d.rects[r].tag == RectTag::GainUnityMark || d.rects[r].tag == RectTag::ModMarker) &&
+               d.rects[r].w > 0 && d.rects[r].h > 0 &&
                layer(a.panel) == layer(d.rects[r].panel) && intersects(box(a), box(d.rects[r])))
             {
                 ++barUnderText;
@@ -537,6 +542,8 @@ void checkStrip(const std::string& n, const UiSnapshot& s, const DrawList& d)
     check(wrong == 0, n + "each of the eleven strip cells shows its own knob's name and value");
 }
 
+const TextItem* textIn(const DrawList& d, int panel, const char* text, TextRole role);
+
 void checkStrings(const std::string& n, const UiSnapshot& s, const DrawList& d)
 {
     std::vector<std::string> want;
@@ -544,10 +551,25 @@ void checkStrings(const std::string& n, const UiSnapshot& s, const DrawList& d)
         want.push_back(tabSpec(static_cast<Tab>(i)).name);
     for(std::size_t k = 0; k < kKnobCount; ++k)
         want.push_back(stripValue(s, static_cast<Knob>(k)));
-    for(const char* w : {"FEEDBACK", "SWITCH", "TAB", "MAX", "FINE", "LATCH", "SHIFT", "RESET", "CPU", "CLIP", "L", "R",
-                         "OUT", "0 dB"})
+    for(const char* w : {"FEEDBACK", "SWITCH", "TAB", "MAX", "FINE", "LATCH", "RESET", "CPU", "CLIP", "L", "R", "OUT",
+                         "0 dB"})
         want.push_back(w);
-    want.push_back(s.switchOn ? "ON" : "OFF");
+    want.push_back(s.tab == Tab::Mod ? "SLOT" : "SHIFT"); // MOD-D: the X cell on MOD
+    // MOD-D review: the X cell reads SLOT on MOD (X picks the slot), SHIFT elsewhere.
+    {
+        const int   p    = findPanel(d, PanelKind::FooterCell, kNoKnobIndex, 6);
+        const bool  mod  = s.tab == Tab::Mod;
+        const char* label = mod ? "SLOT" : "SHIFT";
+        const char* other = mod ? "SHIFT" : "SLOT";
+        check(p >= 0 && textIn(d, p, label, TextRole::Footer) != nullptr &&
+                  textIn(d, p, other, TextRole::Footer) == nullptr,
+              n + "the X footer cell reads " + label);
+    }
+    // MOD-B: the switch box says ON also while only the modulation holds it on.
+    const bool modOn = !s.switchOn && s.mod.switchRequested && modTargetActive(s.mod, ModTarget::DelaySwitch);
+    want.push_back(s.switchOn || modOn ? "ON" : "OFF");
+    if(modOn)
+        want.push_back("MOD");
     char buf[64];
     formatCpu(buf, sizeof buf, s.cpuLoad);
     want.push_back(buf);
@@ -1356,6 +1378,325 @@ void checkRecord(const std::string& n, const UiSnapshot& s, const DrawList& d)
           n + "REC: readout \"" + want + "\" in red at 16 px in the feedback band, y 158, left of \"0 dB\"");
 }
 
+// --- MOD-B: the MOD tab (MOD-D: rows and cards, X selects the slot) and modulated knobs on every tab -
+bool boundOnTabTest(Tab t, Knob k)
+{
+    const TabSpec& sp = tabSpec(t);
+    return sp.leftRight == k || sp.upDown == k || sp.xLeftRight == k || sp.xUpDown == k;
+}
+
+// Modulated knobs drawn without a row on this tab (their only bar is the strip's or the band's):
+// each modulated knob has a strip or band marker, and one more on its row when bound.
+int boundCount(Tab t, const UiModView& m)
+{
+    int unbound = 0;
+    for(std::size_t k = 0; k < kKnobCount; ++k)
+        if(modTargetActive(m, modTargetFromKnob(static_cast<Knob>(k))) && !boundOnTabTest(t, static_cast<Knob>(k)))
+            ++unbound;
+    return unbound;
+}
+
+const RectItem* lastFillIn(const DrawList& d, int panel)
+{
+    const RectItem* r = nullptr;
+    for(std::size_t i = 0; i < d.rectCount; ++i)
+        if(d.rects[i].panel == panel && d.rects[i].thickness == 0 && d.rects[i].x == d.panels[panel].x &&
+           d.rects[i].y == d.panels[panel].y && d.rects[i].w == d.panels[panel].w && d.rects[i].h == d.panels[panel].h)
+            r = &d.rects[i];
+    return r;
+}
+
+void checkMod(const std::string& n, const UiSnapshot& s, const DrawList& d)
+{
+    const UiModView& m = s.mod;
+    int              rows = 0, cards = 0, overlays = 0, knobRows = 0;
+    for(std::size_t i = 0; i < d.panelCount; ++i)
+    {
+        rows += d.panels[i].kind == PanelKind::ModRow;
+        cards += d.panels[i].kind == PanelKind::ModSlot;
+        overlays += d.panels[i].overlay;
+        knobRows += d.panels[i].kind == PanelKind::Row;
+    }
+    if(s.tab != Tab::Mod)
+    {
+        check(rows == 0 && cards == 0, n + "MOD: no MOD rows or cards off the MOD tab");
+    }
+    else
+    {
+        // MOD-D: no pop-up any more: nothing on MOD is an overlay, whatever is held.
+        check(overlays == 0, n + "MOD: no overlay panel (the target pop-up is gone)");
+        // MOD-C: five rows (POLARITY), 36 px every 38 px. MOD-D: TARGET first.
+        check(rows == 5 && cards == 4 && knobRows == 0, n + "MOD: five editor rows and four slot cards, no knob rows");
+        const bool        slotsMode = m.choosing && s.xHeld; // MOD-D: cards lit, rows dimmed
+        const std::size_t cur       = static_cast<std::size_t>(m.current);
+        const bool        env       = m.slot[cur].shape == ModShape::Envelope;
+        const char*       labels[5] = {"TARGET", "SHAPE", env ? "RELEASE" : "RATE", "DEPTH", "POLARITY"};
+        char              values[5][32];
+        std::snprintf(values[0], sizeof values[0], "%s", modTargetDisplayName(m.slot[cur].target));
+        std::snprintf(values[1], sizeof values[1], "%s", modShapeDisplayName(m.slot[cur].shape));
+        formatModRate(values[2], sizeof values[2], m.slot[cur].rateNorm, m.slot[cur].shape);
+        formatModDepth(values[3], sizeof values[3], m.slot[cur].depth);
+        std::snprintf(values[4], sizeof values[4], "%s",
+                      env ? "UNIPOLAR" : (m.slot[cur].polarity == ModPolarity::Unipolar ? "UNIPOLAR" : "BIPOLAR"));
+        int wrongRows = 0;
+        for(int r = 0; r < 5; ++r)
+        {
+            const int  p      = findPanel(d, PanelKind::ModRow, kNoKnobIndex, r);
+            const bool cursor = static_cast<int>(m.row) == r;
+            if(p < 0 || d.panels[p].active != cursor || d.panels[p].y != 184 + 38 * r || d.panels[p].h != 36 ||
+               textIn(d, p, labels[r], TextRole::ModText) == nullptr || textIn(d, p, values[r], TextRole::ModText) == nullptr)
+            {
+                ++wrongRows;
+                std::printf("  MOD row %d: %s / %s\n", r, labels[r], values[r]);
+                continue;
+            }
+            // POLARITY under the envelope is fixed: outline arrows even as the
+            // cursor row, the value dimmed, FIXED BY ENVELOPE. MOD-D: with the
+            // cards lit every row is dimmed: outline arrows, faint label, dark.
+            const bool fixed = r == 4 && env;
+            const bool lit   = cursor && !slotsMode;
+            int        filled = 0, arrows = 0;
+            for(std::size_t i = 0; i < d.triCount; ++i)
+                if(d.tris[i].panel == p)
+                {
+                    ++arrows;
+                    filled += d.tris[i].filled;
+                }
+            const TextItem* lt  = textIn(d, p, labels[r], TextRole::ModText);
+            const RectItem* bgr = lastFillIn(d, p);
+            const Color     wantLabel = lit ? palette::text : (slotsMode ? palette::faint : palette::dim);
+            if(arrows != 2 || filled != (lit && !fixed ? 2 : 0) || !sameColor(lt->color, wantLabel) || bgr == nullptr ||
+               !sameColor(bgr->color, lit ? palette::panel : palette::panelDark))
+            {
+                ++wrongRows;
+                std::printf("  MOD row %d: arrows %d filled %d, label or fill colour wrong\n", r, arrows, filled);
+            }
+            if(r == 4)
+            {
+                const TextItem* v    = textIn(d, p, values[4], TextRole::ModText);
+                const bool      note = textIn(d, p, "FIXED BY ENVELOPE", TextRole::ModText) != nullptr;
+                if(note != fixed || (fixed && !sameColor(v->color, palette::faint)))
+                {
+                    ++wrongRows;
+                    std::printf("  MOD POLARITY row: fixed %d, note %d\n", fixed, note);
+                }
+            }
+        }
+        check(wrongRows == 0, n + "MOD rows: TARGET, SHAPE, " + labels[2] + ", DEPTH, POLARITY (" + values[4] +
+                                  ") with the selected slot's values; the cursor row active (bright with filled "
+                                  "arrows unless X selects slots or POLARITY is fixed); the others dimmed");
+        // TARGET: no X cap and no SLOT hint in the row (the footer's X cell
+        // carries it); the knob's tab after a knob's name.
+        const int                      tRow  = findPanel(d, PanelKind::ModRow, kNoKnobIndex, 0);
+        const std::vector<std::string> tKeys = keysIn(d, tRow);
+        const TextItem* slotHint = textIn(d, tRow, "SLOT", TextRole::ModText);
+        const ModTarget tt       = m.slot[cur].target;
+        const char*     tab      = modTargetIsKnob(tt) ? knobTabName(modTargetKnob(tt)) : "";
+        const bool      tabOk    = tab[0] == '\0' || textIn(d, tRow, tab, TextRole::ModText) != nullptr;
+        check(tKeys.empty() && slotHint == nullptr && tabOk,
+              n + "MOD TARGET row: no X cap or SLOT hint, the knob's tab (" + tab + ") after its name");
+        int wrongCards = 0;
+        for(std::size_t i = 0; i < kModSlots; ++i)
+        {
+            const int p = findPanel(d, PanelKind::ModSlot, kNoKnobIndex, static_cast<int>(i));
+            if(p < 0)
+            {
+                ++wrongCards;
+                continue;
+            }
+            const ModSlotSettings& sl       = m.slot[i];
+            const bool             active   = modSlotActive(sl);
+            const bool             selected = i == cur;
+            char                   rate0[24], rate[32], depth[16], num[4];
+            formatModRate(rate0, sizeof rate0, sl.rateNorm, sl.shape);
+            std::snprintf(rate, sizeof rate, "%s%s", sl.shape == ModShape::Envelope ? "REL " : "", rate0);
+            std::snprintf(num, sizeof num, "%zu", i + 1);
+            formatModDepth(depth, sizeof depth, sl.depth);
+            const char*     target = sl.target == ModTarget::None ? "NO TARGET" : modTargetDisplayName(sl.target);
+            const RectItem* bgr    = lastFillIn(d, p);
+            const TextItem* tt2    = textIn(d, p, target, TextRole::ModText);
+            const char* pol = (sl.shape == ModShape::Envelope || sl.polarity == ModPolarity::Unipolar) ? "+" : "+/-";
+            const TextItem* pt = textIn(d, p, pol, TextRole::ModText);
+            const TextItem* dt = textIn(d, p, depth, TextRole::ModText);
+            const TextItem* nt = textIn(d, p, num, TextRole::ModText);
+            // MOD-D: dimmed (normally): an active card's text dim, an idle one's
+            // faint (review: one step apart). Lit (X selects slots): an active
+            // card's text bright, an idle one's dim. In both an active card on
+            // the panel colour, an idle one dark.
+            const Color wantFill = active ? palette::panel : palette::panelDark;
+            const Color wantText = slotsMode ? (active ? palette::text : palette::dim)
+                                             : (active ? palette::dim : palette::faint);
+            // The selected card: accent frame (3 px) and its number in inverse
+            // video (bg on an accent box), in both states.
+            const RectItem* frame = nullptr;
+            const RectItem* box   = nullptr;
+            for(std::size_t r = 0; r < d.rectCount; ++r)
+                if(d.rects[r].panel == p)
+                {
+                    if(d.rects[r].thickness > 0 && d.rects[r].x == d.panels[p].x && d.rects[r].w == d.panels[p].w)
+                        frame = &d.rects[r];
+                    if(d.rects[r].thickness == 0 && d.rects[r].w == 24 && d.rects[r].h == 20)
+                        box = &d.rects[r];
+                }
+            const bool markOk = frame != nullptr && (selected ? sameColor(frame->color, palette::accent) && frame->thickness == 3
+                                                               : sameColor(frame->color, palette::edge) && frame->thickness == 1) &&
+                                nt != nullptr &&
+                                (selected ? box != nullptr && sameColor(box->color, palette::accent) && sameColor(nt->color, palette::bg)
+                                          : box == nullptr && sameColor(nt->color, wantText));
+            const bool ok = d.panels[p].active == selected && textIn(d, p, rate, TextRole::ModText) != nullptr &&
+                            dt != nullptr && tt2 != nullptr && pt != nullptr && pt->y == dt->y &&
+                            pt->x >= dt->x + dt->w + 16 && pt->x + pt->w <= d.panels[p].x + d.panels[p].w - 8 &&
+                            textIn(d, p, modShapeDisplayName(sl.shape), TextRole::ModText) != nullptr && bgr != nullptr &&
+                            sameColor(bgr->color, wantFill) && sameColor(tt2->color, wantText);
+            // The activity bar: centred, the fill from the centre by output * depth, accent on an active card.
+            const RectItem* fill = nullptr;
+            int             bars = 0;
+            for(std::size_t r = 0; r < d.rectCount; ++r)
+                if(d.rects[r].panel == p && d.rects[r].tag == RectTag::Bar)
+                {
+                    ++bars;
+                    if(d.rects[r].h == 6 && d.rects[r].thickness == 0 &&
+                       (sameColor(d.rects[r].color, palette::accent) || sameColor(d.rects[r].color, palette::faint)))
+                        fill = &d.rects[r];
+                }
+            const float v     = active ? m.output[i] * sl.depth : 0.0f;
+            const int   wantW = static_cast<int>(std::lround(std::fabs(std::max(-1.0f, std::min(1.0f, v))) * 97));
+            const bool  barOk = wantW == 0 ? fill == nullptr
+                                           : (fill != nullptr && std::abs(fill->w - wantW) <= 1 &&
+                                             sameColor(fill->color, palette::accent));
+            if(!ok || !barOk || !markOk || bars < 2)
+            {
+                ++wrongCards;
+                std::printf("  MOD card %zu wrong (texts %d, bar %d, mark %d)\n", i + 1, ok, barOk, markOk);
+            }
+        }
+        check(wrongCards == 0,
+              n + "MOD cards: shape, target (NO TARGET), rate, depth with the polarity (+/- or +) at its right; " +
+                  (slotsMode ? "lit (X held)" : "dimmed as a group") +
+                  ", active and idle cards told apart; the selected one with the accent frame and an inverse "
+                  "number; the activity bar shows output * depth in the accent colour (still when inactive)");
+    }
+
+    // Tags and moving-value markers.
+    int  wrongTags = 0, markers = 0, activeKnobs = 0;
+    int thinMarkers = 0;
+    for(std::size_t i = 0; i < d.rectCount; ++i)
+    {
+        markers += d.rects[i].tag == RectTag::ModMarker;
+        thinMarkers += d.rects[i].tag == RectTag::ModMarker && d.rects[i].w < 4;
+    }
+    check(thinMarkers == 0, n + "every modulation marker is at least a 4 px stub (visible at 0)");
+    for(std::size_t k = 0; k < kKnobCount; ++k)
+    {
+        const ModTarget t      = modTargetFromKnob(static_cast<Knob>(k));
+        const bool      active = modTargetActive(m, t);
+        activeKnobs += active;
+        char want[8];
+        const std::size_t wl = modTagText(want, sizeof want, m, t);
+        char shortForm[8];
+        std::snprintf(shortForm, sizeof shortForm, "M%zu", wl > 0 ? wl - 1 : 0);
+        // The full tag everywhere; the strip may fall back to "M<count>" or "M"
+        // where the full tag does not fit, but always has one.
+        int tags = 0, bad = 0, stripTags = 0;
+        for(std::size_t i = 0; i < d.textCount; ++i)
+            if(d.texts[i].role == TextRole::ModTag && d.texts[i].knob == static_cast<int>(k))
+            {
+                ++tags;
+                const bool inStrip = d.panels[d.texts[i].panel].kind == PanelKind::StripCell;
+                stripTags += inStrip;
+                const bool textOk = std::strcmp(d.texts[i].text, want) == 0 ||
+                                    (inStrip && (std::strcmp(d.texts[i].text, shortForm) == 0 ||
+                                                 std::strcmp(d.texts[i].text, "M") == 0));
+                bad += !textOk || !sameColor(d.texts[i].color, palette::mod);
+            }
+        // Active: in the strip always, on the tab's row when bound, in the band for FEEDBACK.
+        const bool bound = boundOnTabTest(s.tab, static_cast<Knob>(k));
+        const int  wantTags = 1 + (bound ? 1 : 0) + (k == static_cast<std::size_t>(Knob::FeedbackGain) ? 1 : 0);
+        if(active ? (tags != wantTags || stripTags != 1 || bad > 0) : tags > 0)
+        {
+            ++wrongTags;
+            std::printf("  knob %s: %d tag(s) (%d in the strip), want %s\n", paramSpec(static_cast<Knob>(k)).id, tags,
+                        stripTags, active ? want : "none");
+        }
+        // The row's marker: from the bar's start to the moving value (unit knobs: the knob position).
+        if(active && bound && s.tab != Tab::Mod && s.tab != Tab::Input)
+        {
+            const int p = findPanel(d, PanelKind::Row, static_cast<int>(k));
+            const RectItem* bar = nullptr;
+            const RectItem* mk  = nullptr;
+            for(std::size_t r = 0; p >= 0 && r < d.rectCount; ++r)
+                if(d.rects[r].panel == p)
+                {
+                    if(d.rects[r].tag == RectTag::Bar && bar == nullptr)
+                        bar = &d.rects[r];
+                    if(d.rects[r].tag == RectTag::ModMarker)
+                        mk = &d.rects[r];
+                }
+            const UiKnobView& v = s.knob[k];
+            if(bar == nullptr || mk == nullptr || mk->x != bar->x || mk->y + mk->h != bar->y + bar->h || mk->h >= bar->h)
+                ++wrongTags;
+            else if(v.unit[0] != '\0')
+            {
+                const float mv = modMovingNorm(m, t, v.norm);
+                if(std::abs(mk->w - std::max(4, static_cast<int>(std::lround(mv * bar->w)))) > 1)
+                {
+                    ++wrongTags;
+                    std::printf("  knob %s: marker %d px, want %ld\n", paramSpec(static_cast<Knob>(k)).id, mk->w,
+                                std::lround(mv * bar->w));
+                }
+            }
+        }
+    }
+    // The INPUT tab's gain row and the switch box.
+    if(s.tab == Tab::Input)
+    {
+        const int       gain = findPanel(d, PanelKind::InputRow, kNoKnobIndex, 1);
+        const TextItem* tag  = nullptr;
+        const RectItem* mk   = nullptr;
+        const RectItem* bar  = nullptr;
+        for(std::size_t i = 0; gain >= 0 && i < d.textCount; ++i)
+            if(d.texts[i].panel == gain && d.texts[i].role == TextRole::ModTag)
+                tag = &d.texts[i];
+        for(std::size_t r = 0; gain >= 0 && r < d.rectCount; ++r)
+            if(d.rects[r].panel == gain)
+            {
+                if(d.rects[r].tag == RectTag::Bar && bar == nullptr)
+                    bar = &d.rects[r];
+                if(d.rects[r].tag == RectTag::ModMarker)
+                    mk = &d.rects[r];
+            }
+        char want[8];
+        modTagText(want, sizeof want, m, ModTarget::InputGain);
+        if(!modTargetActive(m, ModTarget::InputGain))
+            check(tag == nullptr && mk == nullptr, n + "INPUT gain: no tag or marker without a slot on it");
+        else
+            check(tag != nullptr && std::strcmp(tag->text, want) == 0 && mk != nullptr && bar != nullptr &&
+                      mk->x == bar->x && mk->y + mk->h == bar->y + bar->h &&
+                      std::abs(mk->w - std::max(4, static_cast<int>(std::lround(
+                                                       modEffectiveInputNorm(m, s.input.gainNorm) * bar->w)))) <= 1,
+                  n + "INPUT gain: tag " + want + " and the marker at clamp(knob + offset)");
+    }
+    {
+        const int       sw  = findPanel(d, PanelKind::SwitchBox);
+        const TextItem* tag = nullptr;
+        for(std::size_t i = 0; sw >= 0 && i < d.textCount; ++i)
+            if(d.texts[i].panel == sw && d.texts[i].role == TextRole::ModTag)
+                tag = &d.texts[i];
+        char want[8];
+        modTagText(want, sizeof want, m, ModTarget::DelaySwitch);
+        check(modTargetActive(m, ModTarget::DelaySwitch) ? (tag != nullptr && std::strcmp(tag->text, want) == 0)
+                                                         : tag == nullptr,
+              n + "switch box: the tag of the slots on the delay switch (none without)");
+    }
+
+    const bool anyActive = activeKnobs > 0 || modTargetActive(m, ModTarget::InputGain) ||
+                           modTargetActive(m, ModTarget::DelaySwitch);
+    check(wrongTags == 0, n + "MOD tags: \"M\" and the slot numbers on every modulated knob (row and strip or band), "
+                              "none elsewhere; the row's thin marker at clamp(knob + offset)");
+    check(anyActive || markers == 0, n + "no modulation marker while no slot is active");
+    check(markers >= activeKnobs * 2 - (boundCount(s.tab, m)), n + "every modulated knob's bars carry the marker");
+}
+
 void checkSnapshot(const char* name, const UiSnapshot& s, DrawList& d)
 {
     const MeterView m = uitest::firstFrameMeters(s);
@@ -1369,6 +1710,7 @@ void checkSnapshot(const char* name, const UiSnapshot& s, DrawList& d)
     checkInIndicator(n, s, m, d);
     checkPopup(n, s, d);
     checkRecord(n, s, d);
+    checkMod(n, s, d);
 }
 
 // --- Feedback band ----------------------------------------------------------------------------
@@ -1472,6 +1814,11 @@ void checkContrast()
         {"bg on clip (CLIP, DROPPED, CPU MAX)", p::bg, p::clip},
         {"bg on maxFill (strip MAX tag)", p::bg, p::maxFill},
         {"maxFill on bg (MAX plate)", p::maxFill, p::bg},
+        {"mod on panel (MOD-B tags)", p::mod, p::panel},
+        {"mod on panelDark (MOD-B tags on inactive rows)", p::mod, p::panelDark},
+        {"switchOn on panel (MOD-B: the switch held on by modulation)", p::switchOn, p::panel},
+        {"bg on accent (MOD-B: the pop-up cursor row, the edited slot's number)", p::bg, p::accent},
+        {"faint on bg (MOD-B: the pop-up's tab names)", p::faint, p::bg},
     };
     for(const Pair& q : pairs)
     {
@@ -1744,17 +2091,20 @@ int main()
                   "at the bottom of the meter panel");
     }
 
-    // M2b-A: six tabs, INPUT last, each name inside its own tab box, none touching.
+    // M2b-A: INPUT after OUT; MOD-B: seven tabs, MOD last; each name inside its
+    // own tab box, none touching.
     {
         buildLayout(uitest::inputOffSnapshot(), MeterView{}, *d);
         std::vector<const TextItem*> names;
         for(std::size_t i = 0; i < d->textCount; ++i)
             if(d->texts[i].role == TextRole::TabName)
                 names.push_back(&d->texts[i]);
-        bool ordered = names.size() == kTabCount && std::strcmp(names.back()->text, "INPUT") == 0;
+        bool ordered = names.size() == kTabCount && std::strcmp(names.back()->text, "MOD") == 0 &&
+                       std::strcmp(names[names.size() - 2]->text, "INPUT") == 0;
         for(std::size_t i = 1; ordered && i < names.size(); ++i)
             ordered = names[i]->x >= names[i - 1]->x + names[i - 1]->w + 16 && names[i]->scale == 3;
-        check(ordered && kTabCount == 6, "tab bar: six tabs at 24 px, INPUT last, at least 16 px between names");
+        check(ordered && kTabCount == 7,
+              "tab bar: seven tabs at 24 px, INPUT then MOD last, at least 16 px between names");
     }
 
     checkFeedbackBand(*d);
