@@ -58,7 +58,9 @@ set(_common
     "video environment: SDL_VIDEODRIVER=dummy"
     "video environment: video drivers compiled into the linked SDL: "
     "video environment: /dev/fb0 "
-    "video environment: /sys/class/graphics/fb0/modes "
+    # Either the file is reported as not readable or empty, or (on a machine with
+    # a framebuffer, such as a CI runner) its modes are listed.
+    "video environment: (/sys/class/graphics/fb0/modes |fb0 mode: )"
     "audio: driver dummy, device \"default\", 48000 Hz, 2 channels, float32, buffer [0-9]+ frames obtained \\(256 requested"
     "SDL_GAMECONTROLLERCONFIG"
     "joysticks: [0-9]+"
