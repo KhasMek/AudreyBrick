@@ -279,7 +279,7 @@ Package built from the presets tree (committed as `f859db1`), default governor, 
 | Load | 3 loads, including one with all four modulation slots set; the slots were applied within 0.5 s (the `mod: slot` lines follow the load) |
 | Preset files | Three files left on the card, all valid: format `audreybrick-preset`, version 1, 11 knobs, 4 slots |
 | Callback load | Average 38 % of a 256-frame buffer over 59 ten-second windows (19 to 42 %), a little above the 33 to 36 % of earlier runs, with modulation slots active for part of the run; 1 late callback (115 %) in the run, not near a preset action |
-| Clock | The device clock was correct (2026-11-24, -0700), unlike the first run |
+| Clock | The device clock was correct (2026-11-24), unlike the first run |
 | Logs | The folder held the archived logs of runs 22 to 28 (copied in by hand) and the current run 3; none for runs 1 and 2. **[unknown]** why: the human probably overwrote them while copying. The launcher's pruning could also explain it (it keeps the seven highest-numbered logs, and the counter restarted at 1 below 22 to 28), but that was not observed. Watch on later runs whether archived logs with low numbers survive |
 | Not exercised | Start + A, a failed load, a full list beyond five rows on the device |
 

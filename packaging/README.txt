@@ -1,5 +1,5 @@
-AudreyBrick (working title)
-===========================
+AudreyBrick
+===========
 
 A port of the Audrey II "horrorscape" feedback synthesiser to the TrimUI Brick
 running KNULLI. A droning feedback instrument: a plucked-string model fed with
@@ -25,7 +25,7 @@ font8x8 by Daniel Hepper (public domain). WAV files are read with dr_wav by Davi
 Reid (MIT No Attribution). Full notices: THIRD_PARTY.md and the licenses/ folder.
 
 AudreyBrick's own code: MIT licence, see LICENSE.
-Source repository: to be published.
+Source repository: https://github.com/KhasMek/AudreyBrick
 
 
 Installing
@@ -612,4 +612,4 @@ Source/Filters/tone.cpp in the AudreyBrick source, or DaisySP-LGPL), as an aarch
 Linux shared library exporting the same symbols (daisysp::ReverbSc and
 daisysp::Tone with the same class layout), name it libaudrey_lgpl.so and put it in
 audreybrick/libs.aarch64/ in place of this one. The source of this build is in the
-AudreyBrick source repository (to be published).
+AudreyBrick source repository, https://github.com/KhasMek/AudreyBrick

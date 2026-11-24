@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    name: Host tests (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Release
+            flags: -DCMAKE_BUILD_TYPE=Release
+          - name: no SDL
+            flags: -DCMAKE_BUILD_TYPE=Release -DAUDREY_WITH_SDL=OFF
+          - name: ASan + UBSan
+            flags: >-
+              -DCMAKE_BUILD_TYPE=Debug
+              "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-sanitize=signed-integer-overflow"
+    env:
+      SDL_AUDIODRIVER: dummy
+      SDL_VIDEODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++ cmake ninja-build libsdl2-dev
+      - name: Configure
+        run: cmake -S . -B build/ci -G Ninja ${{ matrix.flags }}
+      - name: Build
+        run: cmake --build build/ci
+      - name: Test
+        run: ctest --test-dir build/ci --output-on-failure
+
+  vendor:
+    name: Vendored code unchanged
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/verify_vendor.sh
+
+  device:
+    name: Device build (Linux aarch64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, test and check symbols
+        run: scripts/build_device.sh --out "$RUNNER_TEMP/device-build"
+      - name: Package
+        run: scripts/package_port.sh --from "$RUNNER_TEMP/device-build" --out "$RUNNER_TEMP/dist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AudreyBrick-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/dist/AudreyBrick-*.zip
+            ${{ runner.temp }}/dist/AudreyBrick-*.sha256
+          if-no-files-found: error

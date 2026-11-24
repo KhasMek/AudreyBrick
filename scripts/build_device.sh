@@ -105,7 +105,8 @@ run_container() { # <mode>
 if [ "$CHECK_ONLY" -eq 0 ]; then
     # The version: git describe on the host (read-only; the container has no git).
     # GIT_OPTIONAL_LOCKS=0: git describe must not refresh (write) the index.
-    AB_VERSION="$(GIT_OPTIONAL_LOCKS=0 git -C "$REPO_ROOT" describe --always --dirty 2>/dev/null || echo unknown)"
+    # A release build names its version itself (AUDREY_RELEASE_VERSION, the tag).
+    AB_VERSION="${AUDREY_RELEASE_VERSION:-$(GIT_OPTIONAL_LOCKS=0 git -C "$REPO_ROOT" describe --always --dirty 2>/dev/null || echo unknown)}"
     AB_VERSION="$(printf '%s' "$AB_VERSION" | tr -c 'A-Za-z0-9._+-' '_')"
     AB_BUILD_DATE="$(date -u '+%Y-%m-%d %H:%M UTC')"
     export AB_VERSION AB_BUILD_DATE
