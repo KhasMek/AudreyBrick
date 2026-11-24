@@ -82,7 +82,7 @@ done
     echo "  ($FROM/SHA256SUMS); refused. Run scripts/build_device.sh again." >&2
     exit 1
 }
-VERSION="$(head -n 1 "$FROM/VERSION" | tr -c 'A-Za-z0-9._+-\n' '_')"
+VERSION="$(head -n 1 "$FROM/VERSION" | tr -c 'A-Za-z0-9._+\n-' '_')"
 [ -n "$VERSION" ] || VERSION=unknown
 
 mkdir -p "$OUT"
