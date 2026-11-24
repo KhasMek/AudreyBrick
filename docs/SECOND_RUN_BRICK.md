@@ -1,5 +1,7 @@
 # Second run on the Brick
 
+> **Note added 2026-11-23 (PRESET-C):** packages from PRESET-C on keep the user's data (logs, run counter, `input/`, `recordings/`, `presets/`) in `/userdata/saves/audreybrick/` (on the SD card: `saves/audreybrick/`), no longer in `roms/ports/audreybrick/data/`. An old `roms/ports/audreybrick/data/` is not moved automatically: the launcher leaves it untouched and only notes in `stdout.log` that it still holds files (PRESET-D); move its files by hand. Replacing the `audreybrick` folder no longer deletes anything in `saves/audreybrick/`. The steps below are kept as written: for a newer package, read every `roms/ports/audreybrick/data/` (or `data/`) as `saves/audreybrick/`.
+
 > **Historical.** This run happened on 2026-11-18; results are in `PLATFORM_NOTES.md` section 12. Quitting is now **Menu + Start**, not Select + Start. The current checklist is `THIRD_RUN_BRICK.md`.
 
 For the human. Written 2026-11-18 for the package built by `scripts/make_port.sh` after M3-B. **Not yet run.** The first run's results are in `PLATFORM_NOTES.md` section 11.

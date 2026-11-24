@@ -20,6 +20,7 @@
 
 #include "app/Buttons.h"
 #include "app/ModView.h"
+#include "app/PresetView.h"
 #include "app/Tabs.h"
 #include "core/ControlSource.h"
 #include "input/InputView.h"
@@ -117,6 +118,11 @@ struct UiSnapshot
     // (app/ModView.h). With every slot's target None or depth 0 (the default)
     // no other tab shows anything of it.
     UiModView mod;
+
+    // --- Presets (PRESET-B) --------------------------------------------------------------------
+    // The PRESET tab's list, cursor, mark, hold and message line, and the preset
+    // message for the header on the other tabs (app/PresetView.h).
+    UiPresetView preset;
 };
 
 } // namespace audreybrick

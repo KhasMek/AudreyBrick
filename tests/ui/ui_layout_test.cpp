@@ -191,6 +191,9 @@ const char* kindName(PanelKind k)
         case PanelKind::InputWarning: return "input warning";
         case PanelKind::ModRow: return "mod row";
         case PanelKind::ModSlot: return "mod slot";
+        case PanelKind::PresetHeader: return "preset header";
+        case PanelKind::PresetRow: return "preset row";
+        case PanelKind::PresetBottom: return "preset bottom";
     }
     return "?";
 }
@@ -349,7 +352,8 @@ void checkStructure(const std::string& n, const DrawList& d)
             }
         for(std::size_t r = 0; r < d.rectCount; ++r)
             if((d.rects[r].tag == RectTag::Bar || d.rects[r].tag == RectTag::UnityMark ||
-                d.rects[r].tag == RectTag::GainUnityMark || d.rects[r].tag == RectTag::ModMarker) &&
+                d.rects[r].tag == RectTag::GainUnityMark || d.rects[r].tag == RectTag::ModMarker ||
+                d.rects[r].tag == RectTag::HoldBar) &&
                d.rects[r].w > 0 && d.rects[r].h > 0 &&
                layer(a.panel) == layer(d.rects[r].panel) && intersects(box(a), box(d.rects[r])))
             {
@@ -547,23 +551,85 @@ const TextItem* textIn(const DrawList& d, int panel, const char* text, TextRole 
 void checkStrings(const std::string& n, const UiSnapshot& s, const DrawList& d)
 {
     std::vector<std::string> want;
-    for(std::size_t i = 0; i < kTabCount; ++i)
+    // PRESET-B: the tabs the scrolling bar shows (tabBarSpan), and no others.
+    const TabSpan span = tabBarSpan(s.tab);
+    for(int i = span.first; i <= span.last; ++i)
         want.push_back(tabSpec(static_cast<Tab>(i)).name);
     for(std::size_t k = 0; k < kKnobCount; ++k)
         want.push_back(stripValue(s, static_cast<Knob>(k)));
-    for(const char* w : {"FEEDBACK", "SWITCH", "TAB", "MAX", "FINE", "LATCH", "RESET", "CPU", "CLIP", "L", "R", "OUT",
-                         "0 dB"})
+    for(const char* w : {"FEEDBACK", "SWITCH", "TAB", "MAX", "FINE", "LATCH", "CPU", "CLIP", "L", "R", "OUT", "0 dB"})
         want.push_back(w);
-    want.push_back(s.tab == Tab::Mod ? "SLOT" : "SHIFT"); // MOD-D: the X cell on MOD
-    // MOD-D review: the X cell reads SLOT on MOD (X picks the slot), SHIFT elsewhere.
+    const bool preset = s.tab == Tab::Preset;
+    want.push_back(preset ? "DELETE" : "RESET"); // PRESET-B: the Y cell on PRESET
+    want.push_back(s.tab == Tab::Mod ? "SLOT" : (preset ? "OVERWRITE" : "SHIFT")); // MOD-D / PRESET-B: the X cell
+    // MOD-D review: the X cell reads SLOT on MOD (X picks the slot), SHIFT
+    // elsewhere; PRESET-B: OVERWRITE on PRESET.
     {
-        const int   p    = findPanel(d, PanelKind::FooterCell, kNoKnobIndex, 6);
-        const bool  mod  = s.tab == Tab::Mod;
-        const char* label = mod ? "SLOT" : "SHIFT";
-        const char* other = mod ? "SHIFT" : "SLOT";
-        check(p >= 0 && textIn(d, p, label, TextRole::Footer) != nullptr &&
-                  textIn(d, p, other, TextRole::Footer) == nullptr,
+        const int   p     = findPanel(d, PanelKind::FooterCell, kNoKnobIndex, 6);
+        const bool  mod   = s.tab == Tab::Mod;
+        const char* label = mod ? "SLOT" : (preset ? "OVERWRITE" : "SHIFT");
+        int         others = 0;
+        for(const char* o : {"SLOT", "SHIFT", "OVERWRITE"})
+            others += std::strcmp(o, label) != 0 && textIn(d, p, o, TextRole::Footer) != nullptr ? 1 : 0;
+        check(p >= 0 && textIn(d, p, label, TextRole::Footer) != nullptr && others == 0,
               n + "the X footer cell reads " + label);
+    }
+    // PRESET-B review: on PRESET only right (held) acts with X / Y, so their
+    // footer cells show the d-pad icon with only its right arm lit (the other
+    // three arms in another colour; a lone right arrow is the symbol on the
+    // Brick's Start button); elsewhere X has no arrow and Y the d-pad (four
+    // arrows of one colour). Everything inside the cell.
+    for(int cell : {6, 7})
+    {
+        const int p = findPanel(d, PanelKind::FooterCell, kNoKnobIndex, cell);
+        if(p < 0)
+        {
+            check(false, n + "footer cell " + std::to_string(cell) + " exists");
+            continue;
+        }
+        const PanelItem& pan = d.panels[static_cast<std::size_t>(p)];
+        bool             sameColor(const Color& a, const Color& b); // defined below
+        int              tris = 0, rights = 0, outside = 0, likeRight = 0;
+        const TriItem*   rightTri = nullptr;
+        for(std::size_t i = 0; i < d.triCount; ++i)
+            if(d.tris[i].panel == p && d.tris[i].dir == ArrowDir::Right)
+                rightTri = &d.tris[i];
+        for(std::size_t i = 0; i < d.triCount; ++i)
+            if(d.tris[i].panel == p)
+            {
+                const TriItem& t = d.tris[i];
+                ++tris;
+                rights += t.dir == ArrowDir::Right ? 1 : 0;
+                likeRight += rightTri != nullptr && sameColor(t.color, rightTri->color) ? 1 : 0;
+                outside += t.x < pan.x || t.x + t.size > pan.x + pan.w || t.y < pan.y || t.y + t.size > pan.y + pan.h;
+            }
+        for(std::size_t i = 0; i < d.textCount; ++i)
+            if(d.texts[i].panel == p)
+            {
+                const TextItem& t = d.texts[i];
+                outside += t.x + static_cast<int>(std::strlen(t.text)) * 8 * t.scale > pan.x + pan.w - 4 ? 1 : 0;
+            }
+        const int  wantTris = preset || cell == 7 ? 4 : 0;
+        const bool ok       = tris == wantTris && (wantTris == 0 || rights == 1) && outside == 0 &&
+                              (wantTris == 0 || likeRight == (preset ? 1 : 4));
+        check(ok, n + (cell == 6 ? "the X" : "the Y") + " footer cell shows " +
+                      (preset ? "the d-pad with only the right arm lit" : (cell == 7 ? "the d-pad" : "no arrow")) +
+                      ", inside the cell (" + std::to_string(tris) + " triangle(s), " + std::to_string(outside) +
+                      " outside)");
+    }
+    {
+        int shownTabs = 0, wrongTabs = 0;
+        for(std::size_t i = 0; i < d.textCount; ++i)
+            if(d.texts[i].role == TextRole::TabName)
+            {
+                ++shownTabs;
+                bool inSpan = false;
+                for(int t = span.first; t <= span.last; ++t)
+                    inSpan = inSpan || std::strcmp(d.texts[i].text, tabSpec(static_cast<Tab>(t)).name) == 0;
+                wrongTabs += inSpan ? 0 : 1;
+            }
+        check(shownTabs == span.last - span.first + 1 && wrongTabs == 0,
+              n + "the tab bar shows exactly the tabs of tabBarSpan (" + std::to_string(shownTabs) + ")");
     }
     // MOD-B: the switch box says ON also while only the modulation holds it on.
     const bool modOn = !s.switchOn && s.mod.switchRequested && modTargetActive(s.mod, ModTarget::DelaySwitch);
@@ -1362,9 +1428,12 @@ void checkRecord(const std::string& n, const UiSnapshot& s, const DrawList& d)
     for(std::size_t i = 0; i < d.textCount; ++i)
         if(d.texts[i].role == TextRole::RecStatus)
             rec.push_back(&d.texts[i]);
-    if(s.record.show == RecordShow::None)
+    // PRESET-B: on the other tabs a preset message may take the readout's place.
+    const bool presetWins = s.tab != Tab::Preset && s.preset.headerWins && s.preset.header != PresetMessageView::None &&
+                            s.preset.headerText[0] != '\0';
+    if(s.record.show == RecordShow::None || presetWins)
     {
-        check(rec.empty(), n + "REC: no readout");
+        check(rec.empty(), n + (presetWins ? "REC: the readout gives way to the preset message" : "REC: no readout"));
         return;
     }
     char want[64];
@@ -1697,6 +1766,158 @@ void checkMod(const std::string& n, const UiSnapshot& s, const DrawList& d)
     check(markers >= activeKnobs * 2 - (boundCount(s.tab, m)), n + "every modulated knob's bars carry the marker");
 }
 
+// --- PRESET-B: the PRESET tab and the header message ------------------------------------------
+const TextItem* findText(const DrawList& d, TextRole role, const char* prefix = "")
+{
+    for(std::size_t i = 0; i < d.textCount; ++i)
+        if(d.texts[i].role == role && std::strncmp(d.texts[i].text, prefix, std::strlen(prefix)) == 0)
+            return &d.texts[i];
+    return nullptr;
+}
+
+void checkPreset(const std::string& n, const UiSnapshot& s, const DrawList& d)
+{
+    const UiPresetView& p = s.preset;
+    if(s.tab != Tab::Preset)
+    {
+        // The header on the other tabs: the preset message when the app says it wins.
+        const bool      want = p.headerWins && p.header != PresetMessageView::None && p.headerText[0] != '\0';
+        const TextItem* t    = findText(d, TextRole::PresetStatus);
+        bool            ok   = (t != nullptr) == want;
+        if(want && t != nullptr)
+            ok = t->x == 20 && t->y == 158 && t->scale == 2 && std::strlen(t->text) <= 30 &&
+                 std::strncmp(t->text, p.headerText, std::strlen(t->text) >= 2 ? std::strlen(t->text) - 2 : 0) == 0 &&
+                 sameColor(t->color, p.header == PresetMessageView::Bad ? palette::clip : palette::switchOn) &&
+                 findText(d, TextRole::RecStatus) == nullptr;
+        check(ok, n + (want ? "the header shows the preset message (red failure / green success) instead of the REC "
+                              "readout, cut to 30 characters"
+                            : "no preset message in the header"));
+        int presetItems = 0;
+        for(std::size_t i = 0; i < d.panelCount; ++i)
+            presetItems += d.panels[i].kind == PanelKind::PresetRow || d.panels[i].kind == PanelKind::PresetHeader ||
+                                   d.panels[i].kind == PanelKind::PresetBottom
+                               ? 1
+                               : 0;
+        check(presetItems == 0, n + "no PRESET tab panels on another tab");
+        return;
+    }
+    // On PRESET: no knob rows, the header line, the rows, the bottom panel, all in the tab's area.
+    int rows = 0, other = 0, outside = 0;
+    for(std::size_t i = 0; i < d.panelCount; ++i)
+    {
+        const PanelItem& q = d.panels[i];
+        if(q.kind == PanelKind::Row || q.kind == PanelKind::ModRow || q.kind == PanelKind::InputRow)
+            ++other;
+        if(q.kind == PanelKind::PresetRow || q.kind == PanelKind::PresetHeader || q.kind == PanelKind::PresetBottom)
+        {
+            rows += q.kind == PanelKind::PresetRow && q.h == 38 ? 1 : 0;
+            outside += q.x < 8 || q.x + q.w > 872 || q.y < 184 || q.y + q.h > 472 ? 1 : 0;
+        }
+    }
+    check(other == 0 && rows == p.rows && outside == 0 && findPanel(d, PanelKind::PresetHeader) >= 0 &&
+              findPanel(d, PanelKind::PresetBottom) >= 0,
+          n + "PRESET: the title line, " + std::to_string(p.rows) + " list row(s) and the bottom panel inside x 8..872, "
+              "y 184..472; no knob rows");
+    // The cursor row is the active one; SAVE NEW is drawn when item 0 is in the window.
+    const int cur = findPanel(d, PanelKind::PresetRow, kNoKnobIndex, p.cursor - p.first);
+    check(cur >= 0 && d.panels[static_cast<std::size_t>(cur)].active, n + "the cursor's row is the active one");
+    check((findText(d, TextRole::PresetText, "+ SAVE NEW") != nullptr) == (p.first == 0), n + "SAVE NEW on top");
+    // Names: cut with ".." to fit before the mark / the scroll arrows.
+    int badNames = 0;
+    for(int i = 0; i < p.rows; ++i)
+    {
+        const int item = p.first + i;
+        if(item == 0 || p.names[i][0] == '\0')
+            continue;
+        const int row = findPanel(d, PanelKind::PresetRow, kNoKnobIndex, i);
+        const TextItem* t = nullptr;
+        for(std::size_t k = 0; k < d.textCount; ++k)
+            if(d.texts[k].panel == row && d.texts[k].role == TextRole::PresetText && d.texts[k].scale == 4 &&
+               d.texts[k].x == 64)
+                t = &d.texts[k];
+        const std::size_t len = std::strlen(p.names[i]);
+        const bool cut = t != nullptr && std::strlen(t->text) < len;
+        if(t == nullptr || t->x + t->w > (item == p.marked ? 828 - 48 : 840) ||
+           (cut ? (std::strncmp(t->text + std::strlen(t->text) - 2, "..", 2) != 0 ||
+                   std::strncmp(t->text, p.names[i], std::strlen(t->text) - 2) != 0)
+                : std::strcmp(t->text, p.names[i]) != 0))
+        {
+            ++badNames;
+            std::printf("  preset name %d \"%s\" drawn as \"%s\"\n", item, p.names[i], t ? t->text : "(none)");
+        }
+    }
+    check(badNames == 0, n + "every name in the window drawn at 32 px, whole or cut cleanly with \"..\"");
+    const bool markShown = p.marked >= p.first && p.marked < p.first + p.rows && p.marked > 0;
+    check((findText(d, TextRole::PresetText, "LAST") != nullptr) == markShown, n + "the LAST mark on the marked preset");
+    // Scroll arrows.
+    int up = 0, down = 0;
+    for(std::size_t i = 0; i < d.triCount; ++i)
+    {
+        const TriItem& t = d.tris[i];
+        if(t.x != 840)
+            continue;
+        up += t.dir == ArrowDir::Up ? 1 : 0;
+        down += t.dir == ArrowDir::Down ? 1 : 0;
+    }
+    check(up == (p.first > 0 ? 1 : 0) && down == (p.first + p.rows < p.count + 1 ? 1 : 0),
+          n + "scroll arrows exactly where items are hidden");
+    // The count.
+    if(p.folder == PresetFolderView::Ok)
+    {
+        char want[48];
+        if(p.total > p.count)
+            std::snprintf(want, sizeof want, "%d PRESETS, FIRST %d SHOWN", p.total, p.count);
+        else
+            std::snprintf(want, sizeof want, "%d PRESET%s", p.count, p.count == 1 ? "" : "S");
+        check(hasText(d, want), n + "the count: " + want);
+    }
+    // The empty / folder states.
+    if(p.count == 0)
+    {
+        const char* line = p.folder == PresetFolderView::NotSet      ? "NO PRESET FOLDER SET"
+                           : p.folder == PresetFolderView::Missing    ? "PRESET FOLDER NOT FOUND"
+                           : p.folder == PresetFolderView::Unreadable ? "CANNOT READ THE PRESET FOLDER"
+                                                                      : "NO PRESETS YET";
+        check(hasText(d, line), n + "the empty state says " + line);
+    }
+    // The hold bar, or the message and the hints.
+    const RectItem* hold = findTag(d, RectTag::HoldBar);
+    if(p.hold != PresetHoldView::None)
+    {
+        const char* verb  = p.hold == PresetHoldView::Delete ? "DELETE " : "OVERWRITE ";
+        const TextItem* t = findText(d, TextRole::PresetText, verb);
+        const int       w = static_cast<int>(std::lround(p.holdProgress * (864 - 24)));
+        check(hold != nullptr && hold->w == w && hold->h == 14 &&
+                  sameColor(hold->color, p.hold == PresetHoldView::Delete ? palette::clip : palette::feedback) &&
+                  t != nullptr && t->scale == 3 && std::strstr(t->text, p.holdName) != nullptr &&
+                  findText(d, TextRole::PresetMessage) == nullptr,
+              n + "the hold: \"" + verb + p.holdName + "\" at 24 px and a 14 px bar filled to the progress");
+    }
+    else
+    {
+        check(hold == nullptr, n + "no hold bar without a hold");
+        const TextItem* m = findText(d, TextRole::PresetMessage);
+        if(p.message != PresetMessageView::None)
+        {
+            const std::size_t len = std::strlen(p.messageText);
+            check(m != nullptr && (len <= 34 ? m->scale == 3 && std::strcmp(m->text, p.messageText) == 0
+                                             : m->scale == 2 && std::strlen(m->text) <= 47 &&
+                                               (std::strlen(m->text) == len ||
+                                                std::strcmp(m->text + std::strlen(m->text) - 2, "..") == 0)) &&
+                      sameColor(m->color, p.message == PresetMessageView::Bad ? palette::bg : palette::switchOn),
+                  n + "the message line: \"" + p.messageText + "\" (24 px when it fits, else 16 px; a failure in "
+                      "inverse video)");
+        }
+        else
+        {
+            check(m == nullptr || (p.busy && std::strcmp(m->text, "SAVING..") == 0), n + "no message line");
+        }
+        check(hasText(d, p.cursor == 0 ? "SAVE NEW" : "LOAD") &&
+                  (p.cursor == 0 || (hasText(d, "HOLD: OVERWRITE") && hasText(d, "HOLD: DELETE"))),
+              n + "the hints say what right, X and Y do here");
+    }
+}
+
 void checkSnapshot(const char* name, const UiSnapshot& s, DrawList& d)
 {
     const MeterView m = uitest::firstFrameMeters(s);
@@ -1711,6 +1932,7 @@ void checkSnapshot(const char* name, const UiSnapshot& s, DrawList& d)
     checkPopup(n, s, d);
     checkRecord(n, s, d);
     checkMod(n, s, d);
+    checkPreset(n, s, d);
 }
 
 // --- Feedback band ----------------------------------------------------------------------------
@@ -2091,20 +2313,84 @@ int main()
                   "at the bottom of the meter panel");
     }
 
-    // M2b-A: INPUT after OUT; MOD-B: seven tabs, MOD last; each name inside its
-    // own tab box, none touching.
+    // M2b-A: INPUT after OUT; MOD-B: MOD after INPUT. PRESET-B: eight tabs,
+    // PRESET last; they no longer fit, so the bar scrolls: for every tab
+    // selected, the bar shows a run of whole tabs in order that holds the
+    // selected tab and both its neighbours (at the ends of the order the first
+    // or last tab sits at the bar's edge, x 76 or 952), names at 24 px at least
+    // 16 px apart, inside x 76..952, the selected one in inverse video, and a
+    // marker (a small arrow pointing outwards in the tab bar) exactly at the
+    // ends where tabs are hidden.
     {
-        buildLayout(uitest::inputOffSnapshot(), MeterView{}, *d);
-        std::vector<const TextItem*> names;
-        for(std::size_t i = 0; i < d->textCount; ++i)
-            if(d->texts[i].role == TextRole::TabName)
-                names.push_back(&d->texts[i]);
-        bool ordered = names.size() == kTabCount && std::strcmp(names.back()->text, "MOD") == 0 &&
-                       std::strcmp(names[names.size() - 2]->text, "INPUT") == 0;
-        for(std::size_t i = 1; ordered && i < names.size(); ++i)
-            ordered = names[i]->x >= names[i - 1]->x + names[i - 1]->w + 16 && names[i]->scale == 3;
-        check(ordered && kTabCount == 7,
-              "tab bar: seven tabs at 24 px, INPUT then MOD last, at least 16 px between names");
+        check(kTabCount == 8 && std::strcmp(tabSpec(Tab::Preset).name, "PRESET") == 0 &&
+                  static_cast<std::size_t>(Tab::Preset) == kTabCount - 1 && Tab::Mod < Tab::Preset &&
+                  Tab::Input < Tab::Mod,
+              "eight tabs: ... INPUT, MOD, PRESET last");
+        for(std::size_t ti = 0; ti < kTabCount; ++ti)
+        {
+            const Tab   sel = static_cast<Tab>(ti);
+            UiSnapshot  s   = uitest::inputOffSnapshot();
+            s.tab           = sel;
+            buildLayout(s, MeterView{}, *d);
+            const TabSpan span = tabBarSpan(sel);
+            const int     si   = static_cast<int>(ti);
+            const int     n    = static_cast<int>(kTabCount);
+            std::vector<const TextItem*> names;
+            for(std::size_t i = 0; i < d->textCount; ++i)
+                if(d->texts[i].role == TextRole::TabName)
+                    names.push_back(&d->texts[i]);
+            bool ok = static_cast<int>(names.size()) == span.last - span.first + 1 && span.first <= si &&
+                      si <= span.last && span.first <= (si > 0 ? si - 1 : 0) &&
+                      span.last >= (si < n - 1 ? si + 1 : n - 1) && span.last - span.first + 1 < n;
+            for(std::size_t i = 0; ok && i < names.size(); ++i)
+            {
+                const Tab t = static_cast<Tab>(span.first + static_cast<int>(i));
+                ok = std::strcmp(names[i]->text, tabSpec(t).name) == 0 && names[i]->scale == 3 && names[i]->x >= 76 &&
+                     names[i]->x + names[i]->w <= 952 &&
+                     (i == 0 || names[i]->x >= names[i - 1]->x + names[i - 1]->w + 16) &&
+                     sameColor(names[i]->color, t == sel ? palette::bg : palette::dim);
+            }
+            // The tab boxes: the selected tab's accent fill, and the first and
+            // last boxes' edges.
+            const int bar = findPanel(*d, PanelKind::TabBar);
+            int       boxL = 10000, boxR = -1;
+            for(std::size_t i = 0; i < d->rectCount; ++i)
+            {
+                const RectItem& r = d->rects[i];
+                if(r.panel != bar || r.thickness != 0 || r.h != 48 || r.x < 76 || r.x + r.w > 952)
+                    continue;
+                boxL = std::min(boxL, r.x);
+                boxR = std::max(boxR, r.x + r.w);
+            }
+            const bool hideL = span.first > 0, hideR = span.last < n - 1;
+            ok = ok && (hideL ? boxL >= 76 + 20 : boxL == 76) && (hideR ? boxR <= 952 - 20 : boxR == 952);
+            int markL = 0, markR = 0;
+            for(std::size_t i = 0; i < d->triCount; ++i)
+            {
+                const TriItem& t = d->tris[i];
+                if(t.panel != bar)
+                    continue;
+                markL += t.dir == ArrowDir::Left && t.x >= 76 && t.x + t.size <= 96 ? 1 : 0;
+                markR += t.dir == ArrowDir::Right && t.x >= 932 && t.x + t.size <= 952 ? 1 : 0;
+            }
+            ok = ok && markL == (hideL ? 1 : 0) && markR == (hideR ? 1 : 0);
+            std::string shown;
+            for(const TextItem* t : names)
+                shown += std::string(shown.empty() ? "" : " ") + t->text;
+            check(ok, std::string("tab bar with ") + tabSpec(sel).name + " selected: " + shown +
+                          (hideL ? " (marker left)" : "") + (hideR ? " (marker right)" : "") +
+                          "; the selected tab and its neighbours shown, whole tabs in order, at the bar's edge at the "
+                          "ends");
+        }
+        // Stable: the same tab always gives the same run.
+        bool stable = true;
+        for(std::size_t ti = 0; ti < kTabCount; ++ti)
+        {
+            const TabSpan a = tabBarSpan(static_cast<Tab>(ti)), b = tabBarSpan(static_cast<Tab>(ti));
+            stable = stable && a.first == b.first && a.last == b.last;
+        }
+        check(stable && tabBarSpan(Tab::Loop).first == 0 && tabBarSpan(Tab::Preset).last == static_cast<int>(kTabCount) - 1,
+              "tabBarSpan is a function of the tab alone; LOOP starts at the left edge, PRESET ends at the right");
     }
 
     checkFeedbackBand(*d);

@@ -39,7 +39,9 @@ if(AB_HAVE_SDL)
     )
     # M2b-A: the input panel (InputController, src/input), which InputRouter feeds.
     # REC: the recorder, which App.cpp (the app and platform_app_test) owns.
-    target_link_libraries(audrey_app_sdl PUBLIC audrey_app_core audrey_platform_sdl audrey_input audrey_record)
+    # PRESET-B: the presets (the store and the PRESET tab's panel, audrey_preset).
+    target_link_libraries(audrey_app_sdl PUBLIC audrey_app_core audrey_platform_sdl audrey_input audrey_record
+                                                audrey_preset)
     # InputMap.h -> Buttons.h only; no DSP headers, but the same options as the app.
     target_compile_options(audrey_app_sdl PRIVATE ${AB_DSP_OPT_OPTIONS} ${AB_WARNING_OPTIONS})
 

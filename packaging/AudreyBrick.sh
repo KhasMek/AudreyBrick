@@ -10,24 +10,53 @@
 #   - finds its own folder (works from any working directory, with spaces in paths);
 #   - keeps SDL_GAMECONTROLLERCONFIG as KNULLI set it, and sets no SDL variable;
 #   - points LD_LIBRARY_PATH at audreybrick/libs.aarch64 (libaudrey_lgpl.so);
-#   - writes the logs of the current run to audreybrick/data/audreybrick.log (the
-#     app's diagnostic log) and audreybrick/data/stdout.log (this launcher's notes,
-#     the device state at start and everything the app prints);
+#   - chooses the DATA FOLDER, which holds everything the user owns (logs, run
+#     counter, input/, recordings/, presets/; PRESET-C):
+#       1. /userdata/saves/audreybrick (see AUDREY_SAVES_DIR), if it already is a
+#          writable folder, or if /userdata/saves is a writable folder and
+#          "audreybrick" can be created in it with mkdir. KNULLI creates
+#          /userdata/saves, and replacing the app folder on an update leaves it
+#          alone. /userdata/saves may be a link (it is followed); saves/audreybrick
+#          itself is never used if it is a link (a PROBLEM line);
+#       2. otherwise audreybrick/data inside the app folder (other firmwares, tests);
+#       3. for the logs only, if that cannot be written either: /tmp/audreybrick-data.
+#     stdout.log says which one and why ("launcher: data folder: ..."). When (2) is
+#     used although /userdata/saves/audreybrick exists, that is a PROBLEM line (and
+#     on stderr): what the run saves is then in audreybrick/data (it is not moved
+#     automatically; move it by hand);
+#   - when the data folder is not audreybrick/data, and audreybrick/data is a
+#     folder (not a link) holding anything (an older version kept its files
+#     there): writes one notice line to stdout.log and one to stderr, saying that
+#     its files are left untouched and can be moved by hand into the data folder
+#     (PRESET-D). This is only a look (one glob in this shell): the launcher never
+#     renames, moves, deletes or writes anything in audreybrick/data unless it is
+#     the data folder in use;
+#   - writes the logs of the current run to audreybrick.log (the app's diagnostic
+#     log) and stdout.log (this launcher's notes, the device state at start and
+#     everything the app prints) in the data folder;
 #   - keeps the last 8 runs: at start, the previous run's pair is renamed to
 #     audreybrick-NNNNNN-YYYYMMDD-HHMMSS.log and stdout-NNNNNN-YYYYMMDD-HHMMSS.log
-#     (NNNNNN = run number from data/run-counter, so the names stay unique and in
-#     order even when the clock is not set) and the oldest numbered pairs beyond 7
-#     are deleted. Only files with exactly those name patterns in its own data/
-#     folder are ever renamed or deleted;
-#   - creates audreybrick/data/input (the INPUT tab's FILE source lists the WAV
+#     (NNNNNN = run number from run-counter, so the names stay unique and in order
+#     even when the clock is not set) and the oldest numbered pairs beyond 7 are
+#     deleted. The rename never goes over an existing file: if that name is taken
+#     (for example by a log copied in by hand), the first free one of
+#     <name>-2.log, -3, ... is used. If the old audreybrick.log or stdout.log cannot
+#     be renamed at all, it is left alone and this run's log of that kind is written
+#     to a free audreybrick-<this run's id>.log (stdout-...) instead, with a PROBLEM
+#     line, so the app never empties an old log. Only the two current logs are
+#     renamed by this, and only files matching the patterns below deleted;
+#   - creates input/ in the data folder (the INPUT tab's FILE source lists the WAV
 #     files in it; M2b-A) with a plain mkdir -p, notes in stdout.log how many WAV
 #     files it holds, and passes its path to the app (--input-dir). A folder that
 #     cannot be created is not fatal: the app then shows no files;
-#   - creates audreybrick/data/recordings (Start + Y records the output there as
+#   - creates recordings/ in the data folder (Start + Y records the output there as
 #     rec-0001.wav, rec-0002.wav, ...; REC) the same way, notes in stdout.log how
 #     many recordings it holds, and passes its path to the app (--record-dir). A
 #     folder that cannot be created is not fatal: the app tries again when a
 #     recording starts and shows REC: CANNOT CREATE FILE if that fails too;
+#   - creates presets/ in the data folder the same way, notes how many *.json
+#     files it holds, and passes its path to the app (--preset-dir; PRESET-B and
+#     PRESET-C; see PASS_PRESET_DIR below);
 #   - keeps the device awake while the app runs (see AUDREY_KEEP_AWAKE);
 #   - makes the A, B, X and Y buttons match their labels (see AUDREY_SWAP_AB and
 #     AUDREY_SWAP_XY);
@@ -52,12 +81,27 @@
 # knulli-screenshot -> /userdata/screenshots) needs nothing from the port. No
 # pad-to-keyboard (.keys) file is shipped, so KNULLI's evmapy does not run.
 #
-# The only files this script ever deletes or writes, other than its own log files
-# in data/: the keep-awake file it created, and, only with AUDREY_GOVERNOR set, the
+# The only files this script ever deletes, empties or overwrites: the keep-awake
+# file it created (deleted at exit); only with AUDREY_GOVERNOR set, the
 # scaling_governor files of the CPU frequency policies whose governor it changed
-# (written back only while they still hold the governor this script set). It also
-# creates the folders data/input and data/recordings if they are missing, and never
-# touches what is in them.
+# (written back only while they still hold the governor this script set); and its
+# own files in the data folder: run-counter and latest-run (rewritten at every
+# start, only as regular files, never through a link) and the numbered logs
+# (deleted only by the pruning below). The two current logs are only renamed as
+# above, never over an existing file; stdout.log is only ever appended to, and the
+# app's audreybrick.log is opened anew only under a name that did not exist. It
+# also creates the data folder and its input/, recordings/ and presets/ if they are
+# missing, and never touches what is in those three. Nothing in an old
+# audreybrick/data that is not the data folder in use is ever renamed, moved,
+# deleted or written.
+# Log rotation deletes only files in the data folder itself whose names match
+# audreybrick-NNNNNN-*.log, stdout-NNNNNN-*.log, audreybrick-previous-NNNNNN.log or
+# stdout-previous-NNNNNN.log (N a digit). So a numbered log renamed by the rotation
+# to a -2, -3 name (audreybrick-NNNNNN-...-2.log), or one that the one-time move of
+# PRESET-C (since removed) brought in as audreybrick-NNNNNN-...-from-app-folder.log,
+# counts among the numbered logs and is pruned with them, oldest first; one named
+# ...-previous-NNNNNN-2.log or ...-previous-NNNNNN-from-app-folder.log is never
+# pruned (delete it by hand).
 #
 # Signals: before the app has started, TERM, INT and HUP only set a flag; the
 # script checks it at safe points and then stops through its normal exit (which
@@ -120,6 +164,10 @@
 #                      /sys/devices/system/cpu, by this script and by the app (which
 #                      inherits it), so the governor handling can be tested against
 #                      a fake tree. Normally unset.
+#   AUDREY_SAVES_DIR   a testing aid only: the folder used in place of
+#                      /userdata/saves (an absolute path, not inside the app
+#                      folder; anything else is ignored with a note). Normally
+#                      unset.
 #
 # Executable bit: FAT/exFAT cards, or copying through some tools, can lose it. If
 # audreybrick/audreybrick is executable it is started directly; otherwise through
@@ -135,7 +183,12 @@ AUDREY_LIVE_TARGET="${AUDREY_LIVE_TARGET:-2}"
 AUDREY_KEEP_AWAKE="${AUDREY_KEEP_AWAKE:-1}"
 AUDREY_GOVERNOR="${AUDREY_GOVERNOR:-keep}"
 
+# PRESET-B/C: 1 passes the presets folder to the app as --preset-dir (the app
+# accepts it since PRESET-B); 0 would only create and count the folder.
+PASS_PRESET_DIR=1
+
 SYSFS_CPU="${AUDREY_SYSFS_CPU:-/sys/devices/system/cpu}"
+SAVES_DEFAULT="/userdata/saves" # KNULLI's saves folder (made by its data initialisation)
 XBOX_LAYOUT_FLAG="/var/run/ports_xbox_layout.flag" # KNULLI's ports_hooks.sh
 KEEP_RUNS=8
 PAUSE_DIR="/var/run/battery-saver"
@@ -220,6 +273,35 @@ stop_point() { # <where>
     note "received SIG$STOP before the app started ($1); stopping"
     case "$STOP" in INT) exit 130 ;; HUP) exit 129 ;; *) exit 143 ;; esac
 }
+
+# --- Helpers for the log rotation ------------------------------------------------------
+FREE_NAME=""
+# The previous run's id in latest-run: run number, date, time (see printf -v id below).
+ID_PAT='[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]'
+# A file the launcher rewrites as its own (run-counter, latest-run): only a regular
+# file or nothing; never through a link, never into anything else.
+plain_or_none() { [ ! -L "$1" ] && { [ -f "$1" ] || [ ! -e "$1" ]; }; }
+
+# free_name <folder> <name>: sets FREE_NAME to the first of <name>, <stem>-2<.ext>,
+# <stem>-3<.ext>, ... -999 that does not exist in <folder> (not even as a dangling
+# link) and is at most 255 bytes long. Fails if none. No command substitution.
+free_name() {
+    local dir="$1" name="$2" stem ext cand n=1 LC_ALL=C
+    case "$name" in
+        ?*.*) stem="${name%.*}"; ext=".${name##*.}" ;;
+        *) stem="$name"; ext="" ;;
+    esac
+    while [ "$n" -le 999 ]; do
+        cand="$stem$ext"
+        [ "$n" -gt 1 ] && cand="$stem-$n$ext"
+        n=$((n + 1))
+        [ "${#cand}" -le 255 ] || continue # LC_ALL=C: bytes
+        if [ ! -e "$dir/$cand" ] && [ ! -L "$dir/$cand" ]; then FREE_NAME="$cand"; return 0; fi
+    done
+    FREE_NAME=""
+    return 1
+}
+
 # Everything below runs inside main(), called on the last line. The device's bash
 # (5.2.21) aborts ("reader_loop: bad jump ... Aborting") if a trap runs while it
 # is parsing a command substitution, and it parses a $(...) in double quotes again
@@ -246,36 +328,129 @@ main() {
     APP_DIR="$PORT_DIR/audreybrick"
     BIN="$APP_DIR/audreybrick"
     LIBS="$APP_DIR/libs.aarch64"
-    cd "$APP_DIR" 2>/dev/null || { problem "cannot enter $APP_DIR (copy the whole audreybrick folder next to AudreyBrick.sh)"; exit 1; }
+    cd -P "$APP_DIR" 2>/dev/null || { problem "cannot enter $APP_DIR (copy the whole audreybrick folder next to AudreyBrick.sh)"; exit 1; }
+    APP_REAL="$PWD" # the app folder with links resolved
 
-    # --- Logs: data/ (or /tmp/audreybrick-data if data/ cannot be written) ---------------
-    DATA="data"
+    # --- The data folder (PRESET-C): /userdata/saves/audreybrick, else data/ ------------
+    SAVES="$SAVES_DEFAULT"
+    saves_note=""
+    if [ -n "${AUDREY_SAVES_DIR:-}" ]; then
+        case "$AUDREY_SAVES_DIR" in
+            /*)
+                # Never inside the app folder (replacing the app folder would delete it).
+                saves_real="$AUDREY_SAVES_DIR"
+                if cd -P -- "$AUDREY_SAVES_DIR" 2>/dev/null; then saves_real="$PWD"; fi
+                cd -P -- "$APP_DIR" 2>/dev/null || { problem "cannot enter $APP_DIR again"; exit 1; }
+                # ("$saves_real/audreybrick" is the folder used: it must not be
+                # the app folder itself either.)
+                case "$saves_real/audreybrick/" in
+                    "$APP_REAL"/* | "$APP_DIR"/*)
+                        saves_note=" (AUDREY_SAVES_DIR '$AUDREY_SAVES_DIR' is inside the app folder; ignored)" ;;
+                    *) SAVES="$AUDREY_SAVES_DIR"; saves_note=" (AUDREY_SAVES_DIR, testing aid)" ;;
+                esac ;;
+            *) saves_note=" (AUDREY_SAVES_DIR '$AUDREY_SAVES_DIR' is not an absolute path; ignored)" ;;
+        esac
+    fi
+    SAVES_HOME="$SAVES/audreybrick"
+    OLD_DATA="$APP_DIR/data"
+    DATA_HOME=""
+    data_rule=""
+    data_problem=""
+    if [ -L "$SAVES_HOME" ]; then
+        data_problem="$SAVES_HOME is a link (a link is never used as the data folder); using $OLD_DATA instead$saves_note"
+    elif [ -d "$SAVES_HOME" ] && [ -w "$SAVES_HOME" ]; then
+        DATA_HOME="$SAVES_HOME"
+        data_rule="it exists and is writable$saves_note"
+    elif [ -e "$SAVES_HOME" ]; then
+        data_problem="$SAVES_HOME exists but is not a writable folder; using $OLD_DATA instead$saves_note"
+    elif [ ! -d "$SAVES" ]; then
+        if [ -e "$SAVES" ] || [ -L "$SAVES" ]; then
+            data_rule="$SAVES is not a folder$saves_note"
+        else
+            data_rule="$SAVES does not exist$saves_note"
+        fi
+    elif [ ! -w "$SAVES" ]; then
+        data_rule="$SAVES is not writable$saves_note"
+    elif mkdir -- "$SAVES_HOME" 2>/dev/null && [ -d "$SAVES_HOME" ] && [ -w "$SAVES_HOME" ]; then
+        DATA_HOME="$SAVES_HOME"
+        data_rule="created in $SAVES$saves_note"
+    else
+        data_problem="could not create $SAVES_HOME; using $OLD_DATA instead$saves_note"
+    fi
+    if [ -z "$DATA_HOME" ]; then
+        DATA_HOME="$OLD_DATA"
+        [ -n "$data_rule" ] && data_rule="the app folder's data/: $data_rule"
+        # The choice flipped for this start although KNULLI's folder is there: say so loudly.
+        if [ -z "$data_problem" ] && { [ -e "$SAVES_DEFAULT/audreybrick" ] || [ -L "$SAVES_DEFAULT/audreybrick" ]; }; then
+            data_problem="$OLD_DATA is used for this start ($data_rule), although $SAVES_DEFAULT/audreybrick exists: what this run saves is in $OLD_DATA and is not moved automatically (move it to $SAVES_DEFAULT/audreybrick by hand)"
+        fi
+    fi
+    # PRESET-D: an older version's data/ in the app folder is never moved, renamed,
+    # deleted or written. If it is not the data folder in use and holds anything
+    # (hidden names too), one notice says so after the logs are set up. Only a glob
+    # in this shell (no process); a link is not followed (no notice).
+    old_data_notice=0
+    if [ "$DATA_HOME" != "$OLD_DATA" ] && [ -d "$OLD_DATA" ] && [ ! -L "$OLD_DATA" ]; then
+        shopt -s nullglob dotglob
+        for e in "$OLD_DATA"/*; do old_data_notice=1; break; done
+        shopt -u nullglob dotglob
+    fi
+
+    # --- Logs: in the data folder (or /tmp/audreybrick-data if it cannot be written) -----
+    DATA="$DATA_HOME"
     fallback_reason=""
     if ! mkdir -p "$DATA" 2>/dev/null || [ ! -w "$DATA" ]; then
-        fallback_reason="$APP_DIR/data is not writable"
+        fallback_reason="$DATA_HOME is not writable"
         DATA="/tmp/audreybrick-data"
-        mkdir -p "$DATA" 2>/dev/null || { problem "cannot write logs to $APP_DIR/data or $DATA"; exit 1; }
+        mkdir -p "$DATA" 2>/dev/null || { problem "cannot write logs to $DATA_HOME or $DATA"; exit 1; }
     fi
-    LOG="$DATA/audreybrick.log"
 
-    # Run number (6 digits) and time stamp of this run.
+    # Run number (6 digits) and time stamp of this run. run-counter and latest-run are
+    # this script's own files: rewritten only as a regular file (or created), never
+    # through a link.
     run=0
-    if [ -r "$DATA/run-counter" ]; then read -r run < "$DATA/run-counter" 2>/dev/null || run=0; fi
-    case "$run" in '' | *[!0-9]*) run=0 ;; esac
+    if [ -f "$DATA/run-counter" ] && [ -r "$DATA/run-counter" ]; then read -r run < "$DATA/run-counter" 2>/dev/null || run=0; fi
+    case "$run" in '' | *[!0-9]* | ??????????*) run=0 ;; esac
     run=$(( 10#$run + 1 ))
-    echo "$run" > "$DATA/run-counter" 2>/dev/null
+    plain_or_none "$DATA/run-counter" && echo "$run" > "$DATA/run-counter" 2>/dev/null
     stamp=""
     date '+%Y%m%d-%H%M%S' 2>/dev/null | read -r stamp # lastpipe: read runs in this shell
     case "$stamp" in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]) ;; *) stamp="00000000-000000" ;; esac
     printf -v id '%06d-%s' "$run" "$stamp"
 
-    # Archive the previous run's pair under its own id (from data/latest-run), then prune.
+    # Archive the previous run's pair under its own id (from latest-run), then prune.
+    # Never over an existing file: if <kind>-<id>.log is taken (for example by a log
+    # copied in by hand), the first free <kind>-<id>-2.log, -3, ... is used (mv -n
+    # as well, in case a file of that name appears in between).
+    rot_notes=()
     prev=""
-    if [ -r "$DATA/latest-run" ]; then read -r prev < "$DATA/latest-run" 2>/dev/null || prev=""; fi
-    case "$prev" in [0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]*) ;; *) printf -v prev 'previous-%06d' $((run - 1)) ;; esac
-    [ -f "$LOG" ] && mv -f "$LOG" "$DATA/audreybrick-$prev.log"
-    [ -f "$DATA/stdout.log" ] && mv -f "$DATA/stdout.log" "$DATA/stdout-$prev.log"
-    echo "$id" > "$DATA/latest-run" 2>/dev/null
+    if [ -f "$DATA/latest-run" ] && [ -r "$DATA/latest-run" ]; then read -r prev < "$DATA/latest-run" 2>/dev/null || prev=""; fi
+    case "$prev" in $ID_PAT) ;; *) printf -v prev 'previous-%06d' $((run - 1)) ;; esac
+    for kind in audreybrick stdout; do
+        f="$DATA/$kind.log"
+        { [ -e "$f" ] || [ -L "$f" ]; } || continue
+        if free_name "$DATA" "$kind-$prev.log" && mv -n -T -- "$f" "$DATA/$FREE_NAME" 2>/dev/null \
+            && [ ! -e "$f" ] && [ ! -L "$f" ]; then
+            [ "$FREE_NAME" = "$kind-$prev.log" ] \
+                || rot_notes+=("log rotation: $kind-$prev.log exists already; the previous run's $kind.log is kept as $FREE_NAME")
+        else
+            rot_notes+=("PROBLEM: log rotation: $f could not be renamed to $kind-$prev.log or a free name like it; it is left as it is, and this run's $kind log gets another name")
+        fi
+    done
+    # This run's two logs: their usual names, or, if the old ones are still there (the
+    # app would empty audreybrick.log when it opens it), free names of this run's id.
+    LOG="$DATA/audreybrick.log"
+    if [ -e "$LOG" ] || [ -L "$LOG" ]; then
+        if free_name "$DATA" "audreybrick-$id.log"; then LOG="$DATA/$FREE_NAME"; else LOG="/tmp/audreybrick-$id-$$.log"; fi
+        rot_notes+=("PROBLEM: log rotation: this run's app log is $LOG")
+    fi
+    OUT="$DATA/stdout.log"
+    if [ -e "$OUT" ] || [ -L "$OUT" ]; then
+        if free_name "$DATA" "stdout-$id.log"; then OUT="$DATA/$FREE_NAME"; else OUT="/tmp/stdout-$id-$$.log"; fi
+        rot_notes+=("PROBLEM: log rotation: this run's stdout log is $OUT")
+    fi
+    plain_or_none "$DATA/latest-run" && echo "$id" > "$DATA/latest-run" 2>/dev/null
+    # Pruning: only files in the data folder whose names match these patterns.
     for kind in audreybrick stdout; do
         files=( "$DATA/$kind"-[0-9][0-9][0-9][0-9][0-9][0-9]-*.log "$DATA/$kind"-previous-[0-9][0-9][0-9][0-9][0-9][0-9].log )
         kept=()
@@ -283,22 +458,34 @@ main() {
         # Glob order is by run number (zero-padded); keep the newest KEEP_RUNS - 1.
         excess=$(( ${#kept[@]} - (KEEP_RUNS - 1) ))
         i=0
-        while [ "$i" -lt "$excess" ]; do rm -f "${kept[$i]}"; i=$((i + 1)); done
+        while [ "$i" -lt "$excess" ]; do rm -f -- "${kept[$i]}"; i=$((i + 1)); done
     done
 
-    OUT="$DATA/stdout.log"
-    : > "$OUT" 2>/dev/null || OUT=""
+    # Appended to, never emptied (it does not exist at this point, see above).
+    : >> "$OUT" 2>/dev/null || OUT=""
     when="date unknown"
     date '+%Y-%m-%d %H:%M:%S %z' 2>/dev/null | read -r when
     note "AudreyBrick run $run, ${when:-date unknown}"
     note "folder $APP_DIR"
+    if [ -n "$data_problem" ]; then
+        problem "data folder: $data_problem"
+    else
+        note "data folder: $DATA_HOME${data_rule:+ ($data_rule)}"
+    fi
+    if [ "$old_data_notice" -eq 1 ]; then
+        note "old data folder: $OLD_DATA holds files from an older version; they are left untouched (nothing there is moved or changed automatically). Look there before replacing the app folder, which deletes it. To keep recordings/ or input/ files, move them by hand into the same folders in $DATA_HOME, without overwriting files of the same name"
+        echo "AudreyBrick: files found in the old folder $OLD_DATA; left untouched; move them by hand into $DATA_HOME" >&2
+    fi
+    for line in ${rot_notes[@]+"${rot_notes[@]}"}; do
+        case "$line" in "PROBLEM: "*) problem "${line#PROBLEM: }" ;; *) note "$line" ;; esac
+    done
     [ -n "$fallback_reason" ] && problem "$fallback_reason; logs for this run are in $DATA (lost on reboot)"
     stop_point "after setting up the logs"
 
-    # --- Input folder (M2b-A): data/input next to the logs' usual place ------------------------
-    # Always $APP_DIR/data/input (also when the logs had to go to /tmp). No command
+    # --- Input folder (M2b-A): input/ in the data folder ----------------------------------------
+    # Always $DATA_HOME/input (also when the logs had to go to /tmp). No command
     # substitution: the WAV files are counted with a glob. Not fatal if it fails.
-    INPUT_DIR="$APP_DIR/data/input"
+    INPUT_DIR="$DATA_HOME/input"
     if mkdir -p "$INPUT_DIR" 2>/dev/null && [ -d "$INPUT_DIR" ]; then
         n_wav=0
         # Counted as the app lists them: regular files only, no links; the glob
@@ -309,15 +496,27 @@ main() {
         note "input folder: could not create $INPUT_DIR; the INPUT tab will show no files (not fatal)"
     fi
 
-    # --- Recordings folder (REC): data/recordings, next to data/input ---------------------------
-    # Always $APP_DIR/data/recordings. Counted with a glob (no command substitution).
-    RECORD_DIR="$APP_DIR/data/recordings"
+    # --- Recordings folder (REC): recordings/ in the data folder ---------------------------------
+    # Always $DATA_HOME/recordings. Counted with a glob (no command substitution).
+    RECORD_DIR="$DATA_HOME/recordings"
     if mkdir -p "$RECORD_DIR" 2>/dev/null && [ -d "$RECORD_DIR" ]; then
         n_rec=0
         for f in "$RECORD_DIR"/rec-*.[wW][aA][vV]; do [ -f "$f" ] && n_rec=$((n_rec + 1)); done
         note "recordings folder: $RECORD_DIR ($n_rec recording(s); Start + Y records into it)"
     else
         note "recordings folder: could not create $RECORD_DIR; the app tries again when a recording starts (not fatal)"
+    fi
+
+    # --- Presets folder (PRESET-C): presets/ in the data folder ---------------------------------
+    # Always $DATA_HOME/presets. Counted as the preset list shows them: regular
+    # *.json files (any case), not hidden. Not fatal if it fails.
+    PRESET_DIR="$DATA_HOME/presets"
+    if mkdir -p "$PRESET_DIR" 2>/dev/null && [ -d "$PRESET_DIR" ]; then
+        n_pre=0
+        for f in "$PRESET_DIR"/*.[jJ][sS][oO][nN]; do [ -f "$f" ] && n_pre=$((n_pre + 1)); done
+        note "presets folder: $PRESET_DIR ($n_pre preset file(s))"
+    else
+        note "presets folder: could not create $PRESET_DIR (not fatal)"
     fi
 
     # --- Checks ---------------------------------------------------------------------------
@@ -486,7 +685,7 @@ main() {
         done
         if have df; then echo "launcher: free space on the log folder: $(df -h "$DATA" 2>/dev/null | tail -n 1)"; else echo "launcher: df not found"; fi
         # REC: the data folder (recordings need 200 MiB free to start; they stop below 100 MiB).
-        if have df; then echo "launcher: free space on the data folder ($APP_DIR/data): $(df -h "$APP_DIR/data" 2>/dev/null | tail -n 1)"; fi
+        if have df; then echo "launcher: free space on the data folder ($DATA_HOME): $(df -h "$DATA_HOME" 2>/dev/null | tail -n 1)"; fi
         if [ -z "$TO" ]; then
             echo "launcher: audio server state skipped (no timeout)"
         elif have pactl; then
@@ -598,6 +797,8 @@ main() {
     # removes the pause file itself (--remove-on-exit) and restores the governors
     # (--restore-on-exit <file> <found> <set>, one per policy).
     args=(--fullscreen --exit-with-parent --buffer "$buffer" --live-target-buffers "$live_target" --log "$LOG" --input-dir "$INPUT_DIR" --record-dir "$RECORD_DIR")
+    # PRESET-B/C: the presets folder (PASS_PRESET_DIR near the top).
+    [ "$PASS_PRESET_DIR" -eq 1 ] && args+=(--preset-dir "$PRESET_DIR")
     [ "$swap_ab" -eq 1 ] && args+=(--swap-ab)
     [ "$swap_xy" -eq 1 ] && args+=(--swap-xy)
     [ "$PAUSE_MADE" -eq 1 ] && args+=(--remove-on-exit "$PAUSE_FILE")

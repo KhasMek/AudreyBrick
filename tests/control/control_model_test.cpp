@@ -341,17 +341,21 @@ int main()
     // ---- Tab change, wrapping, and tab change while a direction is held -------------------------
     {
         Rig r;
-        // M2b-A: INPUT after OUT; MOD-B: seven tabs, MOD after INPUT.
+        // M2b-A: INPUT after OUT; MOD-B: MOD after INPUT; PRESET-B: eight
+        // tabs, PRESET last.
         r.tap(Button::L1);
-        check(r.model.currentTab() == Tab::Mod, "L1 from LOOP wraps to MOD");
+        check(r.model.currentTab() == Tab::Preset, "L1 from LOOP wraps to PRESET");
+        r.tap(Button::L1);
+        check(r.model.currentTab() == Tab::Mod, "L1 from PRESET: MOD");
         r.tap(Button::L1);
         check(r.model.currentTab() == Tab::Input, "L1 from MOD: INPUT");
         r.tap(Button::R1);
         r.tap(Button::R1);
-        check(r.model.currentTab() == Tab::Loop, "R1 from INPUT: MOD, and from MOD it wraps to LOOP");
-        for(int i = 0; i < 7; ++i)
+        r.tap(Button::R1);
+        check(r.model.currentTab() == Tab::Loop, "R1 from INPUT: MOD, PRESET, and from PRESET it wraps to LOOP");
+        for(int i = 0; i < 8; ++i)
             r.tap(Button::R1);
-        check(r.model.currentTab() == Tab::Loop && kTabCount == 7, "seven R1 presses come back to LOOP");
+        check(r.model.currentTab() == Tab::Loop && kTabCount == 8, "eight R1 presses come back to LOOP");
 
         r.press(Button::DpadRight); // Frequency
         r.run(6000);

@@ -131,7 +131,7 @@ void ButtonControlSource::publish(const ControlFrame& f) noexcept
     storedFeedback_.store(static_cast<float>(value_[kFb]), std::memory_order_relaxed);
     switchOn_.store(f.delaySwitch, std::memory_order_relaxed);
     switchLatch_.store(latch_, std::memory_order_relaxed);
-    processed_.store(processedLocal_, std::memory_order_relaxed);
+    processed_.store(processedLocal_, std::memory_order_release); // last: see commandsProcessed()
 }
 
 } // namespace audreybrick

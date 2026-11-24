@@ -1,0 +1,51 @@
+# PRESET-B self-test (tests/preset/CMakeLists.txt, preset_selftest_tab): save, load,
+# save new, overwrite and delete, driven by buttons only, through the app with
+# --preset-dir. Expected at the end (preset_selftest_check.cmake checks it):
+#   preset-0001.json (Start + A on LOOP, Frequency 26/56) is the only file;
+#   preset-0002.json was saved, overwritten and deleted;
+#   Frequency back at 26/56 (the load), the stored feedback one R2 tap (0.5 dB).
+# LOOP: right twice (Frequency 24/56 -> 26/56).
+0.05  DpadRight down
+0.07  DpadRight up
+0.10  DpadRight down
+0.12  DpadRight up
+# Start + A on LOOP: preset-0001.json (Start first, then A: no MAX).
+0.30  Start     down
+0.32  A         down
+0.34  A         up
+0.36  Start     up
+# Right three times more (29/56): a different sound.
+0.50  DpadRight down
+0.52  DpadRight up
+0.55  DpadRight down
+0.57  DpadRight up
+0.60  DpadRight down
+0.62  DpadRight up
+# L1: PRESET (the last tab); the cursor is on preset-0001 (highlighted by its save).
+0.70  L1        down
+0.72  L1        up
+# Right: load preset-0001 (Frequency back to 26/56).
+0.90  DpadRight down
+0.92  DpadRight up
+# Up: SAVE NEW; right: preset-0002.json (highlighted).
+1.10  DpadUp    down
+1.12  DpadUp    up
+1.20  DpadRight down
+1.22  DpadRight up
+# R2 tap: the stored feedback +0.5 dB; X held, right held 1.2 s: overwrite preset-0002.
+1.40  R2        down
+1.42  R2        up
+1.60  X         down
+1.70  DpadRight down
+2.90  DpadRight up
+3.00  X         up
+# Y held, right held 1.2 s: delete preset-0002 (the highlight goes to preset-0001).
+3.20  Y         down
+3.30  DpadRight down
+4.50  DpadRight up
+4.60  Y         up
+# An early release does nothing: Y held, right held 0.5 s on preset-0001.
+4.70  Y         down
+4.75  DpadRight down
+5.25  DpadRight up
+5.30  Y         up

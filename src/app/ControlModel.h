@@ -65,6 +65,16 @@ class ControlModel
     // the tab and the switch latch are unchanged. A later "up" for those buttons is
     // ignored; a later "down" works normally. For focus loss and controller removal.
     void releaseAll(double timeSeconds) noexcept;
+    // PRESET-A (docs/briefs/PRESET.md): every stored knob value and the switch
+    // latch at once, for a preset load (preset/PresetState.h). First the ramps
+    // stop: every d-pad direction and L2 / R2 that is down becomes inert (as on
+    // a tab change; it acts again only after release and a new press), and the
+    // held word is written, so no ramp carries on from the loaded values. A
+    // (feedback maximum) and B (the momentary switch) are momentary and stay
+    // as they are. Then one SetAll command goes to the queue (the same path as
+    // every other change). Returns false if the queue refused it (counted as
+    // dropped; the audio side then changes nothing, the ramps stay stopped).
+    bool setAll(const float (&values)[kKnobCount], bool latch, double timeSeconds) noexcept;
 
     // --- State for the UI ------------------------------------------------------
     Tab  currentTab() const noexcept { return tab_; }
@@ -81,6 +91,10 @@ class ControlModel
     // dropped. sent = delivered + dropped.
     std::uint64_t commandsSent() const noexcept { return sent_; }
     std::uint64_t commandsDropped() const noexcept { return dropped_; }
+    // PRESET-A: commands the queue accepted. The audio side has applied (and
+    // published) all of them once ButtonControlSource::commandsProcessed()
+    // equals this.
+    std::uint64_t commandsDelivered() const noexcept { return sent_ - dropped_; }
 
   private:
     struct Press

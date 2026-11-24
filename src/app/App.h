@@ -194,6 +194,36 @@
 //   - Self-test: the report lists every recording (name, frames, seconds,
 //     dropped, outcome); --expect-recordings <n> checks how many were saved.
 
+// Presets (docs/briefs/PRESET.md, PRESET-B):
+//   - --preset-dir <dir>: the presets folder (the launcher passes
+//     <data folder>/presets); default none: the PRESET tab says that no folder
+//     is set and every save reports it. A missing folder is created by the
+//     first save.
+//   - A PresetStore (preset/PresetStore.h) on that folder and the PRESET tab's
+//     panel (app/PresetPanel.h) are made after the model and the MOD panel;
+//     the panel scans the folder once at start (logged: the folder and the
+//     count) and again whenever the tab is entered and after each action. It
+//     gets every button event through InputRouter::deliver() (in self-test
+//     mode the scripted events too); its tick() runs every loop iteration
+//     after the MOD panel's, with the event clock and the wall clock (the save
+//     wait and the messages run on the wall clock). Its log lines go to the
+//     diagnostic log (and, in self-test mode, to stdout as "selftest: preset
+//     log: ...").
+//   - Start + A (a second RecordChord built with Button::A, through
+//     InputRouter; in self-test mode the scripted events go through the same
+//     chords) saves a new preset on any tab, also while recording and while
+//     INPUT's pop-up is open.
+//   - The header: on the other tabs a fresh preset message replaces the
+//     recorder's readout when presetHeaderWins() says so (a failure beats a
+//     success, then the newer one; any message beats the running REC m:ss,
+//     whose red border stays).
+//   - Self-test: the report prints the preset folder, how many presets are
+//     listed, and the actions done (loads, saves, overwrites, deletes,
+//     failures); --expect-preset <saved|loaded|overwritten|deleted|failed|files>
+//     <n> checks one of those counts (files: presets listed at the end).
+//   - Shutdown: the panel goes before the model, the MOD panel and the
+//     control source it points at; the store after the panel.
+
 #pragma once
 
 #include <SDL.h>
@@ -211,6 +241,7 @@
 #include "app/FramePacer.h"
 #include "app/MenuQuit.h"
 #include "app/ModPanel.h"
+#include "app/PresetPanel.h"
 #include "app/RecordChord.h"
 #include "app/RestoreOnExit.h"
 #include "app/SdlDiagnostics.h"
@@ -227,6 +258,8 @@
 #include "platform/AudioHost.h"
 #include "platform/AudioRender.h"
 #include "platform/InputMap.h"
+#include "preset/PresetFs.h"
+#include "preset/PresetStore.h"
 #include "record/RecordFs.h"
 #include "record/RecordTap.h"
 #include "record/Recorder.h"
@@ -248,6 +281,13 @@ struct ModOption
     ModSlotSettings settings;
 };
 
+// PRESET-B: --expect-preset <what> <n>.
+struct PresetExpectation
+{
+    std::string what; // saved, loaded, overwritten, deleted, failed, files
+    long        count = 0;
+};
+
 struct AppOptions
 {
     int         bufferFrames = 256;  // --buffer
@@ -266,6 +306,7 @@ struct AppOptions
     std::string inputDir;            // --input-dir <dir> (M2b-A): the FILE source's folder; empty = none
     int         liveTargetBuffers = 2; // --live-target-buffers <n> (M2b-B review, S1): 1..32
     std::string recordDir = "data/recordings"; // --record-dir <dir> (REC)
+    std::string presetDir;           // --preset-dir <dir> (PRESET-B); empty = none
     std::string selftestScript;      // --selftest; empty = normal mode
     double      selftestSeconds = 0; // --seconds (required with --selftest), seconds of audio
 
@@ -289,6 +330,7 @@ struct AppOptions
     int                          expectRecordings = -1;     // --expect-recordings <n> (REC): files saved; -1 = no check
     std::vector<ModOption>       mods;                      // --mod <slot> <shape> <target> <rate> <depth> [polarity] (MOD-A, MOD-C)
     std::vector<ModTarget>       expectModActive;           // --expect-mod-active <target> (MOD-B), repeatable
+    std::vector<PresetExpectation> expectPresets;           // --expect-preset <what> <n> (PRESET-B), repeatable
 
     bool selftest() const noexcept { return !selftestScript.empty(); }
 };
@@ -344,6 +386,7 @@ class App
     void   logGovernors(const char* when);
     void   drainInputLog(); // M2b-A: the input controller's lines into the diagnostic log
     void   drainModLog();   // MOD-B: the mod panel's lines into the diagnostic log
+    void   drainPresetLog(); // PRESET-B: the preset panel's lines into the diagnostic log
     void   formatLiveWindow(char* out, std::size_t size, std::uint64_t outputFrames); // M2b-B
     void   onRecordToggle();   // REC: Start + Y
     void   drainRecorder();    // REC: the writer's log lines and results
@@ -377,6 +420,13 @@ class App
     std::unique_ptr<ModPanel>            modPanel_; // MOD-B: the MOD tab (holds a port to mod_; destroyed before it)
     std::vector<std::string>             modLog_;   // its log lines, drained every iteration
     std::unique_ptr<ControlModel>        model_;
+    // PRESET-B: the presets folder and the PRESET tab (the panel points at the
+    // store, model_, source_ and modPanel_; destroyed before them).
+    PosixPresetFs                        presetFs_;
+    std::unique_ptr<PresetStore>         presetStore_;
+    std::unique_ptr<PresetPanel>         presetPanel_;
+    RecordChord                          presetChord_{Button::A}; // Start + A
+    std::vector<std::string>             presetLog_;
     std::unique_ptr<LiveInput>           live_;     // M2b-B: the capture ring (outlives stage_ and the capture systems)
     std::unique_ptr<InputStage>          stage_;    // M2b-A: the input (outlives audio_)
     std::unique_ptr<AudioRender>         audio_;
@@ -397,6 +447,7 @@ class App
     char                                 recordSavedName_[24] = {};
     double                               recordSavedSeconds_ = 0.0;
     double                               recordMessageUntil_ = -1.0; // wall clock (now())
+    double                               recordMessageSince_ = 0.0;  // PRESET-B: when it appeared (now())
     InputMap                             input_;
 
     // Self-test.

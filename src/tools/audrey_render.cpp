@@ -3,7 +3,8 @@
 //
 // audrey-render: renders a parameter script through AudreyVoice to a WAV file.
 //
-//   audrey-render [--inputs-dir <dir>] [--chunk <frames>] <script.txt> <out.wav>
+//   audrey-render [--inputs-dir <dir>] [--chunk <frames>] [--preset <in.json>]
+//                 [--write-preset <out.json>] <script.txt> <out.wav>
 //                 [<duration_seconds>|- [<input.wav>]]
 //
 // Duration and input come from the command line if given, otherwise from the
@@ -25,6 +26,16 @@
 // InputGain modulation (gain knob 0.5). --chunk sets the frames per process()
 // call (1..4096, default 256); the output does not depend on it.
 //
+// PRESET-A (docs/PRESET_FORMAT.md): --preset <in.json> starts the render from
+// a preset instead of the start-up state: the eleven knobs and the switch are
+// the script's start state (ScriptControlSource::setStartState), and the four
+// modulation slots are set before the first control block; the script's
+// events then apply on top as usual. --write-preset <out.json> writes the
+// state at the end of the render as a preset: the knob positions and the
+// switch of the last control block, and the four slots' settings at the end
+// (written atomically: a temporary file next to it, then renamed). A file that
+// fails to read as a preset is an error, and nothing is rendered.
+//
 // Exit status: 0 on success, 1 on any error (message on stderr), 2 on bad usage.
 // Warnings (events after the end of the render, input length mismatch) go to
 // stderr and do not change the exit status.
@@ -36,9 +47,12 @@
 #include <string>
 #include <vector>
 
+#include "app/BuildInfo.h"
 #include "control/ScriptControlSource.h"
 #include "core/AudreyVoice.h"
 #include "mod/ModControlSource.h"
+#include "preset/PresetFormat.h"
+#include "preset/PresetFs.h"
 #include "tools/ScriptMeta.h"
 #include "tools/WavIO.h"
 
@@ -52,12 +66,15 @@ constexpr std::size_t kMaxChunk = 4096; // --chunk limit
 int usage()
 {
     std::fprintf(stderr,
-                 "usage: audrey-render [--inputs-dir <dir>] [--chunk <frames>] <script.txt> <out.wav>\n"
+                 "usage: audrey-render [--inputs-dir <dir>] [--chunk <frames>] [--preset <in.json>]\n"
+                 "                      [--write-preset <out.json>] <script.txt> <out.wav>\n"
                  "                      [<duration_seconds>|- [<input.wav>]]\n"
                  "  Renders the script through AudreyVoice at 48 kHz to a stereo 32-bit float WAV.\n"
                  "  Duration and input default to the script's '# @duration' and '# @input' header lines\n"
                  "  (@input is looked up in --inputs-dir). input.wav must be 48 kHz mono or stereo;\n"
-                 "  stereo is mixed as L + R. --chunk: frames per process() call (1..4096, default 256).\n");
+                 "  stereo is mixed as L + R. --chunk: frames per process() call (1..4096, default 256).\n"
+                 "  --preset: start from a preset's knobs, switch and modulation slots.\n"
+                 "  --write-preset: write the state at the end of the render as a preset.\n");
     return 2;
 }
 
@@ -66,6 +83,61 @@ int fail(const std::string& msg)
     std::fprintf(stderr, "audrey-render: error: %s\n", msg.c_str());
     return 1;
 }
+
+// Passes the wrapped source's frames through unchanged and keeps the last one
+// (--write-preset).
+class LastFrameSource final : public ControlSource
+{
+  public:
+    explicit LastFrameSource(ControlSource& inner) noexcept : inner_(inner) {}
+    void read(ControlFrame& out) noexcept override
+    {
+        inner_.read(out);
+        last  = out;
+        valid = true;
+    }
+    ControlFrame last{};
+    bool         valid = false;
+
+  private:
+    ControlSource& inner_;
+};
+
+bool readPreset(const std::string& path, PresetData& out, std::string& err)
+{
+    PosixPresetFs fs;
+    std::string   text, ferr;
+    switch(fs.readFile(path, kMaxPresetBytes, text, ferr))
+    {
+        case PresetFs::Status::Ok: break;
+        case PresetFs::Status::TooLarge: err = path + ": too large (more than 64 KiB)"; return false;
+        default: err = ferr; return false;
+    }
+    PresetError pe;
+    if(!decodePreset(text, out, pe))
+    {
+        err = path + ": " + pe.reason + " (" + pe.detail + ")";
+        return false;
+    }
+    return true;
+}
+
+bool writePreset(const std::string& path, const PresetData& p, std::string& err)
+{
+    PosixPresetFs     fs;
+    const std::string text = encodePreset(p, std::string("audrey-render ") + buildVersion());
+    const std::string tmp  = path + ".tmp";
+    const int         h    = fs.createTemp(tmp, err);
+    if(h < 0)
+        return false;
+    std::string cerr;
+    bool        ok = fs.writeAll(h, text.data(), text.size(), err) && fs.sync(h, err);
+    ok             = fs.close(h, ok ? err : cerr) && ok;
+    ok             = ok && fs.rename(tmp, path, err);
+    if(!ok)
+        fs.remove(tmp, cerr);
+    return ok;
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -73,6 +145,7 @@ int main(int argc, char** argv)
     std::vector<std::string> pos;
     std::string              inputsDir;
     std::size_t              chunk = kChunk;
+    std::string              presetIn, presetOut;
     for(int a = 1; a < argc; ++a)
     {
         const std::string arg = argv[a];
@@ -90,6 +163,12 @@ int main(int argc, char** argv)
                 return usage();
             chunk = static_cast<std::size_t>(c);
         }
+        else if(arg == "--preset" || arg == "--write-preset")
+        {
+            if(a + 1 >= argc || argv[a + 1][0] == '\0')
+                return usage();
+            (arg == "--preset" ? presetIn : presetOut) = argv[++a];
+        }
         else if(arg.size() > 2 && arg.compare(0, 2, "--") == 0)
             return usage();
         else
@@ -106,6 +185,13 @@ int main(int argc, char** argv)
     std::string         err;
     if(!script.loadFile(scriptPath, err))
         return fail(err.rfind("cannot ", 0) == 0 ? err : scriptPath + ": " + err);
+    PresetData start;
+    if(!presetIn.empty())
+    {
+        if(!readPreset(presetIn, start, err))
+            return fail(err);
+        script.setStartState(start.knobs, start.delaySwitch);
+    }
     tools::ScriptMeta meta;
     if(!tools::readScriptMeta(scriptPath, meta, err))
         return fail(err);
@@ -178,9 +264,15 @@ int main(int argc, char** argv)
 
     AudreyVoice voice;
     voice.init();
-    ModControlSource mod(script);
+    // --write-preset: the voice reads the script through LastFrameSource, which
+    // changes no frame. Without it, exactly as before.
+    LastFrameSource  last(script);
+    ModControlSource mod(presetOut.empty() ? static_cast<ControlSource&>(script) : last);
     mod.prepare(chunk);
     mod.attachScript(script);
+    if(!presetIn.empty())
+        for(std::size_t i = 0; i < kModSlots; ++i)
+            mod.setSlotNow(i, start.mod[i]);
 
     std::vector<float> left(frames), right(frames);
     const auto         t0 = std::chrono::steady_clock::now();
@@ -202,6 +294,20 @@ int main(int argc, char** argv)
     }
     if(!tools::writeWavF32(outPath, AudreyVoice::kSampleRate, 2, interleaved.data(), frames, err))
         return fail(err);
+
+    if(!presetOut.empty())
+    {
+        PresetData end;
+        for(std::size_t i = 0; i < kKnobCount; ++i)
+            end.knobs[i] = last.last.knob[i];
+        end.delaySwitch = last.last.delaySwitch;
+        for(std::size_t i = 0; i < kModSlots; ++i)
+            end.mod[i] = mod.matrix().slot(i);
+        if(!last.valid)
+            return fail("no control block was rendered; no preset written");
+        if(!writePreset(presetOut, end, err))
+            return fail(presetOut + ": " + err);
+    }
 
     std::printf("audrey-render: %s -> %s, %zu frames (%.3f s), rendered in %.3f s (%.0fx real time)\n",
                 scriptPath.c_str(), outPath.c_str(), frames, static_cast<double>(frames) / AudreyVoice::kSampleRate,

@@ -26,12 +26,22 @@
 //     unchanged; Menu + Start still quits in both orders with Y held; Select +
 //     Start + Y counts as Start + Y; self-test mode ignores real Start + Y while
 //     routeScripted() (the self-test's path) applies the chord.
+//   - PRESET-B: Start + A (both orders) asks the preset panel for a save once
+//     per chord on any tab; the chord's A never reaches the model as MAX when
+//     Start came first, and is released for the model when it came first;
+//     Start + Y + A fires both chords; plain A is MAX; L1 from LOOP is PRESET,
+//     where right reaches the preset panel and the model binds nothing;
+//     routeScripted() applies the chord; ReleaseAll forgets it.
+//   - PRESET-B review: Start + A while INPUT's file pop-up is open (X held):
+//     the preset is saved, the pop-up stays open and the chord's A reaches
+//     neither the model nor the INPUT panel.
 // No SDL_Init: InputMap::handle needs none for these events.
 
 #include <SDL.h>
 
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -43,12 +53,15 @@
 #include "app/InputRouter.h"
 #include "app/MenuQuit.h"
 #include "app/ModPanel.h"
+#include "app/PresetPanel.h"
 #include "app/RecordChord.h"
 #include "control/ButtonControlSource.h"
 #include "input/InputController.h"
 #include "input/InputStage.h"
 #include "platform/InputMap.h"
 #include "platform_test_common.h"
+#include "preset/PresetFs.h"
+#include "preset/PresetStore.h"
 
 using namespace audreybrick;
 using ptest::check;
@@ -310,7 +323,9 @@ int main()
         check(ctl.source() == InputSource::Off, "LOOP: d-pad right does not reach the input panel");
         std::vector<std::string> log;
         ctl.takeLog(log);
-        feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)); // L1: LOOP -> MOD (MOD-B)
+        feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)); // L1: LOOP -> PRESET (PRESET-B)
+        feed(up(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
+        feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)); // L1: PRESET -> MOD (MOD-B)
         feed(up(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
         feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)); // L1: MOD -> INPUT
         feed(up(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
@@ -318,7 +333,8 @@ int main()
         bool scanned = false;
         for(const std::string& l : log)
             scanned = scanned || l.find("input: scan of") != std::string::npos;
-        check(model->currentTab() == Tab::Input && scanned, "L1 twice from LOOP: INPUT, and entering it scans the folder");
+        check(model->currentTab() == Tab::Input && scanned,
+              "L1 three times from LOOP: INPUT, and entering it scans the folder");
         const std::uint32_t heldBefore = model->heldWord();
         feed(down(kRight));
         feed(up(kRight));
@@ -386,11 +402,13 @@ int main()
         check(ctl.source() == InputSource::Off, "deliver(): d-pad left on INPUT selects OFF");
         router.deliver({Button::R1, true}, t); // INPUT -> MOD
         router.deliver({Button::R1, false}, t);
-        router.deliver({Button::R1, true}, t); // MOD -> LOOP
+        router.deliver({Button::R1, true}, t); // MOD -> PRESET (PRESET-B)
+        router.deliver({Button::R1, false}, t);
+        router.deliver({Button::R1, true}, t); // PRESET -> LOOP
         router.deliver({Button::R1, false}, t);
         router.deliver({Button::DpadRight, true}, t);
         check(model->currentTab() == Tab::Loop && ctl.source() == InputSource::Off,
-              "R1 twice from INPUT wraps to LOOP; the d-pad there does not reach the panel");
+              "R1 three times from INPUT wraps to LOOP; the d-pad there does not reach the panel");
         stage.setSource(InputSource::Off);
     }
 
@@ -412,7 +430,9 @@ int main()
         feed(down(SDL_CONTROLLER_BUTTON_DPAD_DOWN));
         feed(up(SDL_CONTROLLER_BUTTON_DPAD_DOWN));
         check(panel.row() == ModRow::Target, "MOD-B: on LOOP the d-pad does not reach the mod panel");
-        feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)); // L1: LOOP -> MOD
+        feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)); // L1: LOOP -> PRESET (PRESET-B)
+        feed(up(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
+        feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)); // L1: PRESET -> MOD
         feed(up(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
         const std::uint32_t heldBefore = model->heldWord();
         const std::uint64_t sentBefore = model->commandsSent();
@@ -427,7 +447,7 @@ int main()
         feed(up(SDL_CONTROLLER_BUTTON_DPAD_RIGHT));
         check(model->currentTab() == Tab::Mod && panel.row() == ModRow::Shape &&
                   panel.slot(0).shape == ModShape::Triangle && heldSame && model->commandsSent() == sentBefore,
-              "MOD-B: L1 from LOOP is MOD; down moves the cursor to SHAPE, right steps it; the model binds nothing "
+              "MOD-B: L1 twice from LOOP is MOD; down moves the cursor to SHAPE, right steps it; the model binds nothing "
               "(held word unchanged while right is held, no command sent)");
         // MOD-D: X held selects the slot (wrapping), up / down do nothing, the cursor row is kept.
         feed(down(kX));
@@ -461,6 +481,198 @@ int main()
         router.route(InputMap::Action::ReleaseAll, none, t);
         check(!panel.choosing() && panel.slot(3).target == ModTarget::DelaySwitch,
               "MOD-D: ReleaseAll drops the X state, the settings stay");
+    }
+
+    // --- PRESET-B: the PRESET tab's panel and the Start + A chord -----------------------------------
+    {
+        InputMap      input;
+        auto          src   = std::make_unique<ButtonControlSource>();
+        auto          model = std::make_unique<ControlModel>(*src);
+        MenuQuit      quit;
+        RecordChord   recChord;
+        RecordChord   preChord(Button::A);
+        ModPanel      mod;
+        PosixPresetFs fs;
+        PresetStore   store(fs, "", "test"); // no folder: actions fail, but the requests are seen
+        PresetPanel   preset(store, *model, *src, mod);
+        InputRouter   router(*model, quit, false, nullptr, &recChord, &mod, &preChord, &preset);
+        double        t    = 0.0;
+        auto          feed = [&](const SDL_Event& e) {
+            ButtonEvent be{};
+            t += 0.01;
+            return router.route(input.handle(e, be), be, t);
+        };
+        const int kA     = SDL_CONTROLLER_BUTTON_A;
+        const int kStart = SDL_CONTROLLER_BUTTON_START;
+        const int kY     = SDL_CONTROLLER_BUTTON_Y;
+        ControlFrame frame{};
+        auto         settle = [&]() {
+            src->read(frame); // the audio side applies what the model sent
+            preset.tick(t, t); // runs the queued save (it fails: no folder), clears pending
+        };
+        // Start, then A: a save is asked for; the model never sees A (no MAX).
+        feed(down(kStart));
+        feed(down(kA));
+        const bool pending1 = preset.pending();
+        const bool noMax    = !model->feedbackMaxHeld() && !model->isDown(Button::A);
+        feed(up(kA));
+        feed(up(kStart));
+        check(pending1 && noMax && preChord.fired() == 1 && !model->feedbackMaxHeld(),
+              "PRESET-B: Start + A asks the preset panel for a save on LOOP; the model never sees that A (no MAX)");
+        settle();
+        check(!preset.pending() && preset.failures() == 1 && preset.lastMessage() == "SAVE FAILED: NO PRESET FOLDER",
+              "PRESET-B: with no folder the save fails with SAVE FAILED: NO PRESET FOLDER");
+        // A, then Start: MAX sounds until Start, then the model is told A is up.
+        feed(down(kA));
+        const bool maxBefore = model->feedbackMaxHeld();
+        feed(down(kStart));
+        const bool maxAfter = model->feedbackMaxHeld();
+        const bool pending2 = preset.pending();
+        feed(up(kA)); // held back
+        feed(up(kStart));
+        check(maxBefore && !maxAfter && pending2 && preChord.fired() == 2 && !model->isDown(Button::A),
+              "PRESET-B: A then Start: MAX until the chord, then A up for the model; a save is asked for");
+        settle();
+        // Once per chord: A pressed again while Start stays held fires again only after A was released.
+        feed(down(kStart));
+        feed(down(kA));
+        feed(down(kA)); // a repeated down
+        feed(up(kA));
+        feed(down(kA));
+        feed(up(kA));
+        feed(up(kStart));
+        check(preChord.fired() == 4, "PRESET-B: once per chord (a repeated down does not fire; a new press does)");
+        settle();
+        // Start + Y + A: both chords fire on the one Start press.
+        feed(down(kY));
+        feed(down(kA));
+        const InputRouter::Result both = feed(down(kStart));
+        feed(up(kY));
+        feed(up(kA));
+        feed(up(kStart));
+        check(both == R::RecordToggle && preChord.fired() == 5 && recChord.fired() == 1 && !model->isDown(Button::A) &&
+                  !model->isDown(Button::Y),
+              "PRESET-B: Y and A held, then Start: RecordToggle and a preset save on the same press");
+        settle();
+        // Plain A still means MAX.
+        feed(down(kA));
+        const bool plainMax = model->feedbackMaxHeld();
+        feed(up(kA));
+        check(plainMax && !model->feedbackMaxHeld() && preChord.fired() == 5, "PRESET-B: plain A is MAX as before");
+        // The PRESET tab: L1 from LOOP; d-pad there reaches the preset panel, not elsewhere.
+        feed(down(SDL_CONTROLLER_BUTTON_DPAD_RIGHT));
+        const bool loopRight = preset.pending(); // on LOOP: nothing for the preset panel
+        feed(up(SDL_CONTROLLER_BUTTON_DPAD_RIGHT));
+        settle();
+        check(!loopRight, "PRESET-B: on LOOP the d-pad does not reach the preset panel");
+        const std::uint64_t failsLoop = preset.failures();
+        feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
+        feed(up(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
+        const std::uint32_t heldBefore = model->heldWord();
+        const std::uint64_t sentBefore = model->commandsSent();
+        feed(down(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)); // on SAVE NEW: a save (it fails: no folder)
+        const bool pendingTab = preset.pending();
+        t += 1.0;
+        model->tick(t);
+        feed(up(SDL_CONTROLLER_BUTTON_DPAD_RIGHT));
+        settle();
+        check(model->currentTab() == Tab::Preset && preset.failures() == failsLoop + 1 && pendingTab &&
+                  model->heldWord() == heldBefore && model->commandsSent() == sentBefore,
+              "PRESET-B: L1 from LOOP is PRESET; right there reaches the panel (SAVE NEW); the model binds nothing");
+        // Self-test path: routeScripted applies the chord too.
+        const unsigned before = preChord.fired();
+        router.routeScripted({Button::Start, true}, t);
+        router.routeScripted({Button::A, true}, t);
+        const bool scripted = preset.pending() && !model->isDown(Button::A);
+        router.routeScripted({Button::A, false}, t);
+        router.routeScripted({Button::Start, false}, t);
+        check(scripted && preChord.fired() == before + 1, "PRESET-B: routeScripted() applies Start + A");
+        settle();
+        // ReleaseAll resets the chord: Start held, focus lost, A pressed: no save.
+        feed(down(kStart));
+        ButtonEvent none{};
+        router.route(InputMap::Action::ReleaseAll, none, t);
+        feed(down(kA));
+        const bool maxAgain = model->feedbackMaxHeld();
+        feed(up(kA));
+        check(preChord.fired() == before + 1 && !preset.pending() && maxAgain,
+              "PRESET-B: ReleaseAll forgets Start: a later A is plain MAX");
+    }
+
+    // --- PRESET-B review: Start + A with INPUT's pop-up open (X held) -------------------------------
+    {
+        const std::string dir = std::string(AB_ROUTER_TMP) + "/presets";
+        std::error_code   ec;
+        std::filesystem::remove_all(dir, ec);
+        std::filesystem::create_directories(dir, ec);
+        InputMap      input;
+        auto          src   = std::make_unique<ButtonControlSource>();
+        auto          model = std::make_unique<ControlModel>(*src);
+        MenuQuit      quit;
+        InputStage    stage;
+        stage.prepare(256);
+        InputController ctl(stage, ""); // no folder: the pop-up still opens (as above)
+        RecordChord   recChord;
+        RecordChord   preChord(Button::A);
+        ModPanel      mod;
+        PosixPresetFs fs;
+        PresetStore   store(fs, dir, "test");
+        PresetPanel   preset(store, *model, *src, mod);
+        preset.scanAtStart();
+        InputRouter   router(*model, quit, false, &ctl, &recChord, &mod, &preChord, &preset);
+        double        t    = 0.0;
+        auto          feed = [&](const SDL_Event& e) {
+            ButtonEvent be{};
+            t += 0.01;
+            return router.route(input.handle(e, be), be, t);
+        };
+        for(int i = 0; i < 3; ++i) // L1 three times from LOOP: INPUT
+        {
+            feed(down(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
+            feed(up(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
+        }
+        feed(down(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)); // FILE
+        feed(up(SDL_CONTROLLER_BUTTON_DPAD_RIGHT));
+        // Hold X (the pad's X is our X here: no swap in InputMap by default), up: the pop-up.
+        feed(down(SDL_CONTROLLER_BUTTON_X));
+        feed(down(SDL_CONTROLLER_BUTTON_DPAD_UP));
+        feed(up(SDL_CONTROLLER_BUTTON_DPAD_UP));
+        ctl.tick(t);
+        const bool open = model->currentTab() == Tab::Input && ctl.source() == InputSource::File && ctl.popupOpen() &&
+                          ctl.choosing() && model->isDown(Button::X);
+        const int           cursorBefore = ctl.cursor();
+        const InputPlayMode modeBefore   = ctl.playMode();
+        const std::uint64_t sentBefore   = model->commandsSent();
+        std::vector<std::string> inputLog;
+        ctl.takeLog(inputLog);
+        // Start first, then A, X still held.
+        feed(down(SDL_CONTROLLER_BUTTON_START));
+        feed(down(SDL_CONTROLLER_BUTTON_A));
+        const bool asked  = preset.pending() && preChord.fired() == 1;
+        const bool aHidden = !model->isDown(Button::A) && !model->feedbackMaxHeld();
+        ctl.tick(t);
+        const bool stillOpen = ctl.popupOpen() && ctl.choosing();
+        ControlFrame frame{};
+        src->read(frame); // the audio side applies what the model sent
+        preset.tick(t, t);
+        feed(up(SDL_CONTROLLER_BUTTON_A));
+        feed(up(SDL_CONTROLLER_BUTTON_START));
+        ctl.tick(t);
+        inputLog.clear();
+        ctl.takeLog(inputLog);
+        check(open, "PRESET-B review: on INPUT (FILE), X held + up opens the pop-up");
+        check(asked && preset.saves() == 1 && std::filesystem::exists(dir + "/preset-0001.json") &&
+                  preset.lastMessage() == "SAVED PRESET-0001",
+              "PRESET-B review: Start + A with the pop-up open saves preset-0001.json (" + preset.lastMessage() + ")");
+        check(stillOpen && ctl.popupOpen() && ctl.choosing() && ctl.cursor() == cursorBefore &&
+                  ctl.playMode() == modeBefore && inputLog.empty(),
+              "PRESET-B review: the pop-up stays open, its cursor and play mode unchanged, the INPUT panel logs nothing");
+        check(aHidden && !model->isDown(Button::A) && model->commandsSent() == sentBefore && recChord.fired() == 0,
+              "PRESET-B review: the chord's A reaches neither the model (no MAX, no command) nor, through it, the "
+              "INPUT panel (deliver() is the one path to both)");
+        feed(up(SDL_CONTROLLER_BUTTON_X));
+        check(!ctl.popupOpen(), "PRESET-B review: releasing X closes the pop-up afterwards");
+        std::filesystem::remove_all(dir, ec);
     }
     return ptest::finish();
 }

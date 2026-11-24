@@ -1027,6 +1027,182 @@ inline UiSnapshot modSwitchSnapshot()
     return s;
 }
 
+// --- PRESET-B: the PRESET tab and the header message -----------------------------------------------
+// The list as PresetPanel::fill() makes it: `names` are the presets (item i + 1),
+// the window of kPresetListRows items centred on the cursor where it can be.
+inline void setPresetList(UiSnapshot& s, const std::vector<std::string>& names, int cursor, int marked, int total = -1)
+{
+    UiPresetView& p = s.preset;
+    p.folder        = PresetFolderView::Ok;
+    p.count         = static_cast<int>(names.size());
+    p.total         = total < 0 ? p.count : total;
+    const int n     = p.count + 1;
+    p.cursor        = cursor;
+    p.rows          = n < kPresetListRows ? n : kPresetListRows;
+    int first       = cursor - kPresetListRows / 2;
+    if(first > n - p.rows)
+        first = n - p.rows;
+    if(first < 0)
+        first = 0;
+    p.first  = first;
+    p.marked = marked;
+    for(int i = 0; i < kPresetListRows; ++i)
+    {
+        const int item = first + i;
+        std::snprintf(p.names[i], sizeof p.names[i], "%s",
+                      i < p.rows && item >= 1 ? names[static_cast<std::size_t>(item - 1)].c_str() : "");
+    }
+}
+inline std::vector<std::string> presetNames(int n)
+{
+    std::vector<std::string> v;
+    for(int i = 1; i <= n; ++i)
+    {
+        char b[32];
+        std::snprintf(b, sizeof b, "preset-%04d", i);
+        v.push_back(b);
+    }
+    return v;
+}
+inline void setPresetMessage(UiSnapshot& s, bool bad, const char* text)
+{
+    s.preset.message = bad ? PresetMessageView::Bad : PresetMessageView::Good;
+    std::snprintf(s.preset.messageText, sizeof s.preset.messageText, "%s", text);
+    s.preset.header = s.preset.message;
+    std::snprintf(s.preset.headerText, sizeof s.preset.headerText, "%s", text);
+}
+// PRESET: twelve presets, the cursor on preset-0004, preset-0002 marked (LAST).
+inline UiSnapshot presetListSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Preset);
+    std::vector<std::string> names = presetNames(10);
+    names.insert(names.begin(), "Drone");
+    names.insert(names.begin() + 1, "Drone 2");
+    setPresetList(s, names, 4, 2);
+    return s;
+}
+// PRESET: an empty folder (SAVE NEW only, NO PRESETS YET).
+inline UiSnapshot presetEmptySnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Preset);
+    setPresetList(s, {}, 0, -1);
+    return s;
+}
+inline UiSnapshot presetMissingSnapshot()
+{
+    UiSnapshot s = presetEmptySnapshot();
+    s.preset.folder = PresetFolderView::Missing;
+    return s;
+}
+inline UiSnapshot presetNotSetSnapshot()
+{
+    UiSnapshot s = presetEmptySnapshot();
+    s.preset.folder = PresetFolderView::NotSet;
+    setPresetMessage(s, true, "SAVE FAILED: NO PRESET FOLDER");
+    return s;
+}
+inline UiSnapshot presetUnreadableSnapshot()
+{
+    UiSnapshot s = presetEmptySnapshot();
+    s.preset.folder = PresetFolderView::Unreadable;
+    return s;
+}
+// PRESET: X + right held on preset-0007, 60 % of the way.
+inline UiSnapshot presetHoldOverwriteSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Preset);
+    setPresetList(s, presetNames(12), 7, 7);
+    s.preset.hold         = PresetHoldView::Overwrite;
+    s.preset.holdProgress = 0.6f;
+    std::snprintf(s.preset.holdName, sizeof s.preset.holdName, "%s", "PRESET-0007");
+    s.xHeld = true;
+    setButton(s, Button::X, true);
+    setButton(s, Button::DpadRight, true);
+    return s;
+}
+// PRESET: Y + right held on preset-0012 (the last), a quarter of the way.
+inline UiSnapshot presetHoldDeleteSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Preset);
+    setPresetList(s, presetNames(12), 12, 3);
+    s.preset.hold         = PresetHoldView::Delete;
+    s.preset.holdProgress = 0.25f;
+    std::snprintf(s.preset.holdName, sizeof s.preset.holdName, "%s", "PRESET-0012");
+    s.yHeld = true;
+    setButton(s, Button::Y, true);
+    setButton(s, Button::DpadRight, true);
+    return s;
+}
+// PRESET: just loaded preset-0007 (the cursor on it, marked).
+inline UiSnapshot presetLoadedSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Preset);
+    setPresetList(s, presetNames(12), 7, 7);
+    setPresetMessage(s, false, "LOADED PRESET-0007");
+    return s;
+}
+// PRESET: a failed load (in inverse video).
+inline UiSnapshot presetFailedSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Preset);
+    std::vector<std::string> names = presetNames(3);
+    names.insert(names.begin(), "broken");
+    setPresetList(s, names, 1, 3);
+    setPresetMessage(s, true, "LOAD FAILED: SYNTAX ERROR");
+    return s;
+}
+// PRESET: a failure message too long for 24 px (drawn at 16 px).
+inline UiSnapshot presetLongMessageSnapshot()
+{
+    UiSnapshot s = presetListSnapshot();
+    setPresetMessage(s, true, "OVERWRITE FAILED: TEMPORARY NAME BLOCKED");
+    return s;
+}
+// PRESET: long names (cut with ".."), the cursor and the mark on the longest;
+// a name with non-ASCII bytes shown with '?'.
+inline UiSnapshot presetLongNameSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Preset);
+    std::vector<std::string> names = {"A very long preset name renamed on a computer", "caf? drone",
+                                      "Night drone, slow LFO on the lowpass (v3 final)", "preset-0001"};
+    setPresetList(s, names, 1, 1);
+    setPresetMessage(s, false, "SAVED A VERY LONG PRESET NAME RENAMED ON A COMPUTER");
+    return s;
+}
+// PRESET: 2101 presets in the folder, 2000 listed, the cursor in the middle
+// (scroll arrows at both ends of the window).
+inline UiSnapshot presetLongListSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Preset);
+    setPresetList(s, presetNames(2000), 1000, 999, 2101);
+    return s;
+}
+// PRESET: SAVE NEW highlighted at the top of a short list; a save waiting for audio.
+inline UiSnapshot presetSaveNewBusySnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Preset);
+    setPresetList(s, presetNames(2), 0, -1);
+    s.preset.busy = true;
+    return s;
+}
+// LOOP: the header shows a preset message (Start + A on LOOP).
+inline UiSnapshot presetHeaderSavedSnapshot()
+{
+    UiSnapshot s = playingSnapshot(Tab::Loop);
+    setPresetList(s, presetNames(8), 8, 8);
+    setPresetMessage(s, false, "SAVED PRESET-0008");
+    s.preset.headerWins = true;
+    return s;
+}
+// DELAY while recording: a failed preset save takes the readout (the border stays).
+inline UiSnapshot presetHeaderFailRecordingSnapshot()
+{
+    UiSnapshot s = recordingSnapshot(Tab::Delay);
+    setPresetMessage(s, true, "SAVE FAILED: CARD FULL");
+    s.preset.headerWins = true;
+    return s;
+}
+
 struct NamedSnapshot
 {
     const char* name;
@@ -1132,6 +1308,21 @@ inline std::vector<NamedSnapshot> allSnapshots()
         {"mod_tags_strip_m1234", modStripFullSnapshot()},
         {"mod_tags_strip_stub", modStripStubSnapshot()},
         {"mod_switch_only", modSwitchSnapshot()},
+        {"tab_preset", presetListSnapshot()},
+        {"preset_empty", presetEmptySnapshot()},
+        {"preset_folder_missing", presetMissingSnapshot()},
+        {"preset_folder_not_set", presetNotSetSnapshot()},
+        {"preset_folder_unreadable", presetUnreadableSnapshot()},
+        {"preset_hold_overwrite", presetHoldOverwriteSnapshot()},
+        {"preset_hold_delete", presetHoldDeleteSnapshot()},
+        {"preset_loaded", presetLoadedSnapshot()},
+        {"preset_load_failed", presetFailedSnapshot()},
+        {"preset_long_message", presetLongMessageSnapshot()},
+        {"preset_long_names", presetLongNameSnapshot()},
+        {"preset_long_list_scrolled", presetLongListSnapshot()},
+        {"preset_save_new_busy", presetSaveNewBusySnapshot()},
+        {"preset_header_saved_loop", presetHeaderSavedSnapshot()},
+        {"preset_header_failed_rec_delay", presetHeaderFailRecordingSnapshot()},
     };
 }
 

@@ -7,7 +7,8 @@ inaudible noise, distortion, filters, reverb and a long body delay fed back into
 the string, and a final delay whose repeats can run away and saturate. Nothing
 sounds until you raise the feedback (R2).
 
-Version: see the first line of audreybrick/data/audreybrick.log after a run.
+Version: see the first line of audreybrick.log in the data folder after a run
+(see "Your files" below).
 
 
 Credits
@@ -35,6 +36,56 @@ game lists, then start AudreyBrick from Ports.
 
 Mind your ears: the feedback can run away. Start with the volume low (OUT tab).
 
+Updating: replace AudreyBrick.sh and the audreybrick folder with the new ones.
+  On KNULLI this is safe: your files are not in the audreybrick folder but in
+  saves/audreybrick (see "Your files"), which an update does not touch.
+  Coming from a version that kept them in audreybrick/data: look in that
+  folder first and move out what you want to keep, because replacing the
+  audreybrick folder deletes it (see "An old audreybrick/data folder").
+  On a firmware without a writable /userdata/saves folder your files are in
+  audreybrick/data instead: there, copy the new files INTO the existing
+  audreybrick folder (replacing files of the same name, not the folder), so
+  audreybrick/data stays.
+
+
+Your files
+----------
+Everything that is yours lives in one data folder:
+
+  On KNULLI:  /userdata/saves/audreybrick  (on the SD card: saves/audreybrick),
+              outside the app's folder
+  Elsewhere:  audreybrick/data inside the app folder, if the firmware has no
+              writable /userdata/saves folder (see "Updating" above)
+
+It holds:
+  input/        WAV files for the INPUT tab's FILE source (you put them there)
+  recordings/   what START + Y records: rec-0001.wav, rec-0002.wav, ...
+  presets/      presets (*.json)
+  audreybrick.log, stdout.log and the numbered logs of earlier runs (the 8 most
+                recent runs are kept; older numbered logs are deleted). A log is
+                never overwritten: if a numbered name is taken, the next one
+                gets -2, -3, ... (audreybrick-000041-...-2.log)
+  run-counter, latest-run (the launcher's run number; leave them alone)
+stdout.log names the folder used in its line "launcher: data folder: ...". If
+saves/audreybrick exists but cannot be used for a start (for example the card
+was read-only), that line starts with "launcher: PROBLEM:", and what that run
+saves goes to audreybrick/data. It is not moved later by itself: move it to
+saves/audreybrick by hand if you want it there.
+
+An old audreybrick/data folder. Versions before this one kept your files in
+audreybrick/data inside the app folder. While saves/audreybrick is in use,
+AudreyBrick never moves, renames, changes or deletes anything there. (Only if
+saves/audreybrick cannot be used for a start does audreybrick/data become the
+folder in use again: that run then keeps its logs there and tidies old numbered
+logs as usual. Recordings, input files and presets are never changed.) If that folder is still on the card and holds
+anything, every start writes one line to stdout.log ("launcher: old data folder:
+...") saying so. To use those files, move them by hand (on a computer, or in a
+file manager) into the same folders in saves/audreybrick (input/, recordings/).
+Leave the old logs, run-counter and latest-run where they are. Where a file of the same name is already there, rename one of the
+two first, so neither is overwritten. Once audreybrick/data
+is empty or gone, the line no longer appears. Replacing the audreybrick folder
+deletes audreybrick/data with it, so move what you want to keep first.
+
 
 Buttons
 -------
@@ -53,6 +104,7 @@ Always:
   Y + d-pad        reset that parameter to its default
   START            nothing by itself
   START + Y        start / stop recording the output (see Recording below)
+  START + A        save a new preset (see Presets below)
   MENU + START     quit
 
 Tabs (d-pad left/right, d-pad up/down):
@@ -69,6 +121,9 @@ Tabs (d-pad left/right, d-pad up/down):
            release X to open it (the gain goes to -inf dB first; a device
            opened before in this run then gets its own gain back)
   MOD      the four modulation slots (see Modulation below)
+  PRESET   the presets (see Presets below). The tab bar shows the current tab
+           and its neighbours; small arrows at its ends mean more tabs that
+           way. L1 from LOOP goes to PRESET, the last tab.
 
 
 Audio input (INPUT tab)
@@ -79,10 +134,10 @@ minimum and rings the string and the loop as you raise it. AudreyBrick can feed
 it from a WAV file (FILE) or from a capture device (LIVE): the Brick's built-in
 microphone or a USB audio interface. LIVE is described further down.
 
-  1. Put WAV files into the folder audreybrick/data/input on the SD card
-     (roms/ports/audreybrick/data/input; on the device
-     /userdata/roms/ports/audreybrick/data/input). The launcher creates the
-     folder if it is missing. Files directly in that folder are used; folders
+  1. Put WAV files into the input folder of the data folder (see "Your files"):
+     on KNULLI saves/audreybrick/input on the SD card (on the device
+     /userdata/saves/audreybrick/input). The launcher creates the folder if it
+     is missing. Files directly in that folder are used; folders
      inside it, links and files whose names start with "." are ignored (so are
      the "._" files a Mac leaves next to each file it copies).
   2. In AudreyBrick go to the INPUT tab (L1 twice from LOOP, or R1 past OUT).
@@ -129,11 +184,14 @@ If you replace a file on the card while AudreyBrick runs, it notices when the
 list is read again (on entering the INPUT tab or selecting FILE): choosing
 that name then loads the new file instead of keeping the old one.
 A file that cannot be used shows CANNOT LOAD and the reason; whatever was
-playing keeps playing. The log (data/audreybrick.log) has a line for every file
+playing keeps playing. The log (audreybrick.log) has a line for every file
 loaded and every failure.
 
-Keep your own copy of the files elsewhere: replacing the audreybrick folder with
-a new version deletes data/, and data/input with it. No audio files are shipped.
+On KNULLI, replacing the audreybrick folder with a new version does not touch the
+input folder (it is in saves/audreybrick; see "Updating" for the one exception:
+a firmware without a writable /userdata/saves folder).
+Keeping your own copy elsewhere is still wise.
+No audio files are shipped.
 
 Mind your ears: a loud file through the distortion and feedback can be very loud.
 Start with the gain at 0 dB or below and the volume low.
@@ -206,7 +264,7 @@ second, or after a single one when the buffer had no room left for its slow-
 clock corrections, up to 16 audio buffers; it goes back to the setting when you choose a
 device again. To start with a larger buffer, set AUDREY_LIVE_TARGET (1 to 32
 audio buffers, default 2) near the top of AudreyBrick.sh; more is steadier but
-adds delay. The log (data/audreybrick.log) has a "live:" part in every
+adds delay. The log (audreybrick.log) has a "live:" part in every
 statistics line while LIVE is selected (buffer fill and target, underruns,
 skips, repeats, frames captured and played, levels), and a line for every
 device listed, opened, closed or lost and every time the buffer was doubled.
@@ -275,7 +333,7 @@ depth 0) AudreyBrick sounds exactly as without it.
            REPEATS, VOLUME), INPUT GAIN and DELAY SWITCH (on while the
            modulation is above zero, in addition to B and SELECT + B).
 
-The MOD tab (L1 from LOOP, or R1 past INPUT) shows the selected slot's
+The MOD tab (L1 twice from LOOP, or R1 past INPUT) shows the selected slot's
 settings in five rows and all four slots underneath as cards, each with a
 small bar that moves with what the slot does right now. The selected card has
 a bright frame and its number in a bright box. The cards are dimmed while you
@@ -340,7 +398,7 @@ Good to know:
     in time) before its fast rise. At very high rates
     the ramps get coarse: at 2 kHz a cycle has only 6 steps.
   - The settings last until you quit; nothing is saved yet. The log
-    (data/audreybrick.log) has a line for a slot once its settings have stayed
+    (audreybrick.log) has a line for a slot once its settings have stayed
     unchanged for half a second, for example
     "mod: slot 2 triangle -> FeedbackLPFCutoff 3.20 Hz depth +34.0%".
 
@@ -366,13 +424,14 @@ everything (the processed audio input included; the input is not recorded on its
 own). 16-bit, stereo, 48 kHz WAV, without any processing of its own. Recording
 carries on when you change tabs or the input source.
 
-Where: audreybrick/data/recordings, as rec-0001.wav, rec-0002.wav, ... (the
-Brick's clock is not set, so the names are numbers, not dates). A new recording
-takes the number after the highest one in the folder; nothing is ever
+Where: the recordings folder of the data folder (see "Your files"; on KNULLI
+saves/audreybrick/recordings on the SD card), as rec-0001.wav, rec-0002.wav, ...
+(the Brick's clock is not set, so the names are numbers, not dates). A new
+recording takes the number after the highest one in the folder; nothing is ever
 overwritten. To copy them off: switch the Brick off, put the SD card in a
-computer and copy roms/ports/audreybrick/data/recordings. (Replacing the
-audreybrick folder with a new version deletes data/: copy the recordings off
-first.) On a FAT or exFAT card macOS adds hidden ._ files; they do no harm.
+computer and copy saves/audreybrick/recordings. On KNULLI, replacing the
+audreybrick folder with a new version does not touch them (see "Updating"). On a FAT or exFAT card macOS adds hidden
+._ files; they do no harm.
 
 Limits:
   - There is no time limit of your own to set. A file stops by itself just
@@ -395,6 +454,53 @@ properly. If the Brick loses power or the app is killed, the file is still
 playable up to the last 2 seconds before that.
 
 
+Presets
+-------
+A preset is the sound of the moment, saved as one small file you can keep,
+copy and rename:
+  - the eleven settings (FEEDBACK as it is set with L2/R2, not the A button's
+    MAX; FREQUENCY, BODY, LOWPASS, HIGHPASS, DRY/WET, DECAY, TIME, MIX,
+    REPEATS, VOLUME), the delay switch's latch (SELECT + B), and the four
+    modulation slots (shape, target, rate, depth, polarity).
+  - NOT the audio input: loading a preset never changes the source, the
+    device, the file, LOOP/ONCE or the input gain. A and B held are not saved
+    and a load does not change them (with A held, MAX stays until you let go).
+  - Nothing is loaded when AudreyBrick starts: it always starts as it always
+    has.
+
+Saving: hold START and press A (or hold A and press START), on any tab, also
+while recording. The new preset is saved as preset-0001.json, preset-0002.json,
+... (one more than the highest number in the folder) and the screen says
+SAVED PRESET-0008 under the feedback bar. If A came first, MAX sounds until
+START is pressed; it does not change what is saved.
+
+The PRESET tab (the last one):
+  up / down        move through the list (hold to scroll; up from the top
+                   goes to the bottom, the last entry in the list)
+  right            on + SAVE NEW (the top row): save a new preset
+                   on a preset: load it, at once
+  X + right (hold about 1 second)  overwrite the preset with the current sound
+  Y + right (hold about 1 second)  delete the preset
+  Press X or Y first, then hold right; a bar fills while you hold. Let go early
+  and nothing happens. The preset you loaded or saved last is marked LAST.
+
+Loading is audible by design: every setting jumps to the preset's value and
+moves there as quickly as the original's knobs do. Loading a loud preset while
+the instrument is silent starts it at once: keep the volume down on headphones.
+
+Where: the presets folder of the data folder (see "Your files"; on KNULLI
+saves/audreybrick/presets on the SD card). The list shows every .json file
+there by its name without .json, sorted by name (numbers in order: preset-2
+before preset-10). To give a preset a name, rename the file on a computer
+("Night drone.json" shows as Night drone). The next new preset is numbered one
+more than the highest preset-NNNN number left in the folder: gaps lower down
+are not filled again (renaming or deleting the highest one frees its number).
+You can also copy presets to another card, or delete them on the computer. A
+file that is not a preset, or is damaged, is listed but does not load: LOAD
+FAILED: and the reason (the log has the details); nothing changes.
+The format is described in docs/PRESET_FORMAT.md in the source.
+
+
 Screenshots
 -----------
 AudreyBrick adds no screenshot function of its own. Use KNULLI's: hold SELECT and
@@ -405,7 +511,7 @@ picture shows its normal screen.
 
 Logs
 ----
-Each run writes, in the audreybrick/data folder:
+Each run writes, in the data folder (see "Your files"):
   audreybrick.log   what the app found (screen, sound, buttons, controller) and
                     statistics every 10 seconds
   stdout.log        the launcher's notes (including the device's power, CPU and
@@ -416,8 +522,6 @@ audreybrick-NNNNNN-YYYYMMDD-HHMMSS.log and stdout-NNNNNN-YYYYMMDD-HHMMSS.log
 (NNNNNN is the run number, so they sort in order even if the clock was not set);
 the last 8 runs are kept in total, the oldest are deleted. If the data folder
 cannot be written, the logs go to /tmp/audreybrick-data instead (lost on reboot).
-Replacing the audreybrick folder with a new version deletes data/: copy the logs
-off first.
 
 To change the audio buffer size, edit the number on the AUDREY_BUFFER line near the
 top of AudreyBrick.sh (default 256 frames; 16 to 32768). The live input's buffer,
@@ -493,7 +597,8 @@ Testing aid
 If the environment variable AUDREY_ARGS is set, its words are added to the app's
 command line (for example "--selftest <script> --seconds 5 --no-video"). Leave it
 unset for normal use. AUDREY_SYSFS_CPU, also for testing only, points the launcher
-and the app at a fake copy of /sys/devices/system/cpu.
+and the app at a fake copy of /sys/devices/system/cpu. AUDREY_SAVES_DIR, also for
+testing only, is the folder used in place of /userdata/saves.
 
 
 LGPL notice: libaudrey_lgpl.so

@@ -24,7 +24,7 @@ RecordChord::Out RecordChord::onButton(const ButtonEvent& e) noexcept
         start_ = e.pressed;
         return o; // Start always goes on
     }
-    if(e.button != Button::Y)
+    if(e.button != button_)
         return o;
     if(e.pressed)
     {

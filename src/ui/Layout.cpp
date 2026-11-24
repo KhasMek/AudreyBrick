@@ -34,9 +34,13 @@ constexpr int kTabBarY = 4;
 constexpr int kTabBarH = 48;
 // Tabs from x 76 to 952 (between the L1 and R1 keys), 4 px apart. Since M2b-A
 // (six tabs) each is as wide as its name at 24 px plus an equal share of the rest.
-constexpr int kTabsX   = 76;
-constexpr int kTabsEnd = 952;
-constexpr int kTabGap  = 4;
+// PRESET-B: eight tabs no longer fit; the bar shows a run of whole tabs (see
+// tabBarSpan()) with a marker zone at an end where tabs are hidden.
+constexpr int kTabsX      = 76;
+constexpr int kTabsEnd    = 952;
+constexpr int kTabGap     = 4;
+constexpr int kTabMinPad  = 16; // PRESET-B: a tab is at least its name plus this
+constexpr int kTabMarkW   = 20; // PRESET-B: a marker zone (including its gap to the next tab)
 
 constexpr int kBandY  = 60;
 constexpr int kBandH  = 116;
@@ -153,6 +157,20 @@ constexpr int kModCardY     = 378; // 184 + 5 * 38
 constexpr int kModCardW     = 210;
 constexpr int kModCardH     = 94;  // to y 472
 constexpr int kModCardStep  = 218;
+
+// PRESET-B: the PRESET tab, x 8..872, y 184..472: a title line, five list
+// rows of 40 px with 32 px names, and the bottom panel (the hold bar, or the
+// message line and the hints).
+constexpr int kPreTitleY   = 184;
+constexpr int kPreTitleH   = 26;
+constexpr int kPreRowY     = 214;
+constexpr int kPreRowStep  = 40;
+constexpr int kPreRowH     = 38;
+constexpr int kPreNameX    = 64;
+constexpr int kPreMarkRight = 828; // the LAST mark ends here
+constexpr int kPreScrollX  = 840; // the scroll arrows (16 px)
+constexpr int kPreBottomY  = 418;
+constexpr int kPreBottomH  = 54;  // to y 472
 
 constexpr int kStripY    = 480;
 constexpr int kStripStep = 60;
@@ -449,17 +467,23 @@ void tabBar(Builder& b, const UiSnapshot& s) noexcept
     b.tri(rx + 40, kTabBarY + 16, 16, ArrowDir::Right, r1fg, true);
     b.key("R1", rx, kTabBarY, 60, kTabBarH, r1);
 
+    // PRESET-B: the visible run of tabs (tabBarSpan) between the marker zones.
     // Widths: each name's width at scale 3 plus an equal share of the space left
-    // (the remainder, a few pixels, goes to the first tabs).
-    int names = 0;
-    for(std::size_t i = 0; i < kTabCount; ++i)
+    // (the remainder, a few pixels, goes to the first tabs shown).
+    const TabSpan span  = tabBarSpan(s.tab);
+    const bool    hideL = span.first > 0;
+    const bool    hideR = span.last < static_cast<int>(kTabCount) - 1;
+    const int     x0    = kTabsX + (hideL ? kTabMarkW : 0);
+    const int     x1    = kTabsEnd - (hideR ? kTabMarkW : 0);
+    int           names = 0;
+    for(int i = span.first; i <= span.last; ++i)
         names += textWidth(tabSpec(static_cast<Tab>(i)).name, 3);
-    const int count = static_cast<int>(kTabCount);
-    const int spare = (kTabsEnd - kTabsX) - (count - 1) * kTabGap - names;
+    const int count = span.last - span.first + 1;
+    const int spare = (x1 - x0) - (count - 1) * kTabGap - names;
     const int pad   = spare > 0 ? spare / count : 0;
     int       extra = spare > 0 ? spare % count : 0;
-    int       x     = kTabsX;
-    for(std::size_t i = 0; i < kTabCount; ++i)
+    int       x     = x0;
+    for(int i = span.first; i <= span.last; ++i)
     {
         const Tab  t      = static_cast<Tab>(i);
         const bool active = t == s.tab;
@@ -476,6 +500,20 @@ void tabBar(Builder& b, const UiSnapshot& s) noexcept
         b.textCentered(x + w / 2, kTabBarY + (kTabBarH - glyphPx(3)) / 2, 3, active ? pal::bg : pal::dim,
                        TextRole::TabName, tabSpec(t).name);
         x += w + kTabGap;
+    }
+    // The markers (part of the tab bar's panel): a stub of a tab edge with a
+    // small arrow pointing to the hidden tabs, in the marker zone (16 px wide,
+    // 4 px from the shown tabs).
+    for(int side = 0; side < 2; ++side)
+    {
+        if(side == 0 ? !hideL : !hideR)
+            continue;
+        const int mx = side == 0 ? kTabsX : kTabsEnd - kTabMarkW + kTabGap;
+        const int mw = kTabMarkW - kTabGap;
+        b.fill(mx, kTabBarY + 6, mw, kTabBarH - 12, pal::panel);
+        b.frame(mx, kTabBarY + 6, mw, kTabBarH - 12, pal::edge, 1);
+        b.tri(mx + 2, kTabBarY + (kTabBarH - 12) / 2, 12, side == 0 ? ArrowDir::Left : ArrowDir::Right, pal::dim,
+              true);
     }
 }
 
@@ -560,7 +598,19 @@ void feedbackBand(Builder& b, const UiSnapshot& s) noexcept
     // REC: the readout, under the left part of the feedback bar (free on every
     // tab: below the L2 key and the scale ticks, left of the "0 dB" label), red
     // at 16 px. At most kRecReadoutChars characters, so it ends before "0 dB".
-    if(s.record.show != RecordShow::None)
+    // PRESET-B: on the other tabs a fresh preset message takes this place
+    // when the app says it outranks the recorder's (PresetPanel.h,
+    // presetHeaderWins): a success in green, a failure in red, cut with "..".
+    // On the PRESET tab the message is on the tab itself.
+    if(s.tab != Tab::Preset && s.preset.headerWins && s.preset.header != PresetMessageView::None &&
+       s.preset.headerText[0] != '\0')
+    {
+        char msg[kRecReadoutChars + 1];
+        appendCut(msg, sizeof msg, 0, s.preset.headerText, static_cast<std::size_t>(kRecReadoutChars));
+        b.text(kRecReadoutX, kRecReadoutY, 2, s.preset.header == PresetMessageView::Bad ? pal::clip : pal::switchOn,
+               TextRole::PresetStatus, msg);
+    }
+    else if(s.record.show != RecordShow::None)
     {
         char rec[48];
         formatRecordReadout(rec, sizeof rec, s.record);
@@ -1920,6 +1970,198 @@ void modTab(Builder& b, const UiSnapshot& s) noexcept
         modCard(b, s, i);
 }
 
+// --- PRESET tab (PRESET-B) ---------------------------------------------------------------------
+// The list: item 0 SAVE NEW, item i + 1 preset i (app/PresetView.h).
+void presetRow(Builder& b, const UiPresetView& p, int i) noexcept
+{
+    const int   item   = p.first + i;
+    const int   y      = kPreRowY + i * kPreRowStep;
+    const bool  cursor = item == p.cursor;
+    const bool  marked = item == p.marked && item > 0;
+    const Color fg     = cursor ? pal::bg : pal::text;
+    b.panel(PanelKind::PresetRow, kRowX, y, kRowW, kPreRowH, kNoKnobIndex, i, cursor);
+    if(cursor)
+        b.fill(kRowX, y, kRowW, kPreRowH, pal::accent);
+    else
+    {
+        b.fill(kRowX, y, kRowW, kPreRowH, item == 0 ? pal::panelDark : pal::panel);
+        b.frame(kRowX, y, kRowW, kPreRowH, pal::edge, 1);
+    }
+    if(cursor)
+        b.text(kRowX + 12, y + 3, 4, fg, TextRole::PresetText, ">");
+    if(item == 0)
+    {
+        // SAVE NEW in the accent colour (bg on the cursor), with a plus.
+        b.text(kPreNameX, y + 3, 4, cursor ? pal::bg : pal::accent, TextRole::PresetText, "+ SAVE NEW");
+    }
+    else
+    {
+        const int room =
+            ((marked ? kPreMarkRight - textWidth("LAST", 2) - 16 : kPreScrollX - 8) - kPreNameX) / glyphPx(4);
+        char name[TextItem::kMaxChars + 1];
+        appendCut(name, sizeof name, 0, p.names[i], static_cast<std::size_t>(room > 0 ? room : 0));
+        if(name[0] != '\0')
+            b.text(kPreNameX, y + 3, 4, fg, TextRole::PresetText, name);
+        if(marked)
+        {
+            // The last loaded or saved preset: a LAST tag on a plate.
+            const int tw = textWidth("LAST", 2);
+            b.fill(kPreMarkRight - tw - 8, y + 9, tw + 8, 20, cursor ? pal::bg : pal::accent);
+            b.text(kPreMarkRight - tw - 4, y + 11, 2, cursor ? pal::accent : pal::bg, TextRole::PresetText, "LAST");
+        }
+    }
+    // Scroll arrows on the first and last rows when items are hidden there.
+    const int n = p.count + 1;
+    if(i == 0 && p.first > 0)
+        b.tri(kPreScrollX, y + 11, 16, ArrowDir::Up, cursor ? pal::bg : pal::dim, true);
+    if(i == p.rows - 1 && p.first + p.rows < n)
+        b.tri(kPreScrollX, y + 11, 16, ArrowDir::Down, cursor ? pal::bg : pal::dim, true);
+}
+
+// "D-pad right": the four-way d-pad icon (24 x 24) with the right arm in `c` and
+// the other three in `rest`. A lone right arrow is not used for this: it is the
+// symbol printed on the Brick's Start button.
+void dpadRightIcon(Builder& b, int x, int y, Color c, Color rest) noexcept
+{
+    b.tri(x + 8, y, 8, ArrowDir::Up, rest, true);
+    b.tri(x + 8, y + 16, 8, ArrowDir::Down, rest, true);
+    b.tri(x, y + 8, 8, ArrowDir::Left, rest, true);
+    b.tri(x + 16, y + 8, 8, ArrowDir::Right, c, true);
+}
+
+// A key cap, "+" and the d-pad-right icon, then the text; returns the x after it.
+int presetHint(Builder& b, int x, int y, const char* key, const char* text, Color c) noexcept
+{
+    if(key != nullptr)
+    {
+        x += b.keyCap(x, y - 3, key, 2, c, pal::panel, false, 22);
+        b.text(x + 4, y, 2, c, TextRole::PresetText, "+");
+        x += 4 + glyphPx(2) + 4;
+    }
+    dpadRightIcon(b, x, y - 4, pal::text, pal::faint);
+    x += 24 + 8;
+    b.text(x, y, 2, c, TextRole::PresetText, text);
+    return x + textWidth(text, 2);
+}
+
+void presetBottom(Builder& b, const UiSnapshot& s) noexcept
+{
+    const UiPresetView& p = s.preset;
+    const int           y = kPreBottomY;
+    b.panel(PanelKind::PresetBottom, kRowX, y, kRowW, kPreBottomH);
+    if(p.hold != PresetHoldView::None)
+    {
+        // The hold: what it will do at 24 px, the bar filling over 1 s.
+        const bool  del = p.hold == PresetHoldView::Delete;
+        const Color c   = del ? pal::clip : pal::feedback;
+        b.fill(kRowX, y, kRowW, kPreBottomH, pal::panel);
+        b.frame(kRowX, y, kRowW, kPreBottomH, c, 3);
+        char what[TextItem::kMaxChars + 1];
+        const std::size_t at = appendCut(what, sizeof what, 0, del ? "DELETE " : "OVERWRITE ", 16);
+        appendCut(what, sizeof what, at, p.holdName, static_cast<std::size_t>(26) - at);
+        b.text(kRowX + 12, y + 6, 3, pal::text, TextRole::PresetText, what);
+        b.textRight(kRowX + kRowW - 12, y + 10, 2, pal::dim, TextRole::PresetText, "KEEP HOLDING");
+        const int bx = kRowX + 12;
+        const int bw = kRowW - 24;
+        b.fill(bx, y + 34, bw, 14, pal::panelDark, RectTag::Bar);
+        b.fill(bx, y + 34, fraction(bw, p.holdProgress), 14, c, RectTag::HoldBar);
+        b.frame(bx, y + 34, bw, 14, pal::edge, 1);
+        return;
+    }
+    b.fill(kRowX, y, kRowW, kPreBottomH, pal::panelDark);
+    b.frame(kRowX, y, kRowW, kPreBottomH, pal::edge, 1);
+    // Line 1 (y + 4, 24 px; 16 px when it does not fit): the message.
+    if(p.message != PresetMessageView::None && p.messageText[0] != '\0')
+    {
+        const bool  bad   = p.message == PresetMessageView::Bad;
+        const int   room3 = (kRowW - 32) / glyphPx(3);
+        const int   len   = static_cast<int>(std::strlen(p.messageText));
+        const int   sc    = len <= room3 ? 3 : 2;
+        int         room  = (kRowW - 32) / glyphPx(sc);
+        if(room > static_cast<int>(TextItem::kMaxChars))
+            room = static_cast<int>(TextItem::kMaxChars); // a text item holds at most 47 characters
+        char        msg[TextItem::kMaxChars + 1];
+        appendCut(msg, sizeof msg, 0, p.messageText, static_cast<std::size_t>(room));
+        const int ty = y + 4 + (sc == 3 ? 0 : 4);
+        if(bad)
+        {
+            b.fill(kRowX + 8, ty - 2, textWidth(msg, sc) + 8, glyphPx(sc) + 4, pal::clip);
+            b.text(kRowX + 12, ty, sc, pal::bg, TextRole::PresetMessage, msg);
+        }
+        else
+        {
+            b.text(kRowX + 12, ty, sc, pal::switchOn, TextRole::PresetMessage, msg);
+        }
+    }
+    else if(p.busy)
+    {
+        b.text(kRowX + 12, y + 4, 3, pal::dim, TextRole::PresetMessage, "SAVING..");
+    }
+    // Line 2 (y + 34, 16 px): what the buttons do here.
+    const int hy = y + 34;
+    int       x  = kRowX + 12;
+    if(p.cursor == 0)
+    {
+        x = presetHint(b, x, hy, nullptr, "SAVE NEW", pal::dim);
+        b.text(x + 32, hy, 2, pal::dim, TextRole::PresetText, "START + A: SAVE NEW ON ANY TAB");
+    }
+    else
+    {
+        x = presetHint(b, x, hy, nullptr, "LOAD", pal::dim);
+        x = presetHint(b, x + 32, hy, "X", "HOLD: OVERWRITE", pal::dim);
+        presetHint(b, x + 32, hy, "Y", "HOLD: DELETE", pal::dim);
+    }
+}
+
+void presetTab(Builder& b, const UiSnapshot& s) noexcept
+{
+    const UiPresetView& p = s.preset;
+    // The title line: PRESETS, and the count at the right.
+    b.panel(PanelKind::PresetHeader, kRowX, kPreTitleY, kRowW, kPreTitleH);
+    b.text(kRowX + 8, kPreTitleY + 1, 3, pal::text, TextRole::PresetText, "PRESETS");
+    char count[48];
+    if(p.folder != PresetFolderView::Ok)
+        std::snprintf(count, sizeof count, "%s", "");
+    else if(p.total > p.count)
+        std::snprintf(count, sizeof count, "%d PRESETS, FIRST %d SHOWN", p.total, p.count);
+    else
+        std::snprintf(count, sizeof count, "%d PRESET%s", p.count, p.count == 1 ? "" : "S");
+    if(count[0] != '\0')
+        b.textRight(kRowX + kRowW - 8, kPreTitleY + 5, 2, pal::dim, TextRole::PresetText, count);
+
+    for(int i = 0; i < p.rows && i < kPresetListRows; ++i)
+        presetRow(b, p, i);
+
+    // Under SAVE NEW when there is nothing to list: why.
+    if(p.count == 0)
+    {
+        const char* line1 = "NO PRESETS YET";
+        const char* line2 = "RIGHT ON SAVE NEW OR START + A SAVES ONE";
+        switch(p.folder)
+        {
+            case PresetFolderView::NotSet:
+                line1 = "NO PRESET FOLDER SET";
+                line2 = "THE LAUNCHER PASSES ONE (--preset-dir)";
+                break;
+            case PresetFolderView::Missing:
+                line1 = "PRESET FOLDER NOT FOUND";
+                line2 = "SAVING A PRESET CREATES IT";
+                break;
+            case PresetFolderView::Unreadable:
+                line1 = "CANNOT READ THE PRESET FOLDER";
+                line2 = "SEE THE LOG FOR THE REASON";
+                break;
+            case PresetFolderView::Ok: break;
+        }
+        const int y = kPreRowY + kPreRowStep + 8;
+        b.panel(PanelKind::PresetRow, kRowX, y, kRowW, 2 * kPreRowStep, kNoKnobIndex, 1, false);
+        b.text(kPreNameX, y + 8, 3, p.folder == PresetFolderView::Unreadable ? pal::clip : pal::dim,
+               TextRole::PresetText, line1);
+        b.text(kPreNameX, y + 44, 2, pal::faint, TextRole::PresetText, line2);
+    }
+    presetBottom(b, s);
+}
+
 // --- Value strip ---------------------------------------------------------------------------
 // Strip cells: label line y+6..22, value y+25..49 (scale 3) or y+29..45
 // (scale 2), bar y+50..53 (never under the value).
@@ -2116,27 +2358,41 @@ void dpadIcon(Builder& b, int x, int y, Color c) noexcept
 
 void footer(Builder& b, const UiSnapshot& s) noexcept
 {
+    // What follows the keys: nothing, "+ d-pad" (the four-way icon), or "+ right"
+    // (the d-pad icon with only its right arm lit, as on the PRESET tab's hint line).
+    enum class Pad : std::uint8_t
+    {
+        None,
+        Dpad,
+        Right,
+    };
     struct Item
     {
         const char* key1;
         const char* key2;  // nullptr = none
         bool        plus;  // "+" between the keys (a chord) instead of a space (either key)
-        bool        dpad;  // "+ d-pad" after the keys
+        Pad         pad;   // after the keys
         const char* label;
         bool        held;
     };
     // SWITCH lights for the momentary hold only (the snapshot's switchHeld is
     // false for a B press that latches with Select); LATCH lights for that press.
     const bool latchPress = down(s, Button::B) && !s.switchHeld;
+    const bool preset     = s.tab == Tab::Preset;
     const Item items[8]   = {
-        {"L1", "R1", false, false, "TAB", down(s, Button::L1) || down(s, Button::R1)},
-        {"L2", "R2", false, false, "FEEDBACK", down(s, Button::L2) || down(s, Button::R2)},
-        {"A", nullptr, false, false, "MAX", down(s, Button::A)},
-        {"B", nullptr, false, false, "SWITCH", s.switchHeld},
-        {"SELECT", nullptr, false, false, "FINE", s.fine},
-        {"SELECT", "B", true, false, "LATCH", latchPress},
-        {"X", nullptr, false, false, s.tab == Tab::Mod ? "SLOT" : "SHIFT", s.xHeld}, // MOD-D: X picks the slot
-        {"Y", nullptr, false, true, "RESET", s.yHeld},
+        {"L1", "R1", false, Pad::None, "TAB", down(s, Button::L1) || down(s, Button::R1)},
+        {"L2", "R2", false, Pad::None, "FEEDBACK", down(s, Button::L2) || down(s, Button::R2)},
+        {"A", nullptr, false, Pad::None, "MAX", down(s, Button::A)},
+        {"B", nullptr, false, Pad::None, "SWITCH", s.switchHeld},
+        {"SELECT", nullptr, false, Pad::None, "FINE", s.fine},
+        {"SELECT", "B", true, Pad::None, "LATCH", latchPress},
+        // MOD-D: X picks the slot on MOD. PRESET-B: on PRESET, X / Y + right
+        // held overwrite / delete: only right acts, so the cell shows the d-pad
+        // with only its right arm lit ("HOLD" does not fit beside it in the cell; the
+        // tab's hint line says HOLD: OVERWRITE / HOLD: DELETE).
+        {"X", nullptr, false, preset ? Pad::Right : Pad::None,
+         s.tab == Tab::Mod ? "SLOT" : (preset ? "OVERWRITE" : "SHIFT"), s.xHeld},
+        {"Y", nullptr, false, preset ? Pad::Right : Pad::Dpad, preset ? "DELETE" : "RESET", s.yHeld},
     };
     for(int i = 0; i < 8; ++i)
     {
@@ -2164,11 +2420,18 @@ void footer(Builder& b, const UiSnapshot& s) noexcept
             }
             cx += b.keyCap(cx, y + 5, it.key2, 2, fg, bk, false);
         }
-        if(it.dpad)
+        if(it.pad == Pad::Dpad)
         {
             b.text(cx + 2, y + 9, 2, fg, TextRole::Footer, "+");
             cx += 20;
             dpadIcon(b, cx, y + 5, fg);
+            cx += 24;
+        }
+        else if(it.pad == Pad::Right)
+        {
+            b.text(cx + 2, y + 9, 2, fg, TextRole::Footer, "+");
+            cx += 20;
+            dpadRightIcon(b, cx, y + 5, fg, pal::dim);
             cx += 24;
         }
         b.text(cx + 8, y + 9, 2, fg, TextRole::Footer, it.label);
@@ -2217,6 +2480,44 @@ float repeatsUnityPosition() noexcept
     return max > 1.0f ? 1.0f / max : 1.0f;
 }
 
+TabSpan tabBarSpan(Tab selected) noexcept
+{
+    const int n   = static_cast<int>(kTabCount);
+    int       sel = static_cast<int>(selected);
+    if(sel < 0 || sel >= n)
+        sel = 0;
+    auto natural = [](int i) { return textWidth(tabSpec(static_cast<Tab>(i)).name, 3) + kTabMinPad; };
+    auto fits    = [&](int lo, int hi) {
+        int w = (hi - lo) * kTabGap + (lo > 0 ? kTabMarkW : 0) + (hi < n - 1 ? kTabMarkW : 0);
+        for(int i = lo; i <= hi; ++i)
+            w += natural(i);
+        return w <= kTabsEnd - kTabsX;
+    };
+    // The selected tab and its neighbours (at the ends of the order only the
+    // one there is), then one more tab at a time, right then left in turn,
+    // while it fits.
+    int lo = sel > 0 ? sel - 1 : 0;
+    int hi = sel < n - 1 ? sel + 1 : n - 1;
+    if(!fits(lo, hi))
+        return TabSpan{sel, sel}; // cannot happen with today's names
+    bool grew = true;
+    while(grew)
+    {
+        grew = false;
+        if(hi < n - 1 && fits(lo, hi + 1))
+        {
+            ++hi;
+            grew = true;
+        }
+        if(lo > 0 && fits(lo - 1, hi))
+        {
+            --lo;
+            grew = true;
+        }
+    }
+    return TabSpan{lo, hi};
+}
+
 std::size_t formatStripValue(char* out, std::size_t size, const UiSnapshot& s, Knob k) noexcept
 {
     if(k == Knob::FeedbackGain)
@@ -2238,6 +2539,8 @@ void buildLayout(const UiSnapshot& s, const MeterView& m, DrawList& out) noexcep
         inputTab(b, s, m); // M2b-A: no knob rows on INPUT
     else if(s.tab == Tab::Mod)
         modTab(b, s); // MOD-B: the editor rows and the slot cards
+    else if(s.tab == Tab::Preset)
+        presetTab(b, s); // PRESET-B: the list, the hold bar, the message line
     else
         currentTab(b, s);
     meters(b, m);

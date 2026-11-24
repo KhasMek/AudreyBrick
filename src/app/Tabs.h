@@ -12,6 +12,9 @@
 //
 // MOD-B adds MOD after INPUT (L1/R1 wrap through it). It binds no knob either:
 // its d-pad, X and Y move the modulation panel's own state (app/ModPanel.h).
+//
+// PRESET-B adds PRESET after MOD, the last tab (L1 from LOOP lands on it). It
+// binds no knob: its d-pad, X and Y drive the preset panel (app/PresetPanel.h).
 
 #pragma once
 
@@ -31,6 +34,7 @@ enum class Tab : unsigned char
     Out,
     Input, // M2b-A: no knob bindings; the input panel (InputController)
     Mod,   // MOD-B: no knob bindings; the modulation panel (ModPanel)
+    Preset, // PRESET-B: no knob bindings; the preset panel (PresetPanel)
     Count
 };
 

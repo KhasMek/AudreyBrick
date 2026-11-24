@@ -26,6 +26,15 @@
 //   - Start events are always delivered (Start does nothing in the model;
 //     MenuQuit watches it, so Menu + Start still quits with Y held).
 //   - releaseAll() (focus lost, controller removed) forgets everything.
+//
+// PRESET-B: the same class is the Start + A chord (save a new preset): built
+// with RecordChord(Button::A), every "Y" above reads "A" (the field names keep
+// "Y"). So the A of Start + then A never reaches the model (feedback MAX never
+// starts); with A + then Start, MAX sounded from A's press until Start, then
+// the model is told A is up (MAX ends; the stored feedback, which a preset
+// saves, was never changed by MAX) and the real A up is held back. InputRouter
+// runs the two chords one after the other (the Y chord ignores A, the A chord
+// ignores Y), so Start + Y + A fires both.
 
 #pragma once
 
@@ -40,9 +49,14 @@ class RecordChord
     struct Out
     {
         bool deliver  = true;  // pass this event on to the model and the panel
-        bool releaseY = false; // first deliver a Y up to the model and the panel
-        bool toggle   = false; // start or stop recording
+        bool releaseY = false; // first deliver an up of the chord's button (Y, or A) to the model and the panel
+        bool toggle   = false; // the chord fired: start or stop recording (Y), save a new preset (A)
     };
+
+    // `button`: the button that makes the chord with Start (Y: recording; A:
+    // presets, PRESET-B).
+    explicit RecordChord(Button button = Button::Y) noexcept : button_(button) {}
+    Button button() const noexcept { return button_; }
 
     Out  onButton(const ButtonEvent& e) noexcept;
     void releaseAll() noexcept;
@@ -52,6 +66,7 @@ class RecordChord
     unsigned fired() const noexcept { return fired_; }
 
   private:
+    Button   button_;
     bool     start_    = false;
     bool     y_        = false;
     bool     yHeldBack_ = false; // the current Y press is the chord's: its up is held back

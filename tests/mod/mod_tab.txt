@@ -6,9 +6,12 @@
 #   slot 2: sample-and-hold -> ReverbMix (TARGET left from NONE, wrapping), 1 Hz,
 #   depth +50 %, unipolar (MOD-C);
 #   the feedback raised with R2 so the instrument sounds.
-# L1 from LOOP wraps to MOD (the seventh tab). The cursor starts on TARGET.
-0.05  L1        down
-0.07  L1        up
+# L1 from LOOP wraps to PRESET (PRESET-B: the eighth tab), a second L1 goes to
+# MOD (the seventh). The cursor starts on TARGET.
+0.03  L1        down
+0.05  L1        up
+0.06  L1        down
+0.08  L1        up
 # Slot 1: right four times on TARGET: None -> FEEDBACK -> FREQUENCY -> BODY -> LOWPASS.
 0.10  DpadRight down
 0.12  DpadRight up

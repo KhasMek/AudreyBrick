@@ -136,6 +136,12 @@ class ModPanel
     void releaseAll() noexcept;
     // Every UI frame: ramps, the TARGET repeat, unsent settings, log lines.
     void tick(double t) noexcept;
+    // PRESET-A (preset/PresetState.h): stops a RATE or DEPTH ramp or a TARGET
+    // repeat in progress, as L1 / R1 do (a DEPTH ramp settles on its grid first;
+    // every d-pad direction that is down becomes inert until released). The X
+    // and Y states, the cursor and the selected slot are kept. For a preset
+    // load, before setSlot(), so no ramp carries on from the loaded values.
+    void cancelRamps() noexcept { makeDpadInert(); }
 
     // The slots (presets, --mod). setSlot() sanitises, stores and sends at
     // once (again from tick() if refused); logged once stable.

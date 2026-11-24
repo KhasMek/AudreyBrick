@@ -1,0 +1,9 @@
+{
+  "format": "audreybrick-preset",
+  "version": 1,
+  "app": "fixture",
+  "knobs": {
+    "FeedbackGain": 0.923611,
+    "OutputVolume": 0.35
+  }
+}

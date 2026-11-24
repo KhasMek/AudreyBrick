@@ -122,14 +122,15 @@ std::string keyboardHelpText()
            "  Q / W          L1 / R1: previous / next tab\n"
            "  A key / S key  L2 / R2: feedback down / up (hold to ramp)\n"
            "                 NOTE: the A key is L2, not the A button\n"
-           "  Space          A button: feedback to maximum while held\n"
+           "  Space          A button: feedback to maximum while held;\n"
+           "                 with Return (Start) held: save a new preset\n"
            "  B              B button: delay switch while held; Left Shift + B latches it\n"
            "  X              X button: hold to shift the d-pad to the tab's other parameters\n"
            "  Y              Y button: hold + a d-pad direction resets that parameter;\n"
            "                 with Return (Start) held: start / stop recording\n"
            "  Left Shift     Select: fine adjust while held\n"
-           "  Return         Start: held + Y starts / stops recording to data/recordings\n"
-           "                 (no function by itself)\n"
+           "  Return         Start: held + Y starts / stops recording to data/recordings;\n"
+           "                 held + A (Space) saves a new preset (no function by itself)\n"
            "  Escape, Alt+F4 quit (on a pad: Menu + Start)\n";
 }
 
@@ -163,6 +164,9 @@ std::string usageText(const char* program)
            "                           is steadier with bursty capture devices but delays the input\n"
            "  --record-dir <dir>       the folder Start + Y records into (rec-0001.wav, ...; default\n"
            "                           data/recordings; created when a recording starts)\n"
+           "  --preset-dir <dir>       the presets folder (preset-0001.json, ...; the PRESET tab lists its\n"
+           "                           *.json files; created by the first save). Default: none (saving\n"
+           "                           reports that no folder is set)\n"
            "  --input-dir <dir>        the folder the INPUT tab's FILE source lists (*.wav); a missing\n"
            "                           or empty folder is not an error (the launcher passes data/input)\n"
            "  --version                print the version and exit\n"
@@ -199,6 +203,10 @@ std::string usageText(const char* program)
            "                           (0.01 Hz to 2 kHz, envelope: release 5 s to 5 ms); depth -1..1; an\n"
            "                           optional polarity (default bipolar) (repeatable); through the MOD tab's\n"
            "                           panel, so the screen shows it\n"
+           "  --expect-preset <saved|loaded|overwritten|deleted|failed|files> <n>\n"
+           "                           self-test: exactly n presets were saved new / loaded / overwritten /\n"
+           "                           deleted, n preset actions failed, or n presets are listed at the end\n"
+           "                           (repeatable)\n"
            "  --expect-mod-active <target>\n"
            "                           self-test: that target's modulation offset was not 0 at some UI frame\n"
            "                           (repeatable)\n"
@@ -329,6 +337,43 @@ bool parseOptions(int argc, const char* const* argv, AppOptions& out, std::strin
                 return false;
             }
             o.recordDir = v;
+        }
+        else if(a == "--preset-dir")
+        {
+            if(!value(v))
+                return false;
+            if(*v == '\0')
+            {
+                error = "--preset-dir: empty folder name";
+                return false;
+            }
+            o.presetDir = v;
+        }
+        else if(a == "--expect-preset")
+        {
+            if(i + 2 >= argc || argv[i + 1] == nullptr || argv[i + 2] == nullptr)
+            {
+                error = "--expect-preset needs <saved|loaded|overwritten|deleted|failed|files> <n>";
+                return false;
+            }
+            PresetExpectation ex;
+            ex.what = argv[++i];
+            int n   = 0;
+            if(ex.what != "saved" && ex.what != "loaded" && ex.what != "overwritten" && ex.what != "deleted" &&
+               ex.what != "failed" && ex.what != "files")
+            {
+                error = "--expect-preset: expected saved, loaded, overwritten, deleted, failed or files, got '" +
+                        ex.what + "'";
+                return false;
+            }
+            if(!parseInt(argv[++i], n) || n < 0)
+            {
+                error = std::string("--expect-preset ") + ex.what + ": expected a count of 0 or more, got '" + argv[i] +
+                        "'";
+                return false;
+            }
+            ex.count = n;
+            o.expectPresets.push_back(ex);
         }
         else if(a == "--expect-recordings")
         {
@@ -567,10 +612,11 @@ bool parseOptions(int argc, const char* const* argv, AppOptions& out, std::strin
     }
     if(!o.selftest() && (!o.expectKnobs.empty() || o.hasPeakMin || o.hasPeakMax || o.hasInputPeakMin ||
                          o.hasLiveUnderrunsMax || o.hasLiveUnderrunsMin || o.hasLiveRepeatsMin || o.hasLiveOverfillsMin ||
-                         !o.expectLiveStatus.empty() || o.expectRecordings >= 0 || !o.expectModActive.empty()))
+                         !o.expectLiveStatus.empty() || o.expectRecordings >= 0 || !o.expectModActive.empty() ||
+                         !o.expectPresets.empty()))
     {
         error = "--expect-knob, --expect-peak-min, --expect-peak-max, --expect-input-peak-min, --expect-live-*, "
-                "--expect-recordings and --expect-mod-active are only used with --selftest";
+                "--expect-recordings, --expect-mod-active and --expect-preset are only used with --selftest";
         return false;
     }
     out = std::move(o);
@@ -762,6 +808,27 @@ void App::drainModLog()
         log_.line(logTime(), "%s", l.c_str());
 }
 
+void App::drainPresetLog()
+{
+    if(!presetPanel_)
+        return;
+    try
+    {
+        presetLog_.clear();
+        presetPanel_->takeLog(presetLog_);
+    }
+    catch(...)
+    {
+        // Out of memory: these log lines are lost, nothing else.
+    }
+    for(const std::string& l : presetLog_)
+    {
+        log_.line(logTime(), "%s", l.c_str());
+        if(opts_.selftest())
+            std::printf("selftest: preset log: %s\n", l.c_str());
+    }
+}
+
 void App::drainInputLog()
 {
     try
@@ -903,6 +970,12 @@ bool App::startUp(std::string& error)
                   static_cast<double>(m.settings.rateNorm), static_cast<double>(m.settings.depth),
                   modPolarityName(modEffectivePolarity(m.settings)));
     }
+    // PRESET-B: the presets folder and the PRESET tab (after the model and the
+    // MOD panel, which it drives); one scan now, for the log.
+    presetStore_ = std::make_unique<PresetStore>(presetFs_, opts_.presetDir, buildVersion());
+    presetPanel_ = std::make_unique<PresetPanel>(*presetStore_, *model_, *source_, *modPanel_);
+    presetPanel_->scanAtStart();
+    drainPresetLog();
     // M2b-A: the input stage, prepared with the render buffers when the device opens.
     // M2b-B: with the live input's ring.
     live_  = std::make_unique<LiveInput>();
@@ -1028,6 +1101,9 @@ void App::shutDown() noexcept
         modPanel_->flushLog(); // MOD-B review: a slot changed less than 0.5 s before quitting
         drainModLog();
     }
+    drainPresetLog();
+    presetPanel_.reset(); // PRESET-B: before the model, the MOD panel and the source it points at
+    presetStore_.reset();
     inputCtl_.reset();
     captureHost_.reset();
     captureSim_.reset();
@@ -1100,12 +1176,14 @@ void App::drainRecorder()
             copyString(recordSavedName_, sizeof recordSavedName_, r.name.c_str());
             recordSavedSeconds_ = r.seconds;
             recordMessageUntil_ = wall + 2.0;
+            recordMessageSince_ = wall;
         }
         else
         {
             recordMessageShow_  = RecordShow::Message;
             recordMessage_      = msg;
             recordMessageUntil_ = wall + 4.0;
+            recordMessageSince_ = wall;
         }
         if(opts_.selftest())
             std::printf("selftest: record: %s %s, %llu frames (%.3f s), dropped %llu, largest ring fill %zu frames, "
@@ -1145,6 +1223,7 @@ void App::onRecordToggle()
         recordMessageShow_  = RecordShow::Message;
         recordMessage_      = "REC BUSY";
         recordMessageUntil_ = now() + 2.0;
+        recordMessageSince_ = now();
     }
     else if(res == Recorder::Toggle::Starting)
     {
@@ -1242,7 +1321,13 @@ void App::fillSnapshot(double t)
     }
 
     // REC.
-    fillRecordView(now());
+    const double wall = now();
+    fillRecordView(wall);
+    // PRESET-B: the PRESET tab, and whether its message takes the header's
+    // readout on the other tabs (PresetPanel.h, presetHeaderWins).
+    presetPanel_->fill(snap_.preset, wall);
+    snap_.preset.headerWins = presetHeaderWins(snap_.record.show, recordMessageSince_, snap_.preset.header,
+                                               snap_.preset.headerSince);
 }
 
 void App::render(const UiSnapshot& s)
@@ -1499,7 +1584,8 @@ int App::run()
     std::uint64_t drainTarget = 0;
     double       lastPresent  = -1.0;
 
-    InputRouter router(*model_, quit_, selftest, inputCtl_.get(), &recordChord_, modPanel_.get());
+    InputRouter router(*model_, quit_, selftest, inputCtl_.get(), &recordChord_, modPanel_.get(), &presetChord_,
+                       presetPanel_.get());
     bool        running = true;
     while(running)
     {
@@ -1586,6 +1672,8 @@ int App::run()
         drainInputLog();
         modPanel_->tick(t); // MOD-B: ramps, the TARGET repeat (MOD-D), unsent settings, log lines
         drainModLog();
+        presetPanel_->tick(t, frameStart); // PRESET-B: repeats, holds, the pending action (the save wait)
+        drainPresetLog();
         drainRecorder(); // REC: the writer's log lines and finished files
 
         if(selftest)
@@ -1938,6 +2026,41 @@ int App::finishSelftest(double wallSeconds, bool timedOut)
             std::printf("selftest: ok: %s\n", buf);
         else
             fail(buf);
+    }
+    // PRESET-B: the presets.
+    {
+        const PresetStore& ps = presetPanel_->store();
+        std::printf("presets: folder %s, %zu listed (%zu found); loaded %llu, saved %llu, overwritten %llu, deleted %llu, "
+                    "failed %llu, ignored while busy %llu; marked %s; cursor %d\n",
+                    ps.dir().empty() ? "(none)" : ps.dir().c_str(), ps.entries().size(), ps.totalFound(),
+                    static_cast<unsigned long long>(presetPanel_->loads()),
+                    static_cast<unsigned long long>(presetPanel_->saves()),
+                    static_cast<unsigned long long>(presetPanel_->overwrites()),
+                    static_cast<unsigned long long>(presetPanel_->deletes()),
+                    static_cast<unsigned long long>(presetPanel_->failures()),
+                    static_cast<unsigned long long>(presetPanel_->ignoredBusy()),
+                    presetPanel_->marked().empty() ? "(none)" : presetPanel_->marked().c_str(), presetPanel_->cursor());
+        for(const PresetExpectation& ex : opts_.expectPresets)
+        {
+            unsigned long long actual = 0;
+            if(ex.what == "saved")
+                actual = presetPanel_->saves();
+            else if(ex.what == "loaded")
+                actual = presetPanel_->loads();
+            else if(ex.what == "overwritten")
+                actual = presetPanel_->overwrites();
+            else if(ex.what == "deleted")
+                actual = presetPanel_->deletes();
+            else if(ex.what == "failed")
+                actual = presetPanel_->failures();
+            else
+                actual = ps.entries().size();
+            std::snprintf(buf, sizeof buf, "presets %s: expected %ld, actual %llu", ex.what.c_str(), ex.count, actual);
+            if(actual == static_cast<unsigned long long>(ex.count))
+                std::printf("selftest: ok: %s\n", buf);
+            else
+                fail(buf);
+        }
     }
     // REC: the recordings.
     {

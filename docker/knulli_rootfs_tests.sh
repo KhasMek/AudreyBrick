@@ -16,9 +16,14 @@
 # system where chmod works; on the Mac's shared folder it does not).
 # M3-B: the CPU governor handling, the A/B swap setting and the settings line are
 # tested against a fake sysfs tree in /tmp/fakesys (AUDREY_SYSFS_CPU, a testing aid).
-# M2b-A: the package's data/input folder, the launcher's --input-dir, a FILE
+# M2b-A: the launcher's data/input folder and --input-dir, a FILE
 # self-test through the launcher with a WAV file written here with bash's printf
 # (the device root has no tool of ours), and a data/input that cannot be created.
+# PRESET-C: /userdata is an empty tmpfs; /userdata/saves does not exist until the
+# section "PRESET-C" creates it (so every section before it tests the app-folder
+# branch, data/ inside the package copy). The package itself ships no data folder.
+# PRESET-D: an older version's data/ next to a data folder in /userdata/saves is
+# left untouched (compared entry by entry, with times) and gives one notice.
 #
 # Only the device's loader, libraries and standard tools (bash, ldd, coreutils,
 # grep, sed, procps) run here, plus our app.
@@ -38,6 +43,53 @@ fails=0
 pass() { echo "[PASS] $*"; }
 fail() { echo "[FAIL] $*"; fails=$((fails + 1)); }
 section() { printf '\n==== %s ====\n' "$*"; }
+
+# --- PRESET-C as root (AB_ROOT_SECTION=1; a second container started by
+# scripts/test_on_knulli_rootfs.sh without --user) ----------------------------------------
+# On the device the launcher runs as root, for which permission bits never make a
+# folder unwritable; only a read-only file system does. Mounts of that container:
+#   /ro-empty               an empty folder, read-only bind mount
+#   /ro-saves               holds audreybrick/, read-only bind mount
+#   /userdata, /tmp, /var/run  tmpfs as in the main container
+if [ "${AB_ROOT_SECTION:-0}" = 1 ]; then
+    section "PRESET-C as root: read-only file systems (uid $(id -u))"
+    [ "$(id -u)" -eq 0 ] && pass "running as root, as the launcher does on the device" || fail "not root (uid $(id -u))"
+    QUICK="--selftest /ab/rise.txt --seconds 0.3 --no-video"
+    RP2="/tmp/root ports"
+    rpkg() { rm -rf "$RP2"; mkdir -p "$RP2" && cp -r /ab/pkg/. "$RP2/" && mkdir -p "$RP2/audreybrick/data/recordings" && printf 'mine\n' > "$RP2/audreybrick/data/recordings/rec-0001.wav"; }
+    rlaunch() { local pf="$1"; shift; ( cd / && env SDL_AUDIODRIVER=dummy AUDREY_KEEP_AWAKE=0 "$@" /bin/bash "$pf/AudreyBrick.sh" ); }
+    # R1: the saves folder is on a read-only file system (empty).
+    rpkg
+    rlaunch "$RP2" AUDREY_SAVES_DIR=/ro-empty AUDREY_ARGS="$QUICK"
+    rc=$?
+    grep -E '^launcher: (PROBLEM: )?(data folder|old data folder)' "$RP2/audreybrick/data/stdout.log" | sed 's/^/  /'
+    [ "$rc" -eq 0 ] && grep -qF "launcher: data folder: $RP2/audreybrick/data (the app folder's data/: /ro-empty is not writable (AUDREY_SAVES_DIR, testing aid))" "$RP2/audreybrick/data/stdout.log" \
+        && [ "$(cat "$RP2/audreybrick/data/recordings/rec-0001.wav")" = mine ] && [ -z "$(ls -A /ro-empty)" ] \
+        && ! grep -q 'old data folder' "$RP2/audreybrick/data/stdout.log" \
+        && pass "root, saves on a read-only file system: the app folder's data/ used (no notice), nothing written there" || fail "root R1 (rc $rc)"
+    # R2: saves/audreybrick exists on a read-only file system.
+    rpkg
+    rlaunch "$RP2" AUDREY_SAVES_DIR=/ro-saves AUDREY_ARGS="$QUICK" 2>/dev/null
+    rc=$?
+    [ "$rc" -eq 0 ] && grep -qF "launcher: PROBLEM: data folder: /ro-saves/audreybrick exists but is not a writable folder; using $RP2/audreybrick/data instead" "$RP2/audreybrick/data/stdout.log" \
+        && [ "$(cat "$RP2/audreybrick/data/recordings/rec-0001.wav")" = mine ] \
+        && pass "root, saves/audreybrick on a read-only file system: PROBLEM line, the app folder's data/ used" || fail "root R2 (rc $rc)"
+    rm -rf "$RP2"
+    # R3: permission bits do not stop root (as on the device): mode 000 is still used;
+    # the app folder's old data/ is left untouched, with the notice.
+    mkdir -p /userdata/saves/audreybrick && chmod 000 /userdata/saves/audreybrick
+    rpkg
+    rlaunch "$RP2" AUDREY_ARGS="$QUICK" 2>/dev/null
+    grep -qF 'launcher: data folder: /userdata/saves/audreybrick (it exists and is writable)' /userdata/saves/audreybrick/stdout.log \
+        && [ "$(cat "$RP2/audreybrick/data/recordings/rec-0001.wav")" = mine ] && [ ! -e /userdata/saves/audreybrick/recordings/rec-0001.wav ] \
+        && grep -qF "launcher: old data folder: $RP2/audreybrick/data holds files from an older version; they are left untouched" /userdata/saves/audreybrick/stdout.log \
+        && pass "root: a saves/audreybrick with mode 000 is used (permission bits do not apply to root); the old data/ untouched, with the notice" || fail "root R3"
+    rm -rf /userdata/saves "$RP2"
+    echo
+    if [ "$fails" -eq 0 ]; then echo "rootfs tests (root section): OK"; exit 0; fi
+    echo "rootfs tests (root section): $fails FAILED"
+    exit 1
+fi
 
 section "The device root"
 echo "uname -m:  $(uname -m)"
@@ -112,8 +164,19 @@ cp "$DATA/audreybrick.log" /ab/out/launcher-audreybrick.log
 cp "$DATA/stdout.log" /ab/out/launcher-stdout.log
 
 section "M2b-A: the input folder, --input-dir, and FILE through the launcher"
-[ -d /ab/pkg/audreybrick/data/input ] && [ -z "$(ls -A /ab/pkg/audreybrick/data/input)" ] \
-    && pass "the package ships an empty audreybrick/data/input/" || fail "no empty data/input in the package"
+# PRESET-C: the package ships no data folder (it was an empty data/input before);
+# with no /userdata/saves here the launcher made data/ and data/input itself.
+[ ! -e /ab/pkg/audreybrick/data ] \
+    && pass "the package ships no audreybrick/data folder (PRESET-C; replacing the app folder deletes no user data)" \
+    || fail "the package holds audreybrick/data"
+[ -d "$DATA/input" ] && [ -d "$DATA/recordings" ] && [ -d "$DATA/presets" ] \
+    && grep -qF "launcher: data folder: $PORTS/audreybrick/data (the app folder's data/: /userdata/saves does not exist)" "$DATA/stdout.log" \
+    && grep -qF "launcher: presets folder: $PORTS/audreybrick/data/presets (0 preset file(s))" "$DATA/stdout.log" \
+    && pass "no /userdata/saves: the launcher uses and creates the app folder's data/ (input, recordings, presets) and says why" \
+    || fail "data folder in the app folder (no /userdata/saves)"
+grep -qF "preset: folder $PORTS/audreybrick/data/presets: 0 preset(s) listed" "$DATA/audreybrick.log" \
+    && pass "PRESET-B: the app got --preset-dir (the app folder's data/presets) and lists it" \
+    || fail "PRESET-B: no --preset-dir in the app-folder branch (no 'preset: folder' line)"
 grep -qF "launcher: input folder: $PORTS/audreybrick/data/input (0 WAV file(s);" "$DATA/stdout.log" \
     && pass "the launcher notes the input folder (0 WAV files)" || fail "no input folder note in stdout.log"
 grep -qF "input: source OFF at start; folder $PORTS/audreybrick/data/input" "$DATA/audreybrick.log" \
@@ -132,7 +195,8 @@ cp "$SQ" "$DATA/input/._square.wav"
 cp "$SQ" "$DATA/input/.hidden.wav"
 mkdir -p "$DATA/input/folder.wav"
 # M2b-A3: FILE (no automatic load), then hold X, d-pad right, release X: the file loads.
-printf '0.02 L1 down\n0.04 L1 up\n0.10 L1 down\n0.15 L1 up\n0.30 DpadRight down\n0.35 DpadRight up\n0.40 X down\n0.45 DpadRight down\n0.50 DpadRight up\n0.55 X up\n' > /tmp/input_file.txt
+# PRESET-B: eight tabs; L1 three times from LOOP: PRESET, MOD, INPUT.
+printf '0.02 L1 down\n0.04 L1 up\n0.10 L1 down\n0.15 L1 up\n0.20 L1 down\n0.25 L1 up\n0.30 DpadRight down\n0.35 DpadRight up\n0.40 X down\n0.45 DpadRight down\n0.50 DpadRight up\n0.55 X up\n' > /tmp/input_file.txt
 launch AUDREY_ARGS="--selftest /tmp/input_file.txt --seconds 3 --no-video --expect-knob FeedbackGain 0 0 --expect-input-peak-min 0.2 --expect-peak-min 0.02 --expect-peak-max 1.0"
 rc=$?
 grep -E "^launcher: input folder|^input:|^selftest: (ok|FAIL|PASSED|FAILED)|^output peak" "$DATA/stdout.log" | sed 's/^/  /'
@@ -154,7 +218,8 @@ section "M2b-B: LIVE with a simulated capture device through the launcher; the c
 # then usb (the gain forced to -inf dB), Y + up: unity; the tone reaches the
 # input meter and the output at minimum feedback.
 printf '%s\n' 'capture device usb 2 220 0.25 48000' 'capture device busy fail' \
-    '0.02 L1 down' '0.04 L1 up' '0.10 L1 down' '0.15 L1 up' '0.30 DpadRight down' '0.35 DpadRight up' '0.40 DpadRight down' '0.45 DpadRight up' \
+    '0.02 L1 down' '0.04 L1 up' '0.10 L1 down' '0.15 L1 up' '0.20 L1 down' '0.25 L1 up' \
+    '0.30 DpadRight down' '0.35 DpadRight up' '0.40 DpadRight down' '0.45 DpadRight up' \
     '0.60 X down' '0.65 DpadRight down' '0.70 DpadRight up' '0.75 DpadRight down' '0.80 DpadRight up' '0.85 X up' \
     '1.00 X down' '1.05 DpadLeft down' '1.10 DpadLeft up' '1.15 X up' \
     '1.50 Y down' '1.55 DpadUp down' '1.60 DpadUp up' '1.65 Y up' '2.50 capture unplug usb' > /tmp/input_live.txt
@@ -609,6 +674,313 @@ ls "$RT/audreybrick/data" | grep -q '^audreybrick-000005-00000000-000000\.log$' 
     && pass "runs without a clock still get unique, ordered names (run number first)" || fail "no-clock names"
 [ "$(cat "$RT/audreybrick/data/run-counter")" = 10 ] && grep -q '^000010-' "$RT/audreybrick/data/latest-run" \
     && pass "run counter at 10, latest-run names run 10" || fail "run counter"
+
+# --- PRESET-C/D: the data folder in /userdata/saves; an old data/ left untouched --------
+SAVESD=/userdata/saves
+N="$SAVESD/audreybrick"
+P="/tmp/ports preset c"
+newpkg() { rm -rf "$P"; mkdir -p "$P" && cp -r /ab/pkg/. "$P/"; }
+OLD="$P/audreybrick/data"
+launch_p() { ( cd / && env SDL_AUDIODRIVER=dummy "$@" /bin/bash "$P/AudreyBrick.sh" ); }
+# "md5 relative-path" of every regular file below a folder, sorted.
+snap() { # <dir> <out file>
+    ( shopt -s globstar dotglob nullglob
+      cd "$1" 2>/dev/null || exit 0
+      for f in **; do [ -f "$f" ] && [ ! -L "$f" ] && printf '%s %s\n' "$(md5sum < "$f" | cut -c1-32)" "$f"; done ) | sort > "$2"
+}
+md5of() { md5sum < "$1" 2>/dev/null | cut -c1-32; }
+# Every content (md5) of the first snapshot is somewhere in the second, except
+# run-counter and latest-run (the launcher's own state, rewritten every start).
+nothing_lost() { # <before> <after>
+    [ -z "$(comm -23 <(grep -v -E ' (run-counter|latest-run)$' "$1" | cut -c1-32 | sort) <(cut -c1-32 "$2" | sort))" ]
+}
+rnd() { head -c "$2" /dev/urandom > "$1"; } # <file> <bytes>
+# An older version's data/ as it looks on the card after a few runs.
+make_old() {
+    mkdir -p "$OLD/input/sub dir" "$OLD/recordings" "$OLD/empty dir"
+    printf '41\n' > "$OLD/run-counter"
+    printf '000041-19700616-070532\n' > "$OLD/latest-run"
+    printf 'old app log, run 41\n' > "$OLD/audreybrick.log"
+    printf 'old stdout, run 41\n' > "$OLD/stdout.log"
+    printf 'old app log, run 40\n' > "$OLD/audreybrick-000040-19700616-060000.log"
+    printf 'old stdout, run 40\n' > "$OLD/stdout-000040-19700616-060000.log"
+    rnd "$OLD/input/a.wav" 20000; rnd "$OLD/input/sub dir/b.wav" 3000
+    rnd "$OLD/input/._a.wav" 100; rnd "$OLD/input/.hidden" 50
+    for k in 1 2 3 4 5 6; do rnd "$OLD/recordings/rec-000$k.wav" $((k * 1000)); done
+    printf 'my notes\n' > "$OLD/my notes.txt"
+}
+
+section "PRESET-C: /userdata/saves exists, fresh install (no old data/)"
+mkdir -p "$SAVESD"
+newpkg
+launch_p AUDREY_ARGS="$QUICK"
+rc=$?
+grep -E '^launcher: (data folder|old data folder|input folder|recordings folder|presets folder)' "$N/stdout.log" | sed 's/^/  /'
+[ "$rc" -eq 0 ] && [ -d "$N/input" ] && [ -d "$N/recordings" ] && [ -d "$N/presets" ] && [ -f "$N/audreybrick.log" ] && [ -f "$N/stdout.log" ] \
+    && pass "the launcher made $N with input/, recordings/, presets/ and the logs" || fail "fresh install into $N (rc $rc)"
+grep -qF "launcher: data folder: $N (created in $SAVESD)" "$N/stdout.log" && ! grep -q 'old data folder' "$N/stdout.log" \
+    && pass "stdout.log: data folder $N (created in $SAVESD); no notice (no old data/)" || fail "data folder line (fresh install)"
+[ ! -e "$OLD" ] && pass "nothing is created in the app folder (no audreybrick/data)" || fail "an audreybrick/data was created in the app folder"
+grep -qF "input: source OFF at start; folder $N/input" "$N/audreybrick.log" \
+    && grep -qF "launcher: recordings folder: $N/recordings (0 recording(s)" "$N/stdout.log" \
+    && grep -qF "launcher: presets folder: $N/presets (0 preset file(s))" "$N/stdout.log" \
+    && pass "the app got --input-dir and --record-dir in $N; presets/ noted" || fail "folders passed to the app"
+grep -qF "preset: folder $N/presets: 0 preset(s) listed; next new preset preset-0001.json" "$N/audreybrick.log" \
+    && pass "PRESET-B: --preset-dir is passed (PASS_PRESET_DIR=1): the app lists $N/presets" \
+    || fail "PRESET-B: --preset-dir not passed (no 'preset: folder $N/presets' line in the app's log)"
+launch_p AUDREY_ARGS="$QUICK"
+grep -qF "launcher: data folder: $N (it exists and is writable)" "$N/stdout.log" && [ "$(cat "$N/run-counter")" = 2 ] \
+    && pass "second start: same folder (it exists and is writable), run counter 2" || fail "second start in $N"
+rm -rf "$N"
+
+section "PRESET-B: Start + A saves, the PRESET tab loads, through the packaged launcher (/userdata/saves)"
+# A button script: right twice on LOOP (Frequency 24/56 -> 26/56), Start + A
+# (preset-0001.json), right three times more (29/56), L1 to PRESET (the last
+# tab; the cursor is on the preset just saved), right: load it (back to 26/56).
+newpkg
+printf '%s\n' '0.05 DpadRight down' '0.07 DpadRight up' '0.10 DpadRight down' '0.12 DpadRight up' \
+    '0.30 Start down' '0.32 A down' '0.34 A up' '0.36 Start up' \
+    '0.50 DpadRight down' '0.52 DpadRight up' '0.55 DpadRight down' '0.57 DpadRight up' '0.60 DpadRight down' '0.62 DpadRight up' \
+    '0.70 L1 down' '0.72 L1 up' '0.90 DpadRight down' '0.92 DpadRight up' > /tmp/preset_save_load.txt
+launch_p AUDREY_SWAP_AB=0 AUDREY_SWAP_XY=0 AUDREY_ARGS="--selftest /tmp/preset_save_load.txt --seconds 1.5 --no-video --expect-preset saved 1 --expect-preset loaded 1 --expect-preset failed 0 --expect-preset files 1 --expect-knob Frequency 0.4637 0.4649"
+rc=$?
+grep -E 'preset: ' "$N/audreybrick.log" | sed 's/^\[[ 0-9.]*\] /  log: /'
+[ "$rc" -eq 0 ] && grep -q 'self-test: PASSED' "$N/audreybrick.log" \
+    && pass "the self-test passed: one preset saved and loaded, none failed, Frequency back at 26/56 after the load" \
+    || fail "preset save/load self-test through the launcher (rc $rc)"
+[ -f "$N/presets/preset-0001.json" ] && grep -qF '"format": "audreybrick-preset"' "$N/presets/preset-0001.json" \
+    && [ -z "$(ls -A "$N/presets" | grep -v '^preset-0001\.json$')" ] \
+    && pass "$N/presets holds preset-0001.json (a version 1 preset) and nothing else (no temporary file)" \
+    || fail "presets folder after the save: $(ls -A "$N/presets" 2>&1 | tr '\n' ' ')"
+grep -qF 'preset: saved preset-0001.json (Start + A); 1 preset(s) in the folder' "$N/audreybrick.log" \
+    && grep -qF 'preset: loaded preset-0001.json' "$N/audreybrick.log" \
+    && pass "the app's log has the save (Start + A) and the load" || fail "preset save/load log lines"
+launch_p AUDREY_ARGS="$QUICK"
+grep -qF "launcher: presets folder: $N/presets (1 preset file(s))" "$N/stdout.log" \
+    && grep -qF "preset: folder $N/presets: 1 preset(s) listed; next new preset preset-0002.json" "$N/audreybrick.log" \
+    && pass "next start: the launcher counts 1 preset file and the app lists it (next new preset-0002.json)" \
+    || fail "the saved preset after a restart"
+cp "$N/audreybrick.log" /ab/out/presetb-audreybrick.log
+rm -rf "$N"
+
+section "PRESET-D: an old data/ is left untouched, with one notice per start (data folder /userdata/saves/audreybrick)"
+# Every entry below a folder and the folder itself: type, name, content (md5 or link
+# target), size, permissions, and modification and change times with nanoseconds
+# (a rename, a new or deleted entry or a rewrite in a folder changes its times).
+tree_state() { # <dir>
+    ( shopt -s globstar dotglob nullglob
+      cd "$1" 2>/dev/null || { echo "MISSING $1"; exit 0; }
+      printf 'top %s\n' "$(stat -c '%F|%a|%y|%z' .)"
+      for f in **; do
+          if [ -L "$f" ]; then printf 'L %q -> %s |%s\n' "$f" "$(readlink "$f")" "$(stat -c '%y|%z' "$f")"
+          elif [ -f "$f" ]; then printf 'F %q %s |%s\n' "$f" "$(md5sum < "$f" | cut -c1-32)" "$(stat -c '%s|%a|%y|%z' "$f")"
+          elif [ -d "$f" ]; then printf 'D %q |%s\n' "$f" "$(stat -c '%a|%y|%z' "$f")"
+          else printf 'O %q\n' "$f"; fi
+      done ) | sort
+}
+# The device root has no cmp or diff: md5sum and comm.
+same_state() { [ "$(md5sum < /tmp/old-before.txt)" = "$(md5sum < /tmp/old-after.txt)" ]; }
+NOTICE="launcher: old data folder: $OLD holds files from an older version; they are left untouched (nothing there is moved or changed automatically). Look there before replacing the app folder, which deletes it. To keep recordings/ or input/ files, move them by hand into the same folders in $N, without overwriting files of the same name"
+NOTICE_ERR="AudreyBrick: files found in the old folder $OLD; left untouched; move them by hand into $N"
+newpkg; make_old; ln -s rec-0001.wav "$OLD/recordings/link.wav"
+tree_state "$OLD" > /tmp/old-before.txt
+echo "  old data/: $(grep -c '^[FLD] ' /tmp/old-before.txt) entries (files, a link, hidden names, an empty folder, folders with spaces)"
+for start in 1 2; do
+    launch_p AUDREY_ARGS="$QUICK" 2> /tmp/presetd-stderr.txt
+    rc=$?
+    tree_state "$OLD" > /tmp/old-after.txt
+    [ "$start" -eq 1 ] && grep -E '^launcher: (PROBLEM: )?(data folder|old data folder)' "$N/stdout.log" | sed 's/^/  /' && sed 's/^/  stderr: /' /tmp/presetd-stderr.txt
+    [ "$rc" -eq 0 ] && grep -q 'self-test: PASSED' "$N/audreybrick.log" && same_state \
+        && pass "start $start: the old data/ is byte-for-byte and name-for-name unchanged (contents, names, links, folders, sizes, permissions, modification and change times); the app ran" \
+        || { fail "start $start: the old data/ changed (rc $rc)"; comm -3 /tmp/old-before.txt /tmp/old-after.txt | head -n 8 | sed 's/^/    before|after: /'; }
+    [ "$(grep -c '^launcher: old data folder: ' "$N/stdout.log")" -eq 1 ] && grep -qxF "$NOTICE" "$N/stdout.log" \
+        && [ "$(wc -l < /tmp/presetd-stderr.txt)" -eq 1 ] && grep -qxF "$NOTICE_ERR" /tmp/presetd-stderr.txt \
+        && pass "start $start: exactly one notice line in stdout.log and one line on stderr" \
+        || fail "start $start: notice ($(grep -c '^launcher: old data folder: ' "$N/stdout.log") in stdout.log, $(wc -l < /tmp/presetd-stderr.txt) stderr line(s))"
+done
+[ "$(cat "$N/run-counter")" = 2 ] && [ ! -e "$N/recordings/rec-0001.wav" ] && [ ! -e "$N/input/a.wav" ] && [ ! -e "$N/data-move.log" ] \
+    && [ -z "$(cd "$N" && ls -A | grep -v -E '^(input|recordings|presets|run-counter|latest-run|audreybrick\.log|stdout\.log|(audreybrick|stdout)-00000[0-9]-.*\.log)$')" ] \
+    && pass "the data folder holds only what the launcher and the app made (run counter 2, no copied file, no data-move.log)" \
+    || fail "data folder after two starts with an old data/: $(ls -A "$N" | tr '\n' ' ')"
+cp "$N/stdout.log" /ab/out/presetd-notice-stdout.log
+rm -rf "$N"
+# Only a hidden file in the old data/: it counts (hidden names are looked at too).
+newpkg; mkdir -p "$OLD"; printf 'x\n' > "$OLD/.hidden"
+tree_state "$OLD" > /tmp/old-before.txt
+launch_p AUDREY_ARGS="$QUICK" 2> /tmp/presetd-stderr.txt
+tree_state "$OLD" > /tmp/old-after.txt
+grep -qxF "$NOTICE" "$N/stdout.log" && same_state \
+    && pass "an old data/ holding only a hidden file: notice, the file untouched" || fail "old data/ with only a hidden file"
+rm -rf "$N"
+# An empty old data/: no notice, and the empty folder stays.
+newpkg; mkdir -p "$OLD"
+tree_state "$OLD" > /tmp/old-before.txt
+launch_p AUDREY_ARGS="$QUICK" 2> /tmp/presetd-stderr.txt
+rc=$?
+tree_state "$OLD" > /tmp/old-after.txt
+[ "$rc" -eq 0 ] && ! grep -q 'old data folder' "$N/stdout.log" && [ ! -s /tmp/presetd-stderr.txt ] && [ -d "$OLD" ] && same_state \
+    && pass "an empty old data/: no notice (stdout.log and stderr), the empty folder left as it was" || fail "empty old data/ (rc $rc)"
+rm -rf "$N"
+# No old data/: no notice, nothing created in the app folder.
+newpkg
+launch_p AUDREY_ARGS="$QUICK" 2> /tmp/presetd-stderr.txt
+[ ! -e "$OLD" ] && ! grep -q 'old data folder' "$N/stdout.log" && [ ! -s /tmp/presetd-stderr.txt ] \
+    && pass "no old data/: no notice, no audreybrick/data created" || fail "absent old data/"
+rm -rf "$N"
+# An old data/ that is a link: not followed, no notice, the link and its target untouched.
+newpkg
+mkdir -p /tmp/elsewhere && printf 'keep\n' > /tmp/elsewhere/keep.txt
+ln -s /tmp/elsewhere "$OLD"
+launch_p AUDREY_ARGS="$QUICK" 2> /tmp/presetd-stderr.txt
+[ -L "$OLD" ] && [ "$(readlink "$OLD")" = /tmp/elsewhere ] && [ "$(ls -A /tmp/elsewhere)" = keep.txt ] && [ "$(cat /tmp/elsewhere/keep.txt)" = keep ] \
+    && ! grep -q 'old data folder' "$N/stdout.log" && [ ! -e "$N/keep.txt" ] \
+    && pass "an old data/ that is a link: no notice, the link and its target untouched" || fail "old data/ as a link"
+rm -rf "$N" /tmp/elsewhere
+# The app folder's data/ is itself the data folder (no /userdata/saves): no notice.
+rmdir "$SAVESD"
+newpkg; make_old
+launch_p AUDREY_ARGS="$QUICK" 2> /tmp/presetd-stderr.txt
+rc=$?
+[ "$rc" -eq 0 ] && grep -qF "launcher: data folder: $OLD (the app folder's data/: $SAVESD does not exist)" "$OLD/stdout.log" \
+    && ! grep -q 'old data folder' "$OLD/stdout.log" && [ ! -s /tmp/presetd-stderr.txt ] && [ "$(cat "$OLD/run-counter")" = 42 ] \
+    && pass "the app folder's data/ in use as the data folder (holding files): no notice, run 42 continues there" || fail "data/ as the data folder (rc $rc)"
+mkdir -p "$SAVESD"
+
+section "PRESET-C: AUDREY_SAVES_DIR (testing aid)"
+SAME=/tmp/saves-same
+mkdir -p "$SAME"
+newpkg
+launch_p AUDREY_SAVES_DIR="$SAME" AUDREY_ARGS="$QUICK"
+rc=$?
+[ "$rc" -eq 0 ] && grep -qF "launcher: data folder: $SAME/audreybrick (created in $SAME (AUDREY_SAVES_DIR, testing aid))" "$SAME/audreybrick/stdout.log" \
+    && pass "AUDREY_SAVES_DIR replaces /userdata/saves (testing aid)" || fail "AUDREY_SAVES_DIR (rc $rc)"
+rm -rf "$SAME"
+rmdir "$SAVESD"
+launch_p AUDREY_SAVES_DIR="saves" AUDREY_ARGS="$QUICK"
+grep -qF "launcher: data folder: $OLD (the app folder's data/: /userdata/saves does not exist (AUDREY_SAVES_DIR 'saves' is not an absolute path; ignored))" "$OLD/stdout.log" \
+    && pass "a relative AUDREY_SAVES_DIR is ignored with a note" || fail "relative AUDREY_SAVES_DIR"
+mkdir -p "$SAVESD"
+
+section "Log rotation never overwrites a log (L3 to L5)"
+# The launcher's stub app here (only the launcher is under test; keeps the runs short).
+STUB=/tmp/stub-app
+printf '#!/bin/bash\ncase "${1:-}" in --version) echo "stub 1.0"; exit 0 ;; esac\nexit 0\n' > "$STUB"
+PS="/userdata/ports same"
+stubpkg() { # <ports folder>
+    rm -rf "$1"; mkdir -p "$1/audreybrick" && cp /ab/pkg/AudreyBrick.sh "$1/" && cp "$STUB" "$1/audreybrick/audreybrick" && chmod +x "$1/audreybrick/audreybrick"
+}
+launch_s() { # <ports folder> [env ...]
+    local pf="$1"; shift
+    ( cd / && env AUDREY_KEEP_AWAKE=0 "$@" /bin/bash "$pf/AudreyBrick.sh" ) > /dev/null 2>&1
+}
+# L3: the archive names are taken.
+stubpkg "$PS"; rm -rf "$N"; mkdir -p "$N"
+printf '41\n' > "$N/run-counter"; printf '000041-19700616-070532\n' > "$N/latest-run"
+printf 'CURRENT app log\n' > "$N/audreybrick.log"; printf 'CURRENT stdout\n' > "$N/stdout.log"
+printf 'ARCHIVED app log\n' > "$N/audreybrick-000041-19700616-070532.log"; printf 'ARCHIVED stdout\n' > "$N/stdout-000041-19700616-070532.log"
+launch_s "$PS"
+[ "$(cat "$N/audreybrick-000041-19700616-070532.log")" = 'ARCHIVED app log' ] && [ "$(cat "$N/audreybrick-000041-19700616-070532-2.log")" = 'CURRENT app log' ] \
+    && [ "$(cat "$N/stdout-000041-19700616-070532.log")" = 'ARCHIVED stdout' ] && [ "$(cat "$N/stdout-000041-19700616-070532-2.log")" = 'CURRENT stdout' ] \
+    && grep -qF "launcher: log rotation: audreybrick-000041-19700616-070532.log exists already; the previous run's audreybrick.log is kept as audreybrick-000041-19700616-070532-2.log" "$N/stdout.log" \
+    && pass "L3: log rotation with both archive names taken: nothing overwritten (the previous pair as -2), noted in stdout.log" \
+    || fail "L3: $(ls -A "$N" | tr '\n' ' ')"
+# L4: the previous audreybrick.log cannot be renamed at all (every free name taken):
+# it is left alone, and the app writes this run's log under another name.
+newpkg; rm -rf "$N"; mkdir -p "$N"
+printf '41\n' > "$N/run-counter"; printf 'CURRENT app log, never emptied\n' > "$N/audreybrick.log"
+: > "$N/audreybrick-previous-000041.log"; for i in $(seq 2 999); do : > "$N/audreybrick-previous-000041-$i.log"; done
+launch_p AUDREY_ARGS="$QUICK" 2>/dev/null
+rc=$?
+applog="$(ls "$N" | grep '^audreybrick-000042-.*\.log$')"
+[ "$rc" -eq 0 ] && [ "$(cat "$N/audreybrick.log")" = 'CURRENT app log, never emptied' ] && [ -n "$applog" ] && grep -q 'self-test: PASSED' "$N/$applog" \
+    && grep -qF "launcher: PROBLEM: log rotation: this run's app log is $N/$applog" "$N/stdout.log" \
+    && pass "L4: an audreybrick.log that cannot be archived is left as it is; the app logs to $applog (PROBLEM line)" \
+    || fail "L4 (rc $rc, app log '$applog')"
+# L5: a file appears under the chosen archive name between the launcher's choice and
+# its mv (an mv on PATH creates it first): mv -n must not overwrite it.
+RW=/tmp/racewrap
+mkdir -p "$RW"
+printf '#!/bin/bash\nfor t; do :; done\ncase "${t##*/}" in audreybrick-0*.log) printf "RACE: made in between\\n" > "$t" ;; esac\nexec /bin/mv "$@"\n' > "$RW/mv"
+chmod +x "$RW/mv"
+stubpkg "$PS"; rm -rf "$N"; mkdir -p "$N"
+printf '41\n' > "$N/run-counter"; printf '000041-19700616-070532\n' > "$N/latest-run"
+printf 'CURRENT app log\n' > "$N/audreybrick.log"; printf 'CURRENT stdout\n' > "$N/stdout.log"
+launch_s "$PS" PATH="$RW:$PATH"
+[ "$(cat "$N/audreybrick-000041-19700616-070532.log")" = 'RACE: made in between' ] && [ "$(cat "$N/audreybrick.log")" = 'CURRENT app log' ] \
+    && [ "$(cat "$N/stdout-000041-19700616-070532.log")" = 'CURRENT stdout' ] \
+    && grep -qF "launcher: PROBLEM: log rotation: $N/audreybrick.log could not be renamed to audreybrick-000041-19700616-070532.log or a free name like it" "$N/stdout.log" \
+    && grep -qF "launcher: PROBLEM: log rotation: this run's app log is $N/audreybrick-000042-" "$N/stdout.log" \
+    && pass "L5: a file made under the archive name just before the mv is not overwritten (mv -n); the old audreybrick.log is left as it is, PROBLEM lines" \
+    || fail "L5: $(for f in "$N"/audreybrick*.log; do printf '%s=[%s] ' "${f##*/}" "$(cat "$f")"; done)"
+rm -rf "$RW" "$PS" "$N"
+
+section "PRESET-C: data folders that cannot be used: the app folder's data/, nothing lost"
+# /userdata/saves not writable (and no audreybrick in it): the app folder's data/.
+newpkg; make_old
+snap "$OLD" /tmp/before.txt
+chmod a-w "$SAVESD"
+launch_p AUDREY_ARGS="$QUICK"
+rc=$?
+chmod u+w "$SAVESD"
+grep -E '^launcher: (data folder|old data folder)' "$OLD/stdout.log" | sed 's/^/  /'
+[ "$rc" -eq 0 ] && grep -qF "launcher: data folder: $OLD (the app folder's data/: $SAVESD is not writable)" "$OLD/stdout.log" \
+    && ! grep -q 'old data folder' "$OLD/stdout.log" && [ ! -e "$N" ] \
+    && pass "$SAVESD not writable: the app folder's data/ is used (no notice)" || fail "unwritable $SAVESD (rc $rc)"
+snap "$OLD" /tmp/after.txt
+nothing_lost /tmp/before.txt /tmp/after.txt && [ "$(cat "$OLD/run-counter")" = 42 ] && grep -qF "input: source OFF at start; folder $OLD/input" "$OLD/audreybrick.log" \
+    && pass "the old data/ is used as before (run 42, the app's folders there)" || fail "old data/ after the fallback"
+# /userdata/saves/audreybrick exists as a file, then as a folder that is not writable.
+for kind in file folder; do
+    newpkg; make_old
+    snap "$OLD" /tmp/before.txt
+    if [ "$kind" = file ]; then printf 'not a folder\n' > "$N"; else mkdir -p "$N"; chmod a-w "$N"; fi
+    launch_p AUDREY_ARGS="$QUICK" 2> /tmp/presetc-stderr.txt
+    rc=$?
+    [ "$kind" = folder ] && chmod u+w "$N"
+    snap "$OLD" /tmp/after.txt
+    [ "$rc" -eq 0 ] && grep -qF "launcher: PROBLEM: data folder: $N exists but is not a writable folder; using $OLD instead" "$OLD/stdout.log" \
+        && grep -qF "exists but is not a writable folder" /tmp/presetc-stderr.txt && nothing_lost /tmp/before.txt /tmp/after.txt \
+        && pass "$N is a $( [ "$kind" = file ] && echo file || echo 'folder without write permission'): PROBLEM in stdout.log and on stderr, the app folder's data/ used" \
+        || fail "$N as a $kind (rc $rc)"
+    if [ "$kind" = file ]; then [ "$(cat "$N")" = 'not a folder' ] && pass "the file $N is untouched" || fail "the file $N was changed"; fi
+    rm -rf "$N"
+done
+
+section "PRESET-C: how the data folder choice is reported"
+# /userdata/saves/audreybrick is a link: refused, with a PROBLEM line.
+mkdir -p /tmp/real-saves-target
+newpkg; mkdir -p "$OLD"; printf 'x\n' > "$OLD/x.txt"
+ln -s /tmp/real-saves-target "$N"
+launch_p AUDREY_ARGS="$QUICK" 2> /tmp/presetc-stderr.txt
+grep -qF "launcher: PROBLEM: data folder: $N is a link (a link is never used as the data folder); using $OLD instead" "$OLD/stdout.log" \
+    && [ -z "$(ls -A /tmp/real-saves-target)" ] && [ "$(cat "$OLD/x.txt")" = x ] \
+    && pass "saves/audreybrick as a link: refused (PROBLEM), nothing written through it, the app folder's data/ used" || fail "saves/audreybrick as a link"
+rm -f "$N"; rm -rf /tmp/real-saves-target
+# The choice flips for one start (here: AUDREY_SAVES_DIR points elsewhere) while
+# /userdata/saves/audreybrick exists: a PROBLEM line, not just a note.
+mkdir -p "$N"
+newpkg
+launch_p AUDREY_SAVES_DIR=/tmp/no-such-saves AUDREY_ARGS="$QUICK" 2> /tmp/presetc-stderr.txt
+grep -qF "launcher: PROBLEM: data folder: $OLD is used for this start (the app folder's data/: /tmp/no-such-saves does not exist (AUDREY_SAVES_DIR, testing aid)), although $SAVESD/audreybrick exists: what this run saves is in $OLD and is not moved automatically (move it to $SAVESD/audreybrick by hand)" "$OLD/stdout.log" \
+    && grep -q 'although /userdata/saves/audreybrick exists' /tmp/presetc-stderr.txt \
+    && pass "the app folder's data/ used although $N exists: a PROBLEM line in stdout.log and on stderr (not moved automatically)" || fail "flipped data folder not reported as a PROBLEM"
+rm -rf "$N"
+# AUDREY_SAVES_DIR inside the app folder: ignored (the normal folder is used); the
+# old data/ there is then left untouched, with the notice.
+newpkg; mkdir -p "$OLD/recordings"; printf 'r1\n' > "$OLD/recordings/rec-0001.wav"
+launch_p AUDREY_SAVES_DIR="$OLD" AUDREY_ARGS="$QUICK" 2>/dev/null
+grep -qF "launcher: data folder: $N (created in $SAVESD (AUDREY_SAVES_DIR '$OLD' is inside the app folder; ignored))" "$N/stdout.log" \
+    && [ "$(cat "$OLD/recordings/rec-0001.wav")" = r1 ] && [ ! -e "$N/recordings/rec-0001.wav" ] && grep -qxF "$NOTICE" "$N/stdout.log" \
+    && pass "AUDREY_SAVES_DIR inside the app folder: ignored with a note; the old data/ left untouched, with the notice" || fail "AUDREY_SAVES_DIR inside the app folder"
+rm -rf "$N" "$P"
+rmdir "$SAVESD"
+# /userdata/saves is a file.
+printf 'not a folder\n' > "$SAVESD"
+newpkg
+launch_p AUDREY_ARGS="$QUICK"
+grep -qF "launcher: data folder: $OLD (the app folder's data/: $SAVESD is not a folder)" "$OLD/stdout.log" && [ "$(cat "$SAVESD")" = 'not a folder' ] \
+    && pass "/userdata/saves as a file: reported as 'is not a folder' (not 'does not exist'); the file untouched" || fail "/userdata/saves as a file"
+rm -f "$SAVESD"; rm -rf "$P"
 
 section "The launcher touched only its own data/ files"
 ls -lR "$PORTS" | sed 's/^/  /'

@@ -1,8 +1,9 @@
 # Self-test and render-test script (M2-B): lower the volume, then raise the
 # feedback with R2 held for 3 s.
 #
-# Volume first, for safety on headphones: L1 from LOOP wraps to MOD (MOD-B:
-# seven tabs), L1 again goes to INPUT and a third L1 to OUT, then d-pad down
+# Volume first, for safety on headphones: L1 from LOOP wraps to PRESET
+# (PRESET-B: eight tabs), L1 again goes to MOD, a third to INPUT and a fourth
+# to OUT, then d-pad down
 # held 1.5 s (a tap of 1/128 plus a 1.25 s ramp, about 0.358 of travel): volume
 # from 0.707 to about 0.349 normalised (engine 0.50 -> 0.12).
 0.02  L1        down
@@ -11,6 +12,8 @@
 0.12  L1        up
 0.13  L1        down
 0.15  L1        up
+0.16  L1        down
+0.18  L1        up
 0.20  DpadDown  down
 1.70  DpadDown  up
 # Feedback: R2 held 3 s = a 0.5 dB tap plus 2.75 s at 24 dB/s = 66.5 dB above

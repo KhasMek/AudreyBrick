@@ -13,7 +13,8 @@
 #                                                  those exact binaries (hash-checked)
 #   4. scripts/test_on_knulli_rootfs.sh <image> --package dist/AudreyBrick
 #                                                  the package as it will be copied
-# Then prints the SHA-256 of the packaged binaries and the zip, and the zip's path.
+# Then prints the SHA-256 of the packaged binaries and the zip, and the zip's path,
+# and checks that the zip holds no audreybrick/data folder (PRESET-C).
 # Stops at the first failing step.
 set -euo pipefail
 
@@ -50,5 +51,15 @@ sed 's/^/  /' "$sums"
 echo "device build hashes ($FROM/SHA256SUMS):"
 sed 's/^/  /' "$FROM/SHA256SUMS"
 echo "zip: $zip ($(wc -c < "$zip" | tr -d ' ') bytes)"
+# PRESET-C: the user's data lives outside the app folder; the zip must not hold one.
+# The listing is read whole first: `unzip | grep -q` under pipefail would turn a
+# match into a failure (grep exits early, unzip gets SIGPIPE). An unzip failure
+# stops the script (set -e).
+zip_list="$(unzip -Z1 "$zip")"
+if printf '%s\n' "$zip_list" | grep '^AudreyBrick/audreybrick/data\(/\|$\)' > /dev/null; then
+    echo "make_port: the zip holds AudreyBrick/audreybrick/data; refused" >&2
+    exit 1
+fi
+echo "the zip holds no audreybrick/data folder (user data lives in /userdata/saves/audreybrick)"
 echo "The packaged files above are the ones tested in step 4 (and built and tested in steps 1 and 2)."
 echo "make_port: OK"

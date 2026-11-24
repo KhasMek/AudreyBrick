@@ -82,12 +82,18 @@ class ButtonControlSource final : public ControlSource
     // Presets and the freeze slot (M5) must save this stored feedback, not
     // publishedKnob(FeedbackGain), which reads 1.0 while maximum is held. Note also
     // that SetAll does not stop ramps in progress: a d-pad or feedback ramp that is
-    // held when a preset loads keeps moving from the loaded value.
+    // held when a preset loads keeps moving from the loaded value. PRESET-A:
+    // ControlModel::setAll() therefore stops the ramps (in the held word) before
+    // it sends the SetAll command.
     float         publishedStoredFeedback() const noexcept { return storedFeedback_.load(std::memory_order_relaxed); }
     bool          publishedFeedbackMax() const noexcept { return feedbackMax_.load(std::memory_order_relaxed); }
     bool          publishedSwitch() const noexcept { return switchOn_.load(std::memory_order_relaxed); }
     bool          publishedSwitchLatch() const noexcept { return switchLatch_.load(std::memory_order_relaxed); }
-    std::uint64_t commandsProcessed() const noexcept { return processed_.load(std::memory_order_relaxed); }
+    // PRESET-A: acquire, paired with the release store at the end of publish():
+    // once this reads n, every value published by the read() that applied the
+    // n-th command (or a later one) is visible, so a preset captured then holds
+    // the values the commands set.
+    std::uint64_t commandsProcessed() const noexcept { return processed_.load(std::memory_order_acquire); }
 
   private:
     struct AxisRamp

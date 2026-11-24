@@ -5,8 +5,13 @@
 // state into a DrawList. No SDL, no allocation. 1024 x 768 logical pixels, top to
 // bottom, each block a panel in the DrawList:
 //
-//   tab bar        L1 key, the six tabs (current one in inverse video; each as
-//                  wide as its name plus an equal margin), R1 key
+//   tab bar        L1 key, the tabs (current one in inverse video; each as
+//                  wide as its name plus an equal margin), R1 key. PRESET-B:
+//                  eight tabs do not fit at 24 px; the bar shows the run of
+//                  whole tabs tabBarSpan() gives (the current tab and both its
+//                  neighbours always), and at an end where tabs are hidden a
+//                  marker (in the tab bar's panel: a 16 px tab stub with a
+//                  12 px arrow pointing to them) in a 20 px zone. No animation.
 //   feedback band  stored feedback in dB, bar between L2 and R2 keys with a 0 dB
 //                  tick; while A is held the bar is striped, a plate reads
 //                  "MAX +12.0 dB" in the half away from the stored-value marker,
@@ -113,6 +118,37 @@
 //                  faint text, outline arrows; the cursor row keeps a thin
 //                  faint frame), and the X cap on TARGET is lit. The selected
 //                  card's frame and number are bright in both states.
+//   PRESET tab     (PRESET-B, in place of the rows; x 8..872, y 184..472):
+//                  a title line (PresetHeader, y 184, 26 px: PRESETS at 24 px,
+//                  the count at 16 px at the right: "12 PRESETS", or "2101
+//                  PRESETS, FIRST 2000 SHOWN"); five list rows (PresetRow,
+//                  y 214 + 40 i, 38 px): "+ SAVE NEW" in the accent colour on
+//                  item 0, preset names at 32 px from x 64 cut with ".." (24
+//                  characters, 21 on the marked row), the cursor's row in
+//                  inverse video with ">", the marked (last loaded / saved)
+//                  preset with a LAST plate at 16 px ending at x 828, up / down
+//                  arrows at x 840 on the first / last row while items are
+//                  hidden there; with nothing listed, a state under SAVE NEW
+//                  (NO PRESETS YET, NO PRESET FOLDER SET, PRESET FOLDER NOT
+//                  FOUND, CANNOT READ THE PRESET FOLDER in red) and a hint
+//                  line. The bottom panel (PresetBottom, y 418..472): during a
+//                  hold, "OVERWRITE <NAME>" / "DELETE <NAME>" at 24 px, KEEP
+//                  HOLDING, and a 14 px bar (RectTag::HoldBar) filled to the
+//                  progress, orange (feedback colour) for overwrite, red for
+//                  delete, with a frame in the same colour; otherwise the
+//                  message line (24 px, 16 px when longer than 34 characters,
+//                  at most 47; a success green, a failure in inverse red;
+//                  SAVING.. while a save waits) and a hint line at 16 px
+//                  ("> LOAD  X + > HOLD: OVERWRITE  Y + > HOLD: DELETE", or on
+//                  SAVE NEW "> SAVE NEW  START + A: SAVE NEW ON ANY TAB"). The
+//                  footer's X cell reads "X + > OVERWRITE" and the Y cell
+//                  "Y + > DELETE" on this tab, where ">" is the d-pad icon with only its
+//                  right arm lit (a lone right arrow is the Brick's Start symbol).
+//   preset message (PRESET-B, the other tabs) when s.preset.headerWins: the
+//                  preset message in the REC readout's place (x 20, y 158,
+//                  16 px, at most 30 characters cut with ".."; green for a
+//                  success, red for a failure) instead of the recorder's
+//                  readout. On PRESET the header keeps the recorder's.
 //   modulated knob (MOD-B, every tab) while at least one slot with a non-zero
 //                  depth targets a knob: a tag in the modulation colour with
 //                  the slot numbers ("M1", "M13") at 16 px beside its name
@@ -194,6 +230,21 @@ const char* knobTabName(Knob k) noexcept;
 // FeedbackGain, the note name only for Frequency (Hz is in the LOOP row), the
 // formatted engine value otherwise.
 std::size_t formatStripValue(char* out, std::size_t size, const UiSnapshot& s, Knob k) noexcept;
+
+// PRESET-B: the tabs the bar shows with `selected` current, first..last in tab
+// order (whole tabs only). The selected tab and its neighbour on each side are
+// always among them (at the ends of the order, the first or the last tab sits at
+// the bar's edge); then more tabs are added, one at a time, alternately on the
+// right and on the left, while each tab still gets its name at 24 px plus 16 px
+// and a 20 px marker zone stays free at every end where tabs are hidden. With
+// every tab fitting, first = 0 and last = kTabCount - 1 (no markers). The same
+// tab always gives the same run (no memory, no animation).
+struct TabSpan
+{
+    int first;
+    int last;
+};
+TabSpan tabBarSpan(Tab selected) noexcept;
 
 // Where unity gain (engine value 1.0) sits on the REPEATS bars (0..1): 1.0 /
 // the engine maximum from ParamTable, since those bars are linear in the engine

@@ -30,7 +30,7 @@
 //     point, even after setlocale()).
 //
 // Before any event, every knob sits at its ParamTable default position and the
-// switch is off.
+// switch is off (PRESET-A: unless setStartState() gave another start).
 //
 // Modulation lines (MOD-A, docs/briefs/MOD.md), one setting of one slot each:
 //
@@ -128,6 +128,14 @@ class ScriptControlSource final : public ControlSource
     // Back to block 0 and the initial state. Does not allocate.
     void rewind() noexcept;
 
+    // PRESET-A: the initial state rewind() (and a load) returns to: every knob's
+    // position and the switch before any event. Without a call: the ParamTable
+    // default positions and the switch off. Values are clamped to 0..1 (NaN ->
+    // 0). Rewinds. A ramp starts from the value the knob has at its event, so a
+    // ramp on a knob the start state set starts from that value. For
+    // audrey-render --preset.
+    void setStartState(const float (&knobs)[kKnobCount], bool sw) noexcept;
+
     void read(ControlFrame& out) noexcept override;
 
     // The parsed events, sorted by startBlock (stable, so file order within a block).
@@ -160,6 +168,8 @@ class ScriptControlSource final : public ControlSource
     float              value_[kKnobCount];
     Ramp               ramp_[kKnobCount];
     bool               switch_ = false;
+    float              start_[kKnobCount];   // PRESET-A: the initial state (setStartState)
+    bool               startSwitch_ = false;
 };
 
 } // namespace audreybrick

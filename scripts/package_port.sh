@@ -21,10 +21,11 @@
 #        audreybrick/licenses/                       every file of licenses/, plus
 #                                                    Audrey II's CREDITS.md
 #        audreybrick/THIRD_PARTY.md, LICENSE, README.txt (packaging/README.txt)
-#        audreybrick/data/                           logs (later presets)
-#        audreybrick/data/input/                     empty: WAV files for the INPUT tab (M2b-A;
-#                                                    the launcher also creates it if missing)
-#    and <out>/AudreyBrick-<version>.zip of that folder, plus
+#    and NO data/ folder (PRESET-C): the launcher keeps the user's data in
+#    /userdata/saves/audreybrick (or creates audreybrick/data where that folder is
+#    missing), so replacing the audreybrick folder on an update deletes nothing of
+#    the user's. The script fails if a data/ folder ends up in the package. Then
+#    <out>/AudreyBrick-<version>.zip of that folder, plus
 #    <out>/AudreyBrick-<version>.sha256 (the two binaries and the zip). Prints the
 #    listing and the hashes.
 # Nothing else goes in: no tests, tools, reference audio, docs, nothing from the
@@ -91,7 +92,7 @@ rm -f "${OUT:?}"/AudreyBrick-*.zip "${OUT:?}"/AudreyBrick-*.sha256
 
 PKG="$OUT/AudreyBrick"
 APP="$PKG/audreybrick"
-mkdir -p "$APP/libs.aarch64" "$APP/licenses" "$APP/data/input"
+mkdir -p "$APP/libs.aarch64" "$APP/licenses"
 cp "$REPO_ROOT/packaging/AudreyBrick.sh" "$PKG/AudreyBrick.sh"
 cp "$FROM/port/audreybrick" "$APP/audreybrick"
 cp "$FROM/port/libs.aarch64/libaudrey_lgpl.so" "$APP/libs.aarch64/libaudrey_lgpl.so"
@@ -108,6 +109,9 @@ for f in "$REPO_ROOT"/licenses/*; do
     cmp -s "$f" "$APP/licenses/$(basename "$f")" || { echo "$AB_SCRIPT: licence $(basename "$f") missing or different" >&2; missing=1; }
 done
 [ "$missing" -eq 0 ] || exit 1
+
+# PRESET-C: no data folder in the package (the user's data lives outside it).
+[ ! -e "$APP/data" ] || { echo "$AB_SCRIPT: the package holds audreybrick/data; refused" >&2; exit 1; }
 
 # The packaged copies must still match the recorded hashes.
 (cd "$APP" && shasum -a 256 -c "$FROM/SHA256SUMS" > /dev/null 2>&1) \

@@ -51,6 +51,9 @@ foreach(_t ${AB_PLATFORM_TESTS})
 endforeach()
 if(AB_HAVE_SDL)
     target_sources(platform_app_test PRIVATE ${CMAKE_SOURCE_DIR}/src/app/App.cpp)
+    # PRESET-B review: a presets folder in the build tree for the Start + A test
+    # with INPUT's pop-up open.
+    target_compile_definitions(platform_router_test PRIVATE AB_ROUTER_TMP="${CMAKE_CURRENT_BINARY_DIR}/router_tmp")
 endif()
 set_tests_properties(${AB_PLATFORM_TESTS} PROPERTIES ENVIRONMENT "${AB_PLATFORM_ENV}")
 

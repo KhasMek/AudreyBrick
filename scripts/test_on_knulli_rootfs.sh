@@ -38,7 +38,21 @@
 #      handling and exit-status propagation; and (M3-B) the CPU governor handling
 #      against a fake sysfs tree (AUDREY_SYSFS_CPU): set and restored on a normal
 #      exit, on SIGTERM and on SIGKILL to the launcher, AUDREY_GOVERNOR=keep, a
-#      governor not offered, invalid names, read-only files; and AUDREY_SWAP_AB.
+#      governor not offered, invalid names, read-only files; and AUDREY_SWAP_AB;
+#      and (PRESET-C) the data folder: /userdata is an empty tmpfs (mode 1777) in
+#      which the tests create and remove /userdata/saves, so both of the launcher's
+#      location branches run with the real path; unusable data folders (permission
+#      bits, as a non-root user); the log rotation never overwriting a log; and
+#      (PRESET-D) that an older version's data/ is left untouched, with one notice,
+#      and that the package holds no data folder.
+#   4. Runs the PRESET-C root section of the same script in a second container as
+#      root (no --user, still no network), because the launcher runs as root on the
+#      device, where permission bits never make a folder unwritable: read-only
+#      bind mounts of two small folders prepared in the work directory (an empty
+#      saves folder and one holding audreybrick/) stand in for a read-only card.
+#      Root there can write only to its tmpfs mounts and to nothing of the
+#      repository (every bind mount except /ab/out is read-only, and the root
+#      section writes nothing to /ab/out).
 #   Nothing from the image is executed except the dynamic loader, the libraries
 #   and standard tools (bash, ldd, coreutils, grep, sed, procps).
 #
@@ -217,12 +231,31 @@ echo "==== Tests in the device root ===="
 rc=0
 docker run --rm --platform linux/arm64 --network none --user "$(id -u):$(id -g)" \
     --tmpfs /tmp:exec,size=256m --tmpfs /var/run:mode=1777,size=1m -e HOME=/tmp -w / \
+    --tmpfs /userdata:mode=1777,size=512m \
     --mount "type=bind,src=$PORT_UNDER_TEST,dst=/ab/port,readonly" \
     --mount "type=bind,src=$REPO_ROOT/tests/platform/rise.txt,dst=/ab/rise.txt,readonly" \
     --mount "type=bind,src=$REPO_ROOT/docker/knulli_rootfs_tests.sh,dst=/ab/tests.sh,readonly" \
     --mount "type=bind,src=$PKG_UNDER_TEST,dst=/ab/pkg,readonly" \
     --mount "type=bind,src=$WORK/out,dst=/ab/out" \
     "$ROOT_IMAGE" /bin/bash /ab/tests.sh || rc=$?
+
+echo "==== Tests in the device root, as root (PRESET-C: read-only file systems) ===="
+RO="$WORK/root-ro"
+rm -rf "$RO"
+mkdir -p "$RO/empty" "$RO/saves/audreybrick"
+rc_root=0
+docker run --rm --platform linux/arm64 --network none -e AB_ROOT_SECTION=1 \
+    --tmpfs /tmp:exec,size=256m --tmpfs /var/run:mode=1777,size=1m -e HOME=/tmp -w / \
+    --tmpfs /userdata:mode=1777,size=512m \
+    --mount "type=bind,src=$RO/empty,dst=/ro-empty,readonly" \
+    --mount "type=bind,src=$RO/saves,dst=/ro-saves,readonly" \
+    --mount "type=bind,src=$PORT_UNDER_TEST,dst=/ab/port,readonly" \
+    --mount "type=bind,src=$REPO_ROOT/tests/platform/rise.txt,dst=/ab/rise.txt,readonly" \
+    --mount "type=bind,src=$REPO_ROOT/docker/knulli_rootfs_tests.sh,dst=/ab/tests.sh,readonly" \
+    --mount "type=bind,src=$PKG_UNDER_TEST,dst=/ab/pkg,readonly" \
+    "$ROOT_IMAGE" /bin/bash /ab/tests.sh || rc_root=$?
+[ "$rc_root" -eq 0 ] || rc=1
+
 echo
 echo "$AB_SCRIPT: logs and the tested package copy are in $WORK/out"
 echo "$AB_SCRIPT: NOT exercised: the display path (Mali video driver, EGL, renderer) and ALSA output; test those on the device"

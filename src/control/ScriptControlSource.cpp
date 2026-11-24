@@ -188,6 +188,19 @@ bool parseModLine(const std::vector<std::string>& tok, int lineNo, double timeSe
 
 ScriptControlSource::ScriptControlSource()
 {
+    for(std::size_t i = 0; i < kKnobCount; ++i)
+        start_[i] = paramSpec(static_cast<Knob>(i)).defaultNorm;
+    rewind();
+}
+
+void ScriptControlSource::setStartState(const float (&knobs)[kKnobCount], bool sw) noexcept
+{
+    for(std::size_t i = 0; i < kKnobCount; ++i)
+    {
+        const float v = knobs[i];
+        start_[i]     = v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; // NaN -> 0
+    }
+    startSwitch_ = sw;
     rewind();
 }
 
@@ -316,10 +329,10 @@ void ScriptControlSource::rewind() noexcept
     block_   = 0;
     for(std::size_t i = 0; i < kKnobCount; ++i)
     {
-        value_[i] = paramSpec(static_cast<Knob>(i)).defaultNorm;
+        value_[i] = start_[i]; // the ParamTable default unless setStartState() said otherwise
         ramp_[i]  = Ramp{};
     }
-    switch_ = false;
+    switch_ = startSwitch_;
 }
 
 void ScriptControlSource::read(ControlFrame& out) noexcept

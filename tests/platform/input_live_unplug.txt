@@ -2,10 +2,13 @@
 # and comes back.
 capture device usb 2 220 0.25 48000
 # MOD-B: seven tabs; L1 from LOOP goes to MOD, a second L1 to INPUT.
+# PRESET-B: eight tabs; L1 from LOOP goes to PRESET, then MOD, then INPUT.
 0.02  L1        down
 0.04  L1        up
 0.10  L1        down
 0.15  L1        up
+0.20  L1        down
+0.25  L1        up
 0.30  DpadRight down
 0.35  DpadRight up
 0.40  DpadRight down

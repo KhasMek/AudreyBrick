@@ -1,0 +1,11 @@
+# PRESET-B self-test (preset_selftest_load): load a loud preset from silence. The
+# presets folder holds loud.json (tests/preset/fixtures/loud.json: feedback +6.5 dB,
+# volume 0.35, everything else at its start-up value). The app starts silent (the
+# feedback at its minimum); L1 to PRESET, down to loud, right: it loads and the
+# instrument sounds (the knob smoothing does the rest; no extra fade).
+0.10  L1        down
+0.12  L1        up
+0.30  DpadDown  down
+0.32  DpadDown  up
+0.50  DpadRight down
+0.52  DpadRight up

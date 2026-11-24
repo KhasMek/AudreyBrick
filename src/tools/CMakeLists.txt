@@ -21,7 +21,10 @@ target_compile_options(audrey_tools PRIVATE ${AB_WARNING_OPTIONS})
 # upstream inline DSP, so it applies AB_DSP_OPT_OPTIONS. MOD-A: it runs the voice
 # through ModControlSource (audrey_mod).
 add_executable(audrey-render audrey_render.cpp)
-target_link_libraries(audrey-render PRIVATE audrey_mod audrey_tools) # audrey_mod brings audrey_core
+# PRESET-A: --preset / --write-preset (audrey_preset, which brings audrey_control,
+# audrey_mod and audrey_core), and the version written into a preset's "app"
+# (audrey_app_core's BuildInfo). Neither changes a render.
+target_link_libraries(audrey-render PRIVATE audrey_preset audrey_app_core audrey_tools)
 target_compile_options(audrey-render PRIVATE ${AB_DSP_OPT_OPTIONS} ${AB_WARNING_OPTIONS})
 
 # wavcheck --script reads events through ScriptControlSource (audrey_core), so it

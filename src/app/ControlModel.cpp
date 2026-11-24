@@ -165,6 +165,20 @@ void ControlModel::releaseAll(double t) noexcept
     publishHeld(t);
 }
 
+bool ControlModel::setAll(const float (&values)[kKnobCount], bool latch, double t) noexcept
+{
+    makeDpadInert();
+    for(Button b : {Button::L2, Button::R2})
+        if(press_[idx(b)].down)
+            press_[idx(b)].inert = true;
+    // The held word first: the queue's release/acquire pair then guarantees that
+    // the audio side, once it has the command, also sees the ramps stopped.
+    publishHeld(t);
+    const std::uint64_t before = dropped_;
+    send(ControlCommand::setAll(values, latch));
+    return dropped_ == before;
+}
+
 void ControlModel::tick(double t) noexcept
 {
     publishHeld(t);

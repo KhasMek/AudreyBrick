@@ -1,5 +1,9 @@
 # Device run: modulation (MOD)
 
+> **Note added 2026-11-23 (PRESET-C):** packages from PRESET-C on keep the user's data (logs, run counter, `input/`, `recordings/`, `presets/`) in `/userdata/saves/audreybrick/` (on the SD card: `saves/audreybrick/`), no longer in `roms/ports/audreybrick/data/`. An old `roms/ports/audreybrick/data/` is not moved automatically: the launcher leaves it untouched and only notes in `stdout.log` that it still holds files (PRESET-D); move its files by hand. Replacing the `audreybrick` folder no longer deletes anything in `saves/audreybrick/`. The steps below are kept as written: for a newer package, read every `roms/ports/audreybrick/data/` (or `data/`) as `saves/audreybrick/`.
+
+> **Note added 2026-11-23 (PRESET-B):** packages from PRESET-B on have an eighth tab, PRESET, after MOD, and a tab bar that scrolls (it no longer shows all tabs at once). Where a step below says "seven tabs" or "press L1 once" to reach MOD from LOOP, read "eight tabs" and "press L1 twice" (the first L1 lands on PRESET). The rest of this checklist is unchanged.
+
 For the human. Written 2026-11-20 for the package built after MOD-B; first run by the human on 2026-11-21 (it worked; the tab's UX needs more thought, switching slots felt unintuitive). Updated 2026-11-21 for MOD-C (four ramp shapes, a POLARITY row, the envelope following the input before the gain). **Updated again 2026-11-21 for MOD-D** (your new gestures: a TARGET row instead of SLOT, hold X to pick the slot on the cards, no target list). **The MOD-D package is not yet run.**
 
 ## What is new

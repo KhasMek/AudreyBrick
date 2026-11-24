@@ -19,20 +19,44 @@ void InputRouter::deliver(const ButtonEvent& be, double t) noexcept
     }
     if(mod_ != nullptr)
         mod_->onButton(be, t, model_.currentTab() == Tab::Mod); // MOD-B
+    if(preset_ != nullptr)
+    {
+        // PRESET-B
+        const bool onPreset = model_.currentTab() == Tab::Preset;
+        preset_->onButton(be, t, onPreset);
+        if(onPreset && before != Tab::Preset)
+            preset_->onTabEntered();
+    }
+}
+
+void InputRouter::presetChordAndDeliver(const ButtonEvent& be, double t) noexcept
+{
+    if(presetChord_ == nullptr)
+    {
+        deliver(be, t);
+        return;
+    }
+    const RecordChord::Out o = presetChord_->onButton(be);
+    if(o.releaseY)
+        deliver(ButtonEvent{presetChord_->button(), false}, t); // MAX ends (A was delivered as a press)
+    if(o.deliver)
+        deliver(be, t);
+    if(o.toggle && preset_ != nullptr)
+        preset_->requestSaveNew(PresetPanel::Origin::Chord); // Start + A: on any tab
 }
 
 bool InputRouter::chordAndDeliver(const ButtonEvent& be, double t) noexcept
 {
     if(record_ == nullptr)
     {
-        deliver(be, t);
+        presetChordAndDeliver(be, t);
         return false;
     }
     const RecordChord::Out o = record_->onButton(be);
     if(o.releaseY)
-        deliver(ButtonEvent{Button::Y, false}, t);
+        presetChordAndDeliver(ButtonEvent{record_->button(), false}, t);
     if(o.deliver)
-        deliver(be, t);
+        presetChordAndDeliver(be, t);
     return o.toggle;
 }
 
@@ -64,6 +88,10 @@ InputRouter::Result InputRouter::route(InputMap::Action action, const ButtonEven
                 input_->releaseAll();
             if(mod_ != nullptr)
                 mod_->releaseAll();
+            if(preset_ != nullptr)
+                preset_->releaseAll(); // PRESET-B
+            if(presetChord_ != nullptr)
+                presetChord_->releaseAll();
             quit_.releaseAll();
             if(record_ != nullptr)
                 record_->releaseAll();
