@@ -266,3 +266,20 @@ Package `3bf3139-dirty`. **[confirmed, device log and the human's report]** The 
 | Restores | 12 restores in one session: the mic came back at 0.362 (-5.6 dB) five times and the USB interface (`LOOM-8 FM-1, USB Audio`) at 0.479 (-0.8 dB) four times, each independent of the other; FILE returned to its own 0.500 (0.0 dB) after every LIVE visit, including through OFF |
 | Order | Every restoring open logs gain to 0, then the open, then the restore, as designed |
 | Open times | Mic 211 to 226 ms (mixer included), USB 31 to 69 ms |
+
+### Presets run (2026-11-24)
+
+Package built from the presets tree (committed as `f859db1`), default governor, about 10 minutes. **[confirmed, device log and the human's report]** The human reports presets, the scrolling tab bar and the d-pad-right icon working as expected, with the one-second hold, right-to-load and the preset message over the REC timer all judged right.
+
+| Item | Finding |
+|---|---|
+| **Data folder** | `/userdata/saves/audreybrick` exists and is writable; the launcher used it (`it exists and is writable`), with `input/` (6 WAV files), `recordings/` (10) and `presets/` in it. Same partition as before (`/dev/mmcblk0p5`). The human had moved the old `data/` content there by hand; the app folder was then replaced without loss |
+| Save and overwrite | 11 writes: **68 to 82 ms** each of file work on the UI thread (write, fsync, rename, rescan), about five frames. No late audio callback coincided with any of them |
+| Delete | 5 deletes: 4.8 to 5.2 ms each |
+| Load | 3 loads, including one with all four modulation slots set; the slots were applied within 0.5 s (the `mod: slot` lines follow the load) |
+| Preset files | Three files left on the card, all valid: format `audreybrick-preset`, version 1, 11 knobs, 4 slots |
+| Callback load | Average 38 % of a 256-frame buffer over 59 ten-second windows (19 to 42 %), a little above the 33 to 36 % of earlier runs, with modulation slots active for part of the run; 1 late callback (115 %) in the run, not near a preset action |
+| Clock | The device clock was correct (2026-11-24, -0700), unlike the first run |
+| Logs | The folder held the archived logs of runs 22 to 28 (copied in by hand) and the current run 3; none for runs 1 and 2. **[unknown]** why: the human probably overwrote them while copying. The launcher's pruning could also explain it (it keeps the seven highest-numbered logs, and the counter restarted at 1 below 22 to 28), but that was not observed. Watch on later runs whether archived logs with low numbers survive |
+| Not exercised | Start + A, a failed load, a full list beyond five rows on the device |
+
